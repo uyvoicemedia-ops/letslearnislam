@@ -1,0 +1,593 @@
+<!-- ============================================================
+     LIVE — the screens stop reading invented data
+     ------------------------------------------------------------
+     Until now the sync layer pushed and pulled, but every screen
+     still read DB (invented) or localStorage (this browser only).
+     A teacher could award points all evening and no child would
+     ever see them, which is the one thing the backend existed to
+     fix.
+
+     The approach is the one the original DB comment asked for:
+     "so a later version can swap this object for Supabase calls
+     without touching any of the rendering below". DB is a const
+     binding but a mutable object, so when a project is connected
+     we REPLACE ITS ARRAYS with rows from the server and every
+     existing screen renders live data unchanged. Same for
+     HOMEWORK, which is a const array and mutated in place.
+
+     Two rules this block keeps:
+
+     1. WITH NO KEYS SET, NOTHING CHANGES. Not connected means not
+        adopted, and every screen is exactly what it was.
+     2. Nobody should ever mistake the demo for the school. When
+        the data is invented, the screens that look like records
+        say so in a banner. That matters most for the register,
+        where a teacher could otherwise mark a class of ghosts.
+     ============================================================ -->
+<style>
+  .llv-bar { display:flex; align-items:flex-start; gap:9px; padding:9px 12px;
+             border-radius:12px; font-size:12.5px; line-height:1.45;
+             margin:0 0 14px; border:1.5px solid var(--line); background:var(--card); }
+  .llv-bar b { font-weight:800; }
+  .llv-bar .em { font-size:14px; line-height:1.2; flex:none; }
+  .llv-demo { border-color:#e0c98a; background:#fdf7e7; color:#6b4e0f; }
+  .llv-live { border-color:#a7d3b6; background:#eef8f1; color:#20603c; }
+  @media (prefers-color-scheme:dark){
+    .llv-demo { background:#2a2414; color:#e8d9ab; }
+    .llv-live { background:#16291e; color:#bfe4cd; }
+  }
+  .llv-empty { padding:18px 14px; text-align:center; color:var(--muted); font-size:13px; }
+</style>
+<script>
+"use strict";
+
+/* ============================================================
+   Is there a school on the other end of this?
+   ============================================================ */
+
+/* llcLive() is defined in the CLOUD block; this is the same question
+   asked safely, because this block also has to load in a file where
+   that block was stripped out. */
+function llvLive() {
+  try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; }
+}
+
+/* true once server rows have actually been copied into DB */
+let llvAdopted = false;
+
+function llvBanner(what) {
+  if (llvLive() && llvAdopted) {
+    const who = (LLC.profile && LLC.profile.full_name) || "your account";
+    return '<div class="llv-bar llv-live"><span class="em">●</span><div>' +
+      "<b>Live school data.</b> " + esc(what) + " comes from your school's " +
+      "records. Signed in as " + esc(who) + "." +
+      "</div></div>";
+  }
+  return '<div class="llv-bar llv-demo"><span class="em">▲</span><div>' +
+    "<b>Invented data.</b> The names, the marks and the numbers here are " +
+    "made up for the demo — they are not real children, and nothing you " +
+    "change is saved anywhere. Connect a project to see your school." +
+    "</div></div>";
+}
+
+/* ============================================================
+   Pulling the rest of it
+   ------------------------------------------------------------
+   llcPull already fetched the pupil's own points, attendance and
+   homework. Staff need their classes' rows, and both need
+   submissions before a homework table can say who has handed in.
+   ============================================================ */
+
+async function llvPullExtra() {
+  if (!llvLive()) return;
+  const sb = LLC.sb;
+
+  const { data: enr } = await sb.from("enrolments").select("class_id, pupil_id");
+  LLC.enrolments = enr || [];
+
+  if (LLC.profile.role === "student") {
+    const { data: subs } = await sb.from("submissions")
+      .select("homework_id, score, submitted_at, marked_at")
+      .eq("pupil_id", LLC.profile.id);
+    LLC.submissions = subs || [];
+    return;
+  }
+
+  /* staff and parents see rows across the classes RLS lets them have */
+  const { data: hw } = await sb.from("homework")
+    .select("id, class_id, title, module_id, due_on")
+    .order("due_on", { ascending: false }).limit(200);
+  LLC.homework = hw || [];
+
+  const ids = (LLC.homework || []).map(h => h.id);
+  if (ids.length) {
+    const { data: subs } = await sb.from("submissions")
+      .select("homework_id, pupil_id, score, submitted_at, marked_at")
+      .in("homework_id", ids);
+    LLC.submissions = subs || [];
+  } else {
+    LLC.submissions = [];
+  }
+
+  const { data: att } = await sb.from("attendance")
+    .select("pupil_id, class_id, on_date, mark")
+    .order("on_date", { ascending: false }).limit(2000);
+  LLC.attendance = att || [];
+
+  const { data: pts } = await sb.from("points")
+    .select("pupil_id, source, amount, reason, at")
+    .order("at", { ascending: false }).limit(1000);
+  LLC.points = pts || [];
+}
+
+/* ============================================================
+   Mapping a school onto the shapes the screens already read
+   ============================================================ */
+
+const LLV_MARK = { present: "p", late: "l", absent: "a", excused: "e" };
+const LLV_UNMARK = { p: "present", l: "late", a: "absent", e: "excused" };
+
+/* term attendance as a percentage, counting late as half a day —
+   which is what the paper register at the madrasah does */
+function llvAttPct(pupilId) {
+  const rows = (LLC.attendance || []).filter(a => a.pupil_id === pupilId);
+  if (!rows.length) return null;
+  const score = rows.reduce((a, r) =>
+    a + (r.mark === "present" ? 1 : r.mark === "late" ? 0.5 : 0), 0);
+  return Math.round(score / rows.length * 100);
+}
+
+function llvDateISO(d) {
+  const t = d || new Date();
+  return t.getFullYear() + "-" +
+    String(t.getMonth() + 1).padStart(2, "0") + "-" +
+    String(t.getDate()).padStart(2, "0");
+}
+
+function llvDueText(iso) {
+  if (!iso) return "no date";
+  const d = new Date(iso + "T00:00:00");
+  if (isNaN(d)) return String(iso);
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+/* The swap. Everything the screens read is replaced in place, so no
+   rendering code below needs to know the difference. */
+function llvAdopt() {
+  if (!llvLive()) return false;
+
+  /* ---- classes ---- */
+  if (LLC.classes) {
+    DB.classes.length = 0;
+    LLC.classes.forEach(c => DB.classes.push({
+      id: c.id, name: c.name, room: c.room || "—",
+      teacher: "", size: 0, join_code: c.join_code,
+    }));
+  }
+
+  /* ---- children ---- */
+  if (LLC.pupils) {
+    DB.students.length = 0;
+    LLC.pupils.forEach(p => {
+      const enr = (LLC.enrolments || []).find(e => e.pupil_id === p.id);
+      const att = llvAttPct(p.id);
+      DB.students.push({
+        id: p.id, name: p.full_name, cls: enr ? enr.class_id : "",
+        att: att == null ? 0 : att,
+        attKnown: att != null,
+        best: null, plays: 0,
+        guardian: "—",
+        /* there is no fees table yet — saying "paid" would be a lie */
+        fees: "unknown",
+      });
+    });
+    DB.classes.forEach(c => {
+      c.size = DB.students.filter(s => s.cls === c.id).length;
+    });
+  }
+
+  /* ---- homework, with who has handed in ---- */
+  if (LLC.homework && LLC.profile.role !== "student") {
+    DB.homework.length = 0;
+    LLC.homework.forEach(h => {
+      const subs = (LLC.submissions || []).filter(s => s.homework_id === h.id);
+      const set = (LLC.enrolments || []).filter(e => e.class_id === h.class_id).length;
+      DB.homework.push({
+        id: h.id, title: h.title, cls: h.class_id,
+        due: llvDueText(h.due_on),
+        set: set, done: subs.length,
+        marked: subs.filter(s => s.marked_at).length,
+      });
+    });
+  }
+
+  /* ---- the child's own list (a parent reads the same array) ---- */
+  if ((LLC.profile.role === "student" || LLC.profile.role === "parent") && LLC.homework) {
+    HOMEWORK.length = 0;
+    LLC.homework.forEach(h => HOMEWORK.push({
+      id: h.id, title: h.title,
+      what: h.module_id ? llvModuleName(h.module_id) : "Set by your teacher",
+      due: llvDueText(h.due_on),
+      late: h.due_on ? (h.due_on < llvDateISO()) : false,
+      mod: h.module_id || null, opts: {},
+    }));
+  }
+
+  llvAdopted = true;
+  return true;
+}
+
+function llvModuleName(id) {
+  const names = {
+    tracing: "Tracing", mazes: "Letter maze", quizzes: "Quiz",
+    sayitback: "Speaking", reading: "Reading", assessments: "Assessment",
+    colouring: "Colouring", books: "Reading",
+  };
+  return names[id] || id;
+}
+
+/* After every pull, fetch the rest and adopt it. llcPull is a plain
+   function declaration in the CLOUD block, so it can be taken over. */
+if (typeof llcPull === "function") {
+  const llcPullBase = llcPull;
+  llcPull = async function () {
+    const out = await llcPullBase.apply(this, arguments);
+    try {
+      await llvPullExtra();
+      llvAdopt();
+      if (typeof render === "function") render();
+    } catch (e) {
+      /* a failed extra pull must never take the garden down with it */
+      if (typeof llcSetStatus === "function") {
+        llcSetStatus("offline", "could not read the school's records");
+      }
+    }
+    return out;
+  };
+}
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Who am I, really
+   ------------------------------------------------------------
+   me() returned a hard-coded Aisha Khan. Once signed in it has to
+   be the actual profile, or a child earns coins for somebody else
+   and a teacher's gift lands nowhere.
+   ============================================================ */
+
+const llvMeBase = me;
+me = function () {
+  if (llvLive() && LLC.profile) {
+    return {
+      id: LLC.profile.id,
+      name: LLC.profile.full_name,
+      role: LLC.profile.role,
+      child: null,
+    };
+  }
+  return llvMeBase.apply(this, arguments);
+};
+
+/* ============================================================
+   Points — the balance comes from the ledger
+   ============================================================ */
+
+/* every coin this child has been given, from the points table */
+function llvPointsOf(pupilId) {
+  return (LLC.points || [])
+    .filter(p => p.pupil_id === pupilId || !p.pupil_id)
+    .reduce((a, p) => a + Number(p.amount || 0), 0);
+}
+
+function llvPointsBySource(pupilId) {
+  const out = {};
+  (LLC.points || [])
+    .filter(p => p.pupil_id === pupilId || !p.pupil_id)
+    .forEach(p => { out[p.source] = (out[p.source] || 0) + Number(p.amount || 0); });
+  return out;
+}
+
+/* earnSources reads the register for "Coming to class". That was a
+   number out of DB; now it is the child's real attendance. */
+if (typeof earnSources === "function") {
+  const earnSourcesBase = earnSources;
+  earnSources = function () {
+    const rows = earnSourcesBase.apply(this, arguments);
+    if (!llvLive() || !LLC.profile) return rows;
+    const att = llvAttPct(LLC.profile.id);
+    const row = rows.find(r => r.id === "att");
+    if (row) {
+      if (att == null) {
+        row.note = "no register marked yet";
+        row.owed = 0;
+      } else {
+        const e = earnMarks();
+        row.note = att + "% on the register · " + EARN_RATE.attend + " coins a point";
+        row.owed = Math.max(0, att - e.att) * EARN_RATE.attend;
+      }
+    }
+    return rows;
+  };
+}
+
+/* the club split: teacher and family gifts come from the ledger */
+if (typeof earnClubSplit === "function") {
+  const earnClubSplitBase = earnClubSplit;
+  earnClubSplit = function (childId) {
+    const out = earnClubSplitBase.apply(this, arguments);
+    if (!llvLive()) return out;
+    const by = llvPointsBySource(childId);
+    out.teacher  = by.teacher_gift || 0;
+    out.family   = by.parent_gift || 0;
+    out.homework = by.homework || 0;
+    out.total    = llvPointsOf(childId);
+    out.joining  = Math.max(0, out.total - out.teacher - out.family - out.homework);
+    return out;
+  };
+}
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   The register, actually marked
+   ------------------------------------------------------------
+   mark() used to toggle a button and stop. Every tap is now an
+   upsert on (pupil_id, on_date), which is the unique key in the
+   schema, so marking the same child twice corrects rather than
+   duplicates. Offline it still just toggles the button, exactly
+   as before.
+   ============================================================ */
+
+const LLV_ATT = { saving: 0, date: null, classId: null };
+
+function llvAttDate() { return LLV_ATT.date || llvDateISO(); }
+
+async function llvMarkServer(pupilId, kind) {
+  if (!llvLive() || !pupilId) return;
+  const classId = LLV_ATT.classId ||
+    ((DB.students.find(s => s.id === pupilId) || {}).cls);
+  if (!classId) return;
+  LLV_ATT.saving++;
+  llvPaintAttState();
+  try {
+    const { error } = await LLC.sb.from("attendance").upsert({
+      pupil_id: pupilId, class_id: classId,
+      on_date: llvAttDate(), mark: LLV_UNMARK[kind] || "present",
+      marked_by: LLC.profile.id,
+    }, { onConflict: "pupil_id,on_date" });
+    if (error) throw error;
+    /* keep the local copy in step so the percentages move at once */
+    const rows = LLC.attendance || (LLC.attendance = []);
+    const found = rows.find(r => r.pupil_id === pupilId && r.on_date === llvAttDate());
+    if (found) found.mark = LLV_UNMARK[kind];
+    else rows.push({ pupil_id: pupilId, class_id: classId,
+                     on_date: llvAttDate(), mark: LLV_UNMARK[kind] });
+  } catch (e) {
+    toast("Could not save that mark — check the connection");
+  } finally {
+    LLV_ATT.saving = Math.max(0, LLV_ATT.saving - 1);
+    llvPaintAttState();
+  }
+}
+
+function llvPaintAttState() {
+  const el = document.getElementById("llvAttState");
+  if (!el) return;
+  el.textContent = LLV_ATT.saving ? "Saving…" : "Saved";
+  el.className = LLV_ATT.saving ? "note" : "pill green";
+}
+
+/* mark/markAll are called from inline onclick, which resolves through
+   window at call time, so reassigning them here is enough. */
+const llvMarkBase = window.mark;
+window.mark = function (btn, kind) {
+  llvMarkBase(btn, kind);
+  const seg = btn.parentElement;
+  const pupil = seg && seg.dataset ? seg.dataset.student : null;
+  if (pupil) llvMarkServer(pupil, kind);
+};
+
+const llvMarkAllBase = window.markAll;
+window.markAll = function (kind) {
+  llvMarkAllBase(kind);
+  if (!kind || !llvLive()) return;
+  document.querySelectorAll("#attList .seg").forEach(seg => {
+    if (seg.dataset && seg.dataset.student) llvMarkServer(seg.dataset.student, kind);
+  });
+};
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   The screens
+   ------------------------------------------------------------
+   Nothing here re-renders a table. The data underneath already
+   changed; these wrappers only add the banner, fill the register
+   with the right class, and say something useful when a real
+   school is simply empty.
+   ============================================================ */
+
+function llvWrapPage(key, what, emptyWhen, emptyMsg) {
+  const base = PAGES[key];
+  if (typeof base !== "function") return;
+  PAGES[key] = function () {
+    const html = base.apply(this, arguments);
+    return llvDress(html, what, emptyWhen, emptyMsg);
+  };
+}
+
+/* The banner goes straight after the <h1>, and the "there is nothing
+   here" card straight after the banner, so an empty real school reads
+   as empty rather than as broken. Only the FIRST </h1> is replaced —
+   String.replace with a non-global regex does exactly that. */
+function llvDress(html, what, emptyWhen, emptyMsg) {
+  let add = llvBanner(what);
+  if (llvLive() && llvAdopted && typeof emptyWhen === "function" && emptyWhen()) {
+    add += '<div class="card"><div class="llv-empty">' + esc(emptyMsg) + "</div></div>";
+  }
+  return html.replace("</h1>", "</h1>" + add);
+}
+
+llvWrapPage("dash", "Everything on this page",
+  () => !DB.students.length,
+  "No children on the roster yet. Add them in Roster, or approve a parent's class request.");
+
+llvWrapPage("roster", "This roster",
+  () => !DB.students.length,
+  "Nobody is enrolled yet.");
+
+llvWrapPage("attendance", "This register",
+  () => !DB.students.length,
+  "No children to mark — nobody is enrolled in this class yet.");
+
+/* ---------- the register needs a real class and a real date ---------- */
+
+/* Pick a class if none is picked, and drop one that no longer exists —
+   which is what a leftover demo class id is after adoption. */
+function llvSettleClass() {
+  const have = DB.classes.some(c => c.id === LLV_ATT.classId);
+  if (!have) LLV_ATT.classId = DB.classes.length ? DB.classes[0].id : null;
+}
+
+function llvClassOptions() {
+  llvSettleClass();
+  return DB.classes.map(c =>
+    '<option value="' + esc(c.id) + '"' +
+    (c.id === LLV_ATT.classId ? " selected" : "") + ">" +
+    esc(c.name) + "</option>").join("");
+}
+
+window.llvPickClass = function (id) { LLV_ATT.classId = id; render(); };
+window.llvPickDate  = function (d)  { LLV_ATT.date = d; render(); };
+
+const llvAttendanceBase = PAGES.attendance;
+PAGES.attendance = function () {
+  let html = llvAttendanceBase.apply(this, arguments);
+  if (!llvLive() || !llvAdopted) return html;
+
+  /* The picked class has to be settled BEFORE the rows are built. It
+     used to be chosen inside llvClassOptions, which runs further down
+     when the picker is assembled, so the first render of the register
+     filtered on a null class and drew nobody. */
+  llvSettleClass();
+
+  /* the original hard-codes class c1; replace the whole list with the
+     picked class, and show what is already marked for the day */
+  const kids = DB.students.filter(s => s.cls === LLV_ATT.classId);
+  const day = llvAttDate();
+  const rows = kids.map(s => {
+    const got = (LLC.attendance || []).find(a => a.pupil_id === s.id && a.on_date === day);
+    const k = got ? LLV_MARK[got.mark] : null;
+    const att = llvAttPct(s.id);
+    const on = (x) => (k === x ? "true" : "false");
+    return '<div class="att-row"><div><strong>' + esc(s.name) + "</strong>" +
+      '<div class="note">Term attendance ' +
+      (att == null ? "not marked yet" : att + "%") + "</div></div>" +
+      '<div class="seg" data-student="' + esc(s.id) + '" style="grid-column:2/5">' +
+      '<button class="p" aria-pressed="' + on("p") + '" onclick="mark(this,\'p\')">P</button>' +
+      '<button class="l" aria-pressed="' + on("l") + '" onclick="mark(this,\'l\')">L</button>' +
+      '<button class="a" aria-pressed="' + on("a") + '" onclick="mark(this,\'a\')">A</button>' +
+      "</div></div>";
+  }).join("");
+
+  html = html.replace(/(<div id="attList">)[\s\S]*?(<\/div>\s*<\/div>)/,
+    "$1" + rows + "$2");
+
+  /* a class picker and a date, because a register without either is
+     a register of nobody on no day */
+  const picker = '<div class="row" style="margin-bottom:10px;gap:8px;flex-wrap:wrap">' +
+    '<label class="note">Class <select onchange="llvPickClass(this.value)" ' +
+    'style="font:inherit;padding:6px 9px;border-radius:10px;' +
+    'border:1.5px solid var(--line);background:var(--bg);color:inherit">' +
+    llvClassOptions() + "</select></label>" +
+    '<label class="note">Date <input type="date" value="' + esc(day) + '" ' +
+    'onchange="llvPickDate(this.value)" style="font:inherit;padding:6px 9px;' +
+    'border-radius:10px;border:1.5px solid var(--line);background:var(--bg);' +
+    'color:inherit"></label>' +
+    '<span id="llvAttState" class="pill green">Saved</span></div>';
+
+  html = html.replace('<div id="attList">', picker + '<div id="attList">');
+
+  /* the subtitle still says Saturday 22 August and class c1 */
+  const cname = (DB.classes.find(c => c.id === LLV_ATT.classId) || {}).name || "—";
+  html = html.replace(/<p class="sub">[\s\S]*?<\/p>/,
+    '<p class="sub">' + esc(cname) + " · " + esc(llvDueText(day)) + "</p>");
+
+  return html;
+};
+
+/* ---------- handing homework in writes a submission ---------- */
+
+if (typeof llRecord === "function") {
+  const llvRecordBase = llRecord;
+  llRecord = function (moduleId, score, label, letters) {
+    const out = llvRecordBase.apply(this, arguments);
+    try {
+      if (llvLive() && LLC.profile && LLC.profile.role === "student" &&
+          typeof play === "object" && play && play.hw) {
+        LLC.sb.from("submissions").upsert({
+          homework_id: play.hw,
+          pupil_id: LLC.profile.id,
+          score: Math.max(0, Math.min(100, Math.round(out && out.score || score))),
+        }, { onConflict: "homework_id,pupil_id" }).then(() => {}, () => {});
+      }
+    } catch (e) {}
+    return out;
+  };
+}
+
+/* ---------- the child's homework status comes from submissions ---------- */
+
+if (typeof hwStatus === "function") {
+  const llvHwStatusBase = hwStatus;
+  hwStatus = function (id) {
+    if (llvLive() && LLC.submissions) {
+      const s = LLC.submissions.find(x => x.homework_id === id);
+      if (s) return { status: s.marked_at ? "marked" : "done",
+                      score: s.score == null ? 0 : s.score,
+                      when: Date.parse(s.submitted_at || 0) || 0 };
+      return null;
+    }
+    return llvHwStatusBase.apply(this, arguments);
+  };
+}
+
+/* ---------- parent and student homework get the banner too ---------- */
+
+/* PAGES.homework already forks student/parent away from the staff
+   table; keep that fork and dress both sides of it. */
+const llvHomeworkBase = PAGES.homework;
+PAGES.homework = function () {
+  const html = llvHomeworkBase.apply(this, arguments);
+  const kid = (role === "student" || role === "parent");
+  return llvDress(html, "This homework",
+    () => (kid ? !HOMEWORK.length : !DB.homework.length),
+    kid ? "Nothing set for you yet." : "No homework has been set yet.");
+};
+
+/* ---------- a fees column that does not invent a payment ----------
+   feePill only knew paid / due / overdue and returned undefined for
+   anything else, which printed the word "undefined" in the roster the
+   moment real children arrived. There is no fees table in the schema,
+   so the honest answer is that nobody knows. */
+
+if (typeof feePill === "function") {
+  const llvFeePillBase = feePill;
+  feePill = function (state) {
+    const out = llvFeePillBase.apply(this, arguments);
+    if (out) return out;
+    return '<span class="pill">Not recorded</span>';
+  };
+}
+
+/* bring it up for a session that was already signed in when this
+   block loaded — llcConnect runs before it on a normal boot */
+if (llvLive()) { llvPullExtra().then(() => { llvAdopt(); render(); }, () => {}); }
+</script>
