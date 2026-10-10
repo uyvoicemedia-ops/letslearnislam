@@ -1,0 +1,165 @@
+<!-- ============================================================
+     Playing the quiz on more than one device
+     ------------------------------------------------------------
+     BroadcastChannel carries the quiz between TABS of one browser
+     and no further — not to another browser on the same computer,
+     and certainly not to a phone. That was the whole limit.
+
+     `tools/llserve.py` now serves the file to the whole wifi and
+     relays quiz messages between whoever is connected, over plain
+     HTTP long-polling. No websockets, no npm, nothing to install —
+     it is the standard library and one file.
+
+     The transport order is: a real Supabase project if one is
+     configured, then the local relay if the page was served by it,
+     then BroadcastChannel, then nothing. Each client stamps its
+     messages with a `src` so the relay does not echo them back —
+     BroadcastChannel excludes the sender for free and a relay does
+     not.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* Is this page being served by llserve.py, or by something that only
+   knows how to hand out files? Asked once, at load. */
+let LAN_OK = false;
+(function () {
+  if (!/^https?:/.test(location.protocol)) return;
+  fetch("/api/ping", { cache: "no-store" })
+    .then(r => r.ok ? r.json() : null)
+    .then(j => { LAN_OK = !!(j && j.ok); })
+    .catch(() => { LAN_OK = false; });
+})();
+
+const lanId = () => "c" + Math.random().toString(36).slice(2, 10);
+
+const QuizNetLan = {
+  code: "", src: "", since: -1, stop: false, ctrl: null, onMsg: null,
+
+  open(code, onMsg) {
+    this.code = code; this.onMsg = onMsg;
+    this.src = lanId(); this.since = -1; this.stop = false;
+    this.loop();
+  },
+
+  loop() {
+    if (this.stop) return;
+    this.ctrl = new AbortController();
+    fetch("/api/quiz/" + encodeURIComponent(this.code) +
+          "?since=" + this.since + "&src=" + this.src,
+          { cache: "no-store", signal: this.ctrl.signal })
+      .then(r => r.json())
+      .then(j => {
+        if (this.stop) return;
+        this.since = j.seq;
+        (j.msgs || []).forEach(m => { try { this.onMsg(m); } catch (e) {} });
+        this.loop();
+      })
+      .catch(() => {
+        if (this.stop) return;
+        /* the wifi dropped, or the laptop went to sleep. Wait a moment
+           and pick the thread up again rather than dying silently. */
+        setTimeout(() => this.loop(), 1200);
+      });
+  },
+
+  send(m) {
+    fetch("/api/quiz/" + encodeURIComponent(this.code), {
+      method: "POST", cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ src: this.src, m }),
+    }).catch(() => {});
+  },
+
+  close() {
+    this.stop = true;
+    try { this.ctrl && this.ctrl.abort(); } catch (e) {}
+    this.ctrl = null;
+  },
+};
+
+/* ---------- fold it into the transport chooser ---------- */
+
+const QuizNetOpenLan = QuizNet.open.bind(QuizNet);
+QuizNet.open = function (code, onMsg) {
+  this.close();
+  this.onMsg = onMsg;
+  if (typeof LLC !== "undefined" && LLC.sb) return QuizNetOpenLan(code, onMsg);
+  if (LAN_OK) {
+    this.kind = "lan";
+    this.ch = QuizNetLan;
+    QuizNetLan.open(code, onMsg);
+    return this.kind;
+  }
+  return QuizNetOpenLan(code, onMsg);
+};
+
+const QuizNetSendLan = QuizNet.send.bind(QuizNet);
+QuizNet.send = function (m) {
+  if (this.kind === "lan") { QuizNetLan.send(m); return; }
+  return QuizNetSendLan(m);
+};
+
+const QuizNetCloseLan = QuizNet.close.bind(QuizNet);
+QuizNet.close = function () {
+  if (this.kind === "lan") { QuizNetLan.close(); this.ch = null; this.kind = "none"; return; }
+  return QuizNetCloseLan();
+};
+
+/* ---------- and tell the teacher what to write on the board ---------- */
+
+/* 127.0.0.1 means "this computer" and nothing else can reach it, so if
+   that is how the page was opened the address is no use to anybody. */
+function quizJoinUrl() {
+  const h = location.hostname;
+  if (!/^https?:/.test(location.protocol)) return null;
+  if (h === "127.0.0.1" || h === "localhost" || h === "::1") return null;
+  return location.origin + "/index.html";
+}
+
+function quizHowToJoin() {
+  if (typeof LLC !== "undefined" && LLC.sb) {
+    return `<p class="note" style="text-align:center;margin:8px 0 0">
+      Anyone signed in can join from anywhere — the room is going through your
+      school's account.</p>`;
+  }
+  if (!LAN_OK) {
+    return `<p class="note" style="text-align:center;margin:8px 0 0">
+      This page is being served as a plain file, so the room only reaches
+      <strong>other tabs of this browser</strong>. To let the class join from their
+      own devices, run <code>python3 tools/llserve.py</code> and open the address
+      it prints.</p>`;
+  }
+  const url = quizJoinUrl();
+  if (!url) {
+    return `<p class="note" style="text-align:center;margin:8px 0 0">
+      The relay is running, so any device on this wifi can join — but you opened
+      this on <code>127.0.0.1</code>, which means "this computer only".
+      Reopen it on the wifi address <code>llserve.py</code> printed and show the
+      class that one.</p>`;
+  }
+  return `<div class="qz-join">
+      <p class="note" style="margin:0 0 4px">On their own device, go to</p>
+      <div class="qz-url">${esc(url.replace(/^https?:\/\//, ""))}</div>
+      <p class="note" style="margin:4px 0 0">then Quiz, then this code.</p>
+    </div>`;
+}
+
+/* slide it into the lobby, under the code */
+const quizHostPageLan = quizHostPage;
+quizHostPage = function () {
+  let html = quizHostPageLan.apply(this, arguments);
+  if (QZ.stage !== "lobby") return html;
+  const anchor = '<p class="note" style="text-align:center;margin:0 0 8px">';
+  const i = html.indexOf(anchor);
+  if (i < 0) return html;
+  return html.slice(0, i) + quizHowToJoin() + html.slice(i);
+};
+</script>
+<style>
+  .qz-join { text-align:center; margin:10px 0 4px; padding:10px 12px;
+             background:#f3f0e6; border-radius:14px; }
+  .qz-url { font-weight:800; font-size:19px; letter-spacing:.01em;
+            font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+            color:var(--qaida-green); word-break:break-all; }
+</style>

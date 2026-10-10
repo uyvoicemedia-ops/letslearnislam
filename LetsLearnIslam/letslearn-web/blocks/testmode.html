@@ -1,0 +1,112 @@
+<!-- ============================================================
+     TESTMODE — unlimited coins, with a switch you can find
+     ------------------------------------------------------------
+     Unlimited mode already existed (g.noLimits: rest and food held
+     full, coins pinned to 999999). Two things were wrong with it.
+
+     It could only be turned OFF from the UI — the only way to turn it
+     on was to type llUnlimited(true) into a console. A testing tool
+     nobody can find is not a testing tool.
+
+     Worse, it wrote the fake balance straight into saved state and
+     never remembered what was there before. Switching it off left the
+     child sitting on 999999 coins for good, and on a connected project
+     llcPushGarden would have shipped that number to the server as a
+     real balance. So the real total is now put aside in g.deedsReal
+     when the switch goes on and handed back when it goes off.
+     ============================================================ -->
+<style>
+.tm-chip { font:inherit; font-size:11.5px; font-weight:800; cursor:pointer;
+  padding:5px 11px; border-radius:999px; border:1px solid var(--line);
+  background:var(--card); color:var(--muted); }
+.tm-chip:hover { background:var(--bg); }
+.tm-chip.on { background:#f6d64a; border-color:#e0bd2e; color:#4a3c05; }
+</style>
+<script>
+"use strict";
+
+const TM_COINS = 999999;
+const TM_START = 40;          // what a new garden begins with, in 0004's seed
+
+/* One switch for the whole thing. Kept as llUnlimited so the existing
+   "turn it off" button in the needs bar still works. */
+llUnlimited = function (on) {
+  const g = gState();
+  const want = on !== false;
+
+  if (want && !g.noLimits) {
+    /* Put the real balance aside BEFORE anything pins the fake one.
+       The llSave and render wrappers further up set g.deeds every time
+       they run, so this has to happen first or the real total is gone. */
+    if (g.deedsReal == null) g.deedsReal = g.deeds;
+    g.deeds = TM_COINS;
+  } else if (!want && g.noLimits) {
+    if (g.deedsReal != null) {
+      g.deeds = g.deedsReal;
+      g.deedsReal = null;
+    } else {
+      /* Switched on by the older code, which kept no record. Anything
+         is better than leaving a made-up 999999 behind. */
+      g.deeds = TM_START;
+      toast("Coins reset to " + TM_START + " — the old test mode did not remember your total");
+    }
+  }
+
+  g.noLimits = want;
+  const n = gNeeds();
+  n.energy = 100; n.food = 100; n.study = 100; n.asleep = false;
+  llSave();
+  if (want) toast("Test mode on — unlimited coins, rest and food");
+  else if (g.deedsReal == null) toast("Test mode off");
+  render();
+  return g.noLimits;
+};
+
+function tmOn() { const g = gState(); return !!(g && g.noLimits); }
+function tmToggle() { llUnlimited(!tmOn()); }
+
+/* ---------- the switch, in the header ----------
+   renderRoleSwitch() rewrites #roleSwitch every render, so this cannot
+   live inside it. It is mounted alongside and re-checked each time. */
+function tmMount() {
+  const header = document.querySelector("header");
+  if (!header) return;
+  let b = document.getElementById("tmChip");
+  if (!b) {
+    b = document.createElement("button");
+    b.id = "tmChip";
+    b.type = "button";
+    b.onclick = tmToggle;
+    const anchor = document.getElementById("llcChip")
+                || header.querySelector(".whoami");
+    header.insertBefore(b, anchor || null);
+  }
+  const on = tmOn();
+  b.className = "tm-chip" + (on ? " on" : "");
+  b.textContent = on ? "∞ Test mode" : "Test mode";
+  b.title = on
+    ? "Unlimited coins, rest and food. Your real coin total is put aside and comes back when you switch this off."
+    : "Turn on unlimited coins, rest and food for testing.";
+}
+
+const renderTm = window.render;
+window.render = function () {
+  const out = renderTm.apply(this, arguments);
+  try { tmMount(); } catch (e) {}
+  return out;
+};
+
+/* ---------- and say so where the coins are ---------- */
+const pageGardenTm = pageGarden;
+pageGarden = function () {
+  let html = pageGardenTm.apply(this, arguments);
+  if (!tmOn()) return html;
+  const real = gState().deedsReal;
+  return html.replace('<span id="deedCount">',
+    '<span id="deedCount" title="Test mode — your real total is '
+    + (real == null ? "not recorded" : real + " coins") + '">');
+};
+if (typeof PAGES !== "undefined" && PAGES.garden) PAGES.garden = pageGarden;
+
+render();
+</script>

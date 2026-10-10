@@ -1,0 +1,266 @@
+<!-- ============================================================
+     Everything else you can improve
+     ------------------------------------------------------------
+     Three things were true and two were not.
+
+     TRUE: the house already had five levels; the clock tower, the
+     bridge, the market stall and the shop were already tiered art
+     with four steps each. What they did NOT have was any way to
+     find that out — you had to tap the thing on the canvas and
+     notice the pips. So the "What you have built" panel now lists
+     every placed thing that can still be improved, with its level
+     and the price of the next one.
+
+     NOT TRUE: the madrasah stopped dead at level 3 and looked
+     almost the same at 3 as at 1. It now runs on the same kind of
+     ladder as a mosque — six levels for the small one, ten for the
+     academy — and it grows, gains a portico, a clock, a bell
+     cupola, trees and a fence on the way up.
+     ============================================================ -->
+<style>
+  .imp-row .lvl-pips { display:inline-flex; gap:3px; vertical-align:middle; margin-right:6px; }
+  .imp-row .lvl-pips i { width:7px; height:7px; border-radius:50%; background:#ded8cb; display:block; }
+  .imp-row .lvl-pips i.on { background:var(--qaida-green); }
+</style>
+<script>
+"use strict";
+
+/* ---------- the madrasah gets a real ladder ---------- */
+
+function schoolMaxLevel(def) {
+  const p = (def && def.plots) || 1;
+  return p >= 2 ? 10 : 6;
+}
+
+const buildingMaxLevelGrow = buildingMaxLevel;
+buildingMaxLevel = function (b) {
+  if (b && b.kind === "school") {
+    return schoolMaxLevel(SCHOOLS.find(s => s.id === b.id) || { plots: 1 });
+  }
+  return buildingMaxLevelGrow(b);
+};
+
+const schoolTier = (def, lvl) => {
+  const m = schoolMaxLevel(def);
+  return m <= 1 ? 1 : (Math.max(1, Math.min(m, lvl || 1)) - 1) / (m - 1);
+};
+
+/* one source of a madrasah's size, for the drawing AND the walking */
+function schoolSize(def, lvl) {
+  const big = def && def.id === "academy";
+  const g = 1 + 0.3 * schoolTier(def, lvl);
+  return { w: (big ? 2.4 : 1.8) * g, d: (big ? 1.7 : 1.4) * g, grow: g, big: !!big };
+}
+
+/* the interior gate followed a max of 3; it follows the real one now */
+const planTierGrow = planTier;
+planTier = function (kind) {
+  if (kind !== "school") return planTierGrow(kind);
+  const g = gState();
+  let best = 0;
+  (g.buildings || []).forEach(b => {
+    if (b.kind !== "school") return;
+    best = Math.max(best, schoolTier(SCHOOLS.find(s => s.id === b.id) || { plots: 1 }, b.lvl || 1));
+  });
+  return best;
+};
+
+/* ---------- and it grows, and gains things ---------- */
+
+const IBschoolGrow = IB.school;
+IB.school = function (c, id, u, v, W, H, t, night, lvl) {
+  const def = SCHOOLS.find(s => s.id === id) || { id, plots: 1 };
+  const max = schoolMaxLevel(def);
+  lvl = Math.max(1, Math.min(max, lvl || 1));
+  const tier = schoolTier(def, lvl);
+  const SZ = schoolSize(def, lvl);
+  const P = mqPal("sand", night);
+  const z = isoScale();
+  const w = SZ.w, d = SZ.d;
+  const u0 = u - w / 2, v0 = v - d / 2;
+  const t0 = u0 - 0.42, t1 = u0 + w + 0.42, s0 = v0 - 0.42, s1 = v0 + d + 0.42;
+
+  /* a swept yard, and a path to the door */
+  if (tier >= 0.15) {
+    const q = [[t0, s0], [t1, s0], [t1, s1], [t0, s1]].map(([a, b]) => isoPt(a, b, W, H));
+    c.fillStyle = night ? "#4a4b43" : "#e6e0ce";
+    c.beginPath(); q.forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y)); c.closePath(); c.fill();
+    c.strokeStyle = night ? "rgba(255,255,255,.06)" : "rgba(0,0,0,.06)"; c.lineWidth = 1; c.stroke();
+  }
+  /* a low wall round the yard, with a gap for the gate */
+  if (tier >= 0.55) {
+    isoWallRun(c, t0, s0, t1, s0, 0.6, 0.12, W, H, P, false);
+    isoWallRun(c, t0, s0, t0, s1, 0.6, 0.12, W, H, P, false);
+    isoWallRun(c, t1 - 0.12, s0, t1 - 0.12, s1, 0.6, 0.12, W, H, P, false);
+  }
+  if (tier >= 0.4) {                                     // trees behind it
+    [[t0 + 0.3, s0 + 0.32], [t1 - 0.3, s0 + 0.32]].forEach(([tu, tv]) =>
+      IB.tree(c, tu, tv, W, H, t, night, "cypress"));
+  }
+
+  /* the building itself, drawn at the size this level has earned.
+     Scaling the whole canvas about the plot's own ground point is the
+     honest way to grow art that was written for one fixed size — the
+     alternative is four renderers that disagree with each other. */
+  const anchor = isoPt(u, v, W, H);
+  c.save();
+  c.translate(anchor.x, anchor.y);
+  c.scale(SZ.grow, SZ.grow);
+  c.translate(-anchor.x, -anchor.y);
+  /* capped at 2: the old renderer draws its own little clock at level 3
+     and we draw a bigger one that tells the actual time, so letting both
+     through gave every madrasah two clocks */
+  IBschoolGrow(c, id, u, v, W, H, t, night, tier >= 0.34 ? 2 : 1);
+  c.restore();
+
+  const bodyH = (SZ.big ? 2.0 : 1.45) * SZ.grow;
+
+  /* a portico across the front, which is what a school gains first */
+  if (tier >= 0.3) {
+    const n = SZ.big ? 5 : 4;
+    const pv = v0 + d + 0.16;
+    for (let i = 0; i <= n; i++) {
+      const cu = u0 + 0.12 + (w - 0.24) * (i / n);
+      isoCyl(c, cu, pv, 0.045, 0.95, W, H, mqShade(P.wall, 1.04));
+    }
+    const a = isoPt(u0 + 0.06, pv, W, H), b = isoPt(u0 + w - 0.06, pv, W, H);
+    c.fillStyle = mqShade(P.wall, .96);
+    c.beginPath();
+    c.moveTo(a.x, a.y - isoH(0.95)); c.lineTo(b.x, b.y - isoH(0.95));
+    c.lineTo(b.x, b.y - isoH(1.12)); c.lineTo(a.x, a.y - isoH(1.12));
+    c.closePath(); c.fill();
+    c.strokeStyle = P.trim; c.lineWidth = Math.max(1, 1.6 * z); c.stroke();
+  }
+
+  /* a clock over the door */
+  if (tier >= 0.5) {
+    const q = isoPt(u, v0 + d, W, H);
+    const cy = q.y - isoH(bodyH * 0.86), r = Math.max(6, 9 * z);
+    c.fillStyle = night ? "#efe6cf" : "#fbf7ea";
+    c.beginPath(); c.arc(q.x, cy, r, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = P.trim; c.lineWidth = Math.max(1.6, 2.2 * z); c.stroke();
+    const now = new Date();
+    const hh = (now.getHours() % 12) / 12 * Math.PI * 2 - Math.PI / 2;
+    const mm = now.getMinutes() / 60 * Math.PI * 2 - Math.PI / 2;
+    c.strokeStyle = "#3b3a35"; c.lineWidth = Math.max(1.4, 2 * z);
+    c.beginPath(); c.moveTo(q.x, cy); c.lineTo(q.x + Math.cos(hh) * r * 0.5, cy + Math.sin(hh) * r * 0.5); c.stroke();
+    c.lineWidth = Math.max(1, 1.4 * z);
+    c.beginPath(); c.moveTo(q.x, cy); c.lineTo(q.x + Math.cos(mm) * r * 0.78, cy + Math.sin(mm) * r * 0.78); c.stroke();
+  }
+
+  /* a bell cupola on the ridge, once it is a proper school */
+  if (tier >= 0.72) {
+    const cu = u, cv = v - d * 0.1;
+    [[-0.11, -0.11], [0.11, -0.11], [-0.11, 0.11], [0.11, 0.11]].forEach(([du, dv]) =>
+      isoCyl(c, cu + du, cv + dv, 0.03, 0.4, W, H, mqShade(P.wall, 1.05), bodyH + 0.16));
+    isoDome(c, cu, cv, 0.3, 0.28, W, H, night ? "#7a4030" : "#b8563c", 0, "cone", bodyH + 0.56);
+    const q = isoPt(cu, cv, W, H);
+    isoFinial(c, q.x, q.y - isoH(bodyH + 0.86), Math.max(2, 3 * z), P.gold);
+  }
+
+  /* a flag by the gate, so a finished madrasah looks finished */
+  if (tier >= 0.9) {
+    const fu = t1 - 0.28, fv = s1 - 0.28;
+    isoCyl(c, fu, fv, 0.05, 1.5, W, H, night ? "#8a8172" : "#cfc6b2");
+    const q = isoPt(fu, fv, W, H);
+    const wave = Math.sin(t * 2) * 3 * z;
+    c.fillStyle = P.accent;
+    c.beginPath();
+    c.moveTo(q.x, q.y - isoH(1.5));
+    c.lineTo(q.x - 22 * z, q.y - isoH(1.44) + wave);
+    c.lineTo(q.x, q.y - isoH(1.24));
+    c.closePath(); c.fill();
+  }
+};
+
+/* what you can walk into has to grow with it */
+const isoSolidBoxesGrow = isoSolidBoxes;
+isoSolidBoxes = function () {
+  const out = isoSolidBoxesGrow();
+  const g = gState();
+  let k = 0;
+  (g.buildings || []).forEach(b => {
+    const box = out[k++];
+    if (!box || b.kind !== "school") return;
+    const SZ = schoolSize(SCHOOLS.find(s => s.id === b.id) || { id: b.id, plots: 1 }, b.lvl || 1);
+    box.u0 = b.u - SZ.w / 2; box.v0 = b.v - SZ.d / 2; box.w = SZ.w; box.d = SZ.d;
+  });
+  return out;
+};
+
+/* ---------- improving a placed thing straight from the panel ---------- */
+
+function itemUpgradeAt(i) {
+  const g = gState();
+  const it = (g.items || [])[i];
+  if (!it) return;
+  const def = tierDefOf(it.type);
+  const lvl = itemTier(it);
+  if (lvl >= ITEM_MAX_TIER) { toast(def.name + " is as good as it gets"); return; }
+  const cost = tierCost(def, lvl);
+  if (g.deeds < cost) { toast("You need " + (cost - g.deeds) + " more coins"); Snd.wrong(); return; }
+  if (!needsOk("improve")) return;
+  g.deeds -= cost; it.lvl = lvl + 1;
+  needsSpend("improve");
+  llSave(); Snd.cheer(); confetti(14);
+  toast(def.name + " — " + itemTierName(it.lvl));
+  render();
+}
+
+/* ---------- and listing everything that still can be ---------- */
+
+const improveSectionGrow = improveSection;
+improveSection = function () {
+  let html = improveSectionGrow.apply(this, arguments);
+  const g = gState();
+
+  /* group the placed items by kind, so one row per kind of thing
+     rather than forty rows for forty flowers */
+  const groups = {};
+  (g.items || []).forEach((it, i) => {
+    const def = tierDefOf(it.type);
+    if (!def || !(GI2[it.type] && GI2[it.type].tiered)) return;
+    const lvl = itemTier(it);
+    const gr = groups[it.type] || (groups[it.type] = { def, n: 0, best: 0, worstI: i, worst: 9 });
+    gr.n++;
+    gr.best = Math.max(gr.best, lvl);
+    if (lvl < gr.worst) { gr.worst = lvl; gr.worstI = i; }
+  });
+
+  const keys = Object.keys(groups).filter(k => groups[k].worst < ITEM_MAX_TIER);
+  if (!keys.length) return html;
+
+  keys.sort((a, b) => groups[a].worst - groups[b].worst || groups[b].n - groups[a].n);
+
+  const pips = (lvl) => `<span class="lvl-pips">${
+    Array.from({ length: ITEM_MAX_TIER }, (_, k) =>
+      `<i class="${k < lvl ? "on" : ""}"></i>`).join("")}</span>`;
+
+  const rows = keys.map(k => {
+    const gr = groups[k];
+    const cost = tierCost(gr.def, gr.worst);
+    return `<div class="imp-row">
+      <span class="em">${gr.def.em || "📦"}</span>
+      <span class="t">
+        <span class="n">${esc(gr.def.name)}${gr.n > 1 ? " ×" + gr.n : ""}</span>
+        <span class="s">${pips(gr.worst)}${esc(itemTierName(gr.worst))}${
+          gr.n > 1 && gr.best > gr.worst ? " · best is " + esc(itemTierName(gr.best)) : ""}</span>
+      </span>
+      <button class="btn${g.deeds >= cost ? " primary" : ""}"
+        onclick="itemUpgradeAt(${gr.worstI})">Improve — ${cost} 🌱</button>
+    </div>`;
+  }).join("");
+
+  const extra = `<h3 class="card-title" style="margin-top:4px">Everything else</h3>
+    <p class="note" style="margin:-4px 0 10px">The clock tower, the bridge, the shop and the stall
+      all have four steps, and so does almost everything you plant. Improving one improves the
+      plainest one you own first.</p>
+    ${rows}
+    <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">`;
+
+  // slide it in ahead of the rule the built-list ends with
+  const cut = html.lastIndexOf('<hr style="border:none;border-top:1px solid var(--line);margin:14px 0">');
+  if (cut < 0) return html + extra;
+  return html.slice(0, cut) + extra + html.slice(cut);
+};
+</script>

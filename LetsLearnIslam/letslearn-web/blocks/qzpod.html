@@ -1,0 +1,144 @@
+<!-- ============================================================
+     QZPOD — a podium after every question, not just at the end
+     ------------------------------------------------------------
+     The big podium only appeared once the whole set was finished, so
+     for fourteen questions the room had no idea who was winning. This
+     puts a small one on every reveal, on the teacher's screen and on
+     each child's, with a streak counter — which is the thing that
+     actually makes a class lean forward.
+
+     A streak is consecutive right answers. Getting one wrong ends it,
+     and so does not answering at all: the reset for a child who never
+     pressed anything happens at reveal, because that is the first
+     moment we know they ran out of time.
+     ============================================================ -->
+<style>
+.qz-mini { display:flex; align-items:flex-end; justify-content:center; gap:10px;
+           margin:2px 0 16px; border-bottom:2px solid var(--line); }
+.qz-mini .mp { flex:0 0 96px; display:flex; flex-direction:column;
+               align-items:center; justify-content:flex-end; }
+.qz-mini .mp .nm { font-weight:750; font-size:13px; margin-top:2px;
+                   max-width:96px; overflow:hidden; text-overflow:ellipsis;
+                   white-space:nowrap; }
+.qz-mini .mp .sc { font-size:12.5px; color:var(--muted); }
+.qz-mini .mp .step { width:100%; border-radius:10px 10px 0 0; margin-top:6px;
+                     display:grid; place-items:center; font-size:17px;
+                     border:1px solid var(--line); border-bottom:0; }
+.qz-mini .mp1 .step { height:46px; background:#f8dd90; }
+.qz-mini .mp2 .step { height:34px; background:#dce1e6; }
+.qz-mini .mp3 .step { height:25px; background:#e8cfb4; }
+.qz-mini .gain { font-size:12px; font-weight:800; color:var(--qaida-green); }
+.qz-streak { display:inline-flex; align-items:center; gap:3px; font-size:12px;
+             font-weight:800; color:#c2571f; background:#fdeee1;
+             border-radius:999px; padding:1px 7px; }
+.qz-mini-hd { text-align:center; font-size:12.5px; color:var(--muted);
+              margin:0 0 4px; }
+.qz-place .qz-streak { margin-left:4px; }
+</style>
+<script>
+"use strict";
+
+/* ---------- counting streaks ---------- */
+
+const quizHostHeardPod = quizHostHeard;
+quizHostHeard = function (m) {
+  if (m && m.t === "answer" && QZ.mode === "host" && QZ.stage === "asking") {
+    const p = QZ.players[m.nick], q = quizQ();
+    /* read it before the base handler marks them answered, or the
+       guard in there makes this look like a repeat */
+    if (p && q && p.answeredOrd !== QZ.ord) {
+      const right = m.pick === q.k;
+      p.streak = right ? (p.streak | 0) + 1 : 0;
+      if ((p.streak | 0) > (p.bestStreak | 0)) p.bestStreak = p.streak;
+    }
+  }
+  return quizHostHeardPod.apply(this, arguments);
+};
+
+/* Anyone who let the clock run out has broken their run. Reveal is the
+   first moment that is known. */
+const quizRevealPod = quizReveal;
+quizReveal = function () {
+  if (QZ.mode === "host") {
+    Object.keys(QZ.players).forEach(n => {
+      if (QZ.players[n].answeredOrd !== QZ.ord) QZ.players[n].streak = 0;
+    });
+  }
+  return quizRevealPod.apply(this, arguments);
+};
+
+const quizBoardPod = quizBoard;
+quizBoard = function () {
+  const rows = quizBoardPod.apply(this, arguments);
+  rows.forEach(r => {
+    const p = QZ.players[r.nick];
+    if (p) { r.streak = p.streak | 0; r.bestStreak = p.bestStreak | 0; }
+  });
+  return rows;
+};
+
+function qzStreakTag(n) {
+  return (n | 0) >= 2 ? `<span class="qz-streak">🔥 ${n | 0}</span>` : "";
+}
+
+/* ---------- the small podium ---------- */
+
+function quizMiniPodium(board) {
+  const top = (board || []).filter(b => b.score > 0).slice(0, 3);
+  if (!top.length) return "";
+  const order = [1, 0, 2];                    // second, first, third
+  const medal = ["🥇", "🥈", "🥉"];
+  return `<p class="qz-mini-hd">Who is winning</p>
+    <div class="qz-mini">${order.map(i => {
+      const b = top[i];
+      if (!b) return "";
+      return `<div class="mp mp${i + 1}">
+        ${qzMonImg(b.av | 0, i === 0 ? 56 : 44, i === 0 ? "win" : "idle")}
+        <div class="nm">${esc(b.nick)}</div>
+        <div class="sc">${b.score}${b.last ? ' <span class="gain">+' + b.last + "</span>" : ""}</div>
+        ${qzStreakTag(b.streak)}
+        <div class="step">${medal[i]}</div>
+      </div>`;
+    }).join("")}</div>`;
+}
+
+/* ---------- put it on the reveal screens ---------- */
+
+const quizHostPagePod = quizHostPage;
+quizHostPage = function () {
+  const html = quizHostPagePod.apply(this, arguments);
+  if (QZ.stage !== "reveal") return html;
+  return html.replace('<div class="card qz-board">',
+    '<div class="card qz-board">' + quizMiniPodium(QZ.board));
+};
+
+/* The child sees the same three, and their own run. quizPlayerPage is
+   several wrappers deep and its reveal markup is not one predictable
+   string, so this appends rather than trying to splice. */
+const quizPlayerPagePod = quizPlayerPage;
+quizPlayerPage = function () {
+  const html = quizPlayerPagePod.apply(this, arguments);
+  if (QZ.stage !== "reveal" || QZ.mode !== "player") return html;
+  const board = QZ.board || [];
+  const mine = board.find(b => b.nick === QZ.me);
+  const run = mine && (mine.streak | 0) >= 2
+    ? `<p class="note" style="text-align:center;margin:2px 0 0">
+         ${mine.streak} right in a row — keep it going</p>`
+    : "";
+  const block = `<div class="card">${quizMiniPodium(board)}${run}</div>`;
+  const at = html.lastIndexOf("</div>");
+  return at < 0 ? html + block : html.slice(0, at) + block + html.slice(at);
+};
+
+/* a run is worth seeing on the full board too */
+const quizBoardHtmlPod = quizBoardHtml;
+quizBoardHtml = function (board, big) {
+  let html = quizBoardHtmlPod.apply(this, arguments);
+  (board || []).forEach(b => {
+    if ((b.streak | 0) < 2) return;
+    const nm = '<span class="nm">' + esc(b.nick) + "</span>";
+    html = html.replace(nm, nm + qzStreakTag(b.streak));
+  });
+  return html;
+};
+</script>

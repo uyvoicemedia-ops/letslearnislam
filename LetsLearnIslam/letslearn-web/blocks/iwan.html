@@ -1,0 +1,215 @@
+<!-- ============================================================
+     The iwan, and the things only one mosque has
+     ------------------------------------------------------------
+     The spec has carried an `iwan` for every Persian, Timurid and
+     Central Asian mosque in the list since they were written, and
+     the isometric renderer has never once read it. That single
+     omission is most of why the buildings in the garden all look
+     alike: the great portal is THE identifying feature of that
+     whole family, and Id Kah is a gate tower with a mosque behind
+     it. Without it you are looking at a box.
+
+     Also here: toron for the mud mosques, which is the West
+     African signature in the same way — the palm stakes are
+     permanent scaffolding for re-plastering, and drawing a mud
+     mosque without them is like drawing a windmill without sails.
+
+     Both are drawn last, over the finished building, because they
+     stand proud of the front wall.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* the front face of a mosque, in world coordinates:
+   k runs 0..1 left to right along it, hh is height */
+function mqFront(u0, v0, w, d, W, H) {
+  return (k, hh) => {
+    const q = isoPt(u0 + k * w, v0 + d, W, H);
+    return { x: q.x, y: q.y - isoH(hh) };
+  };
+}
+
+/* The projecting mass a pishtaq is the front of. IB.mosque already
+   builds this box; it just built it the same size for every mosque and
+   left the spec's width, offset and height on the floor. Both the box
+   and the face it wears are computed here so they cannot drift apart. */
+function mqIwanBox(sp, w, bodyH) {
+  const iw = sp.iwan || {};
+  const frac = Math.max(0.34, Math.min(0.62, (iw.w || 0.32) * 1.5));
+  return {
+    pw: w * frac,
+    px: (iw.x || 0) * w,
+    ph: bodyH * (1 + Math.max(0.22, Math.min(0.5, (iw.h || 1.4) * 0.26))),
+  };
+}
+
+/* the right-hand face: k runs 0..1 back to front along it */
+function mqSide(u0, v0, w, d, W, H) {
+  return (k, hh) => {
+    const q = isoPt(u0 + w, v0 + k * d, W, H);
+    return { x: q.x, y: q.y - isoH(hh) };
+  };
+}
+
+/* A pishtaq. The three things that make one read as a pishtaq rather
+   than as a doorway: the screen stands PROUD of the roofline, it is
+   framed by a rectangular tiled border, and the arch inside it is a
+   recess with a half-dome you can see into. Miss any one and you get
+   a hole in a wall. Guldasta — the slim engaged columns at the two
+   outer corners — are the fourth thing, and cheap to draw. */
+function mqIwan(c, F, P, top, z, night, tier) {
+  /* F already spans exactly the front of the pishtaq's own mass, so the
+     screen is that face inset by a hair, and its centre is the middle. */
+  const wide = 0.92, mid = 0.5;
+  const k0 = mid - wide / 2, k1 = mid + wide / 2;
+
+  const quad = (a, b, c2, d) => { c.beginPath(); [a,b,c2,d].forEach((p,i)=>c[i?"lineTo":"moveTo"](p.x,p.y)); c.closePath(); };
+  const face = [F(k0, 0), F(k1, 0), F(k1, top), F(k0, top)];
+
+  /* 1. the screen itself, a shade off the wall so it reads as separate */
+  quad(face[0], face[1], face[2], face[3]);
+  c.fillStyle = mqShade(P.wall, night ? 1.1 : 1.08); c.fill();
+
+  /* 2. the rectangular tiled frame round the arch */
+  const inb = 0.055;                       // how far the border is inset, in k
+  const inh = top * 0.05;
+  if (tier >= 0.25) {
+    c.save();
+    quad(face[0], face[1], face[2], face[3]); c.clip();
+    // clip OUT the middle so only the border strip is painted
+    c.beginPath();
+    [F(k0,0),F(k1,0),F(k1,top),F(k0,top)].forEach((p,i)=>c[i?"lineTo":"moveTo"](p.x,p.y));
+    c.closePath();
+    [F(k1-inb,inh),F(k0+inb,inh),F(k0+inb,top-inh),F(k1-inb,top-inh)]
+      .forEach((p,i)=>c[i?"lineTo":"moveTo"](p.x,p.y));
+    c.closePath();
+    c.clip("evenodd");
+    const a = F(k0, top), b = F(k1, 0);
+    c.globalAlpha = 0.9;
+    MQ.band(c, Math.min(a.x,b.x), Math.max(a.x,b.x), Math.min(a.y,b.y) - 4,
+      Math.abs(F(k0,0).y - F(k0,top)) + 8, P, "star");
+    c.restore();
+  }
+  c.strokeStyle = P.trim; c.lineWidth = 2.2 * z;
+  quad(face[0], face[1], face[2], face[3]); c.stroke();
+
+  /* 3. the recess: a tall pointed arch cut back into the screen */
+  const ins = wide * 0.17;
+  const a0 = k0 + ins, a1 = k1 - ins;
+  const springs = top * 0.5;
+  const apex = F(mid, top * 0.9);
+  const arc = () => {
+    c.beginPath();
+    const li = F(a0, 0), ls = F(a0, springs), rs = F(a1, springs), ri = F(a1, 0);
+    c.moveTo(li.x, li.y); c.lineTo(ls.x, ls.y);
+    c.quadraticCurveTo(F(a0, top * 0.84).x, F(a0, top * 0.84).y, apex.x, apex.y);
+    c.quadraticCurveTo(F(a1, top * 0.84).x, F(a1, top * 0.84).y, rs.x, rs.y);
+    c.lineTo(ri.x, ri.y); c.closePath();
+  };
+  arc();
+  c.fillStyle = mqShade(P.wall, night ? 0.4 : 0.5); c.fill();
+
+  /* 4. the half-dome at the back of it, and its ribs */
+  c.save(); arc(); c.clip();
+  const g0 = F(mid, top * 0.86), g1 = F(mid, springs * 0.35);
+  const gl = c.createLinearGradient(g0.x, g0.y, g1.x, g1.y);
+  gl.addColorStop(0, mqShade(P.wall, night ? 0.62 : 0.8));
+  gl.addColorStop(1, mqShade(P.wall, night ? 0.32 : 0.42));
+  c.fillStyle = gl; c.fill();
+  c.strokeStyle = "rgba(0,0,0,.18)"; c.lineWidth = 1;
+  for (let i = 1; i < 6; i++) {
+    const kk = a0 + (a1 - a0) * (i / 6);
+    const p0 = F(kk, springs * 0.9), p1 = F(mid, top * 0.86);
+    c.beginPath(); c.moveTo(p0.x, p0.y); c.lineTo(p1.x, p1.y); c.stroke();
+  }
+  c.restore();
+  arc(); c.strokeStyle = P.trim; c.lineWidth = 1.8 * z; c.stroke();
+
+  /* 5. the doorway standing in its shade */
+  const dw = wide * 0.19, dh = springs * 0.66;
+  c.beginPath();
+  const dl = F(mid - dw, 0), dr = F(mid + dw, 0);
+  c.moveTo(dl.x, dl.y);
+  c.lineTo(F(mid - dw, dh * 0.62).x, F(mid - dw, dh * 0.62).y);
+  c.quadraticCurveTo(F(mid, dh * 1.18).x, F(mid, dh * 1.18).y,
+                     F(mid + dw, dh * 0.62).x, F(mid + dw, dh * 0.62).y);
+  c.lineTo(dr.x, dr.y); c.closePath();
+  c.fillStyle = night ? "#191816" : "#2c2823"; c.fill();
+
+  /* 6. guldasta at the outer corners, and finials once it is grand */
+  [k0, k1].forEach(k => {
+    const b0 = F(k, 0), b1 = F(k, top);
+    c.strokeStyle = mqShade(P.wall, night ? 0.86 : 1.16);
+    c.lineWidth = Math.max(2.5, 5 * z);
+    c.beginPath(); c.moveTo(b0.x, b0.y); c.lineTo(b1.x, b1.y); c.stroke();
+    c.strokeStyle = P.trim; c.lineWidth = Math.max(1, 1.2 * z);
+    c.beginPath(); c.moveTo(b0.x, b0.y); c.lineTo(b1.x, b1.y); c.stroke();
+    if (tier >= 0.4) isoFinial(c, b1.x, b1.y, Math.max(2.4, 3.4 * z), P.gold);
+  });
+}
+
+/* Toron: the bundles of palm stake that stick out of a mud wall in
+   rows. They are permanent scaffolding for the yearly re-plastering,
+   and they are the whole silhouette of Sudano-Sahelian building —
+   a mud mosque without them is just a brown box. */
+function mqToron(c, F, G, P, bodyH, z, night) {
+  const col = night ? "#463726" : "#63492a";
+  c.lineCap = "round";
+  [[F, -1], [G, 1]].forEach(([face, dir]) => {
+    if (!face) return;
+    for (let row = 0; row < 3; row++) {
+      const hh = bodyH * (0.34 + row * 0.24);
+      for (let i = 0; i < 5; i++) {
+        const k = 0.12 + i * 0.19;
+        const p = face(k, hh);
+        c.strokeStyle = col;
+        c.lineWidth = Math.max(1.4, 2.1 * z);
+        c.beginPath();
+        c.moveTo(p.x, p.y);
+        c.lineTo(p.x + dir * 6.5 * z, p.y + 2.6 * z);
+        c.stroke();
+        c.strokeStyle = night ? "rgba(255,255,255,.08)" : "rgba(255,255,255,.20)";
+        c.lineWidth = Math.max(0.8, 0.9 * z);
+        c.beginPath();
+        c.moveTo(p.x + dir * 2 * z, p.y + 0.7 * z);
+        c.lineTo(p.x + dir * 6 * z, p.y + 2.3 * z);
+        c.stroke();
+      }
+    }
+  });
+  c.lineCap = "butt";
+}
+
+/* ---------- and hang both off the end of the mosque ---------- */
+
+const IBmosqueIwan = IB.mosque;
+IB.mosque = function (c, id, u, v, W, H, t, night, lvl) {
+  IBmosqueIwan(c, id, u, v, W, H, t, night, lvl);
+
+  const def = mosqueDef(id); if (!def) return;
+  const sp = def.spec;
+  if (!sp.iwan && sp.body !== "mud") return;
+
+  const maxL = mosqueMaxLevel(def);
+  lvl = Math.max(1, Math.min(maxL, lvl || 1));
+  const tier = mosqueTier(def, lvl);
+  const P = mqPal(sp.pal, night);
+  if (tier >= 0.6 && mqFeat(sp).gold) P.trim = P.gold;
+  const SZ = mqSize(def, lvl);
+  const w = SZ.w, d = SZ.d;
+  const u0 = u - w / 2, v0 = v - d / 2;
+  const bodyH = mqBodyH(sp, SZ.grow);
+  const z = isoScale();
+
+  if (sp.body === "mud") {
+    mqToron(c, mqFront(u0, v0, w, d, W, H), mqSide(u0, v0, w, d, W, H), P, bodyH, z, night);
+  }
+  if (sp.iwan) {
+    const B = mqIwanBox(sp, w, bodyH);
+    /* the face of the projecting mass, one hair proud of it so the
+       screen is never z-fought by the box it sits on */
+    const F = mqFront(u + B.px - B.pw / 2, v0, B.pw, d + 0.13, W, H);
+    mqIwan(c, F, P, B.ph, z, night, tier);
+  }
+};
+</script>

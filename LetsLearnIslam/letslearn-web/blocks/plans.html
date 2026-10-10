@@ -1,0 +1,580 @@
+<!-- ============================================================
+     The mosque and the madrasah get floor plans too
+     ------------------------------------------------------------
+     The house was rebuilt as an isometric floor plan you walk
+     around; the mosque and the madrasah were left in the old
+     side-on view. That is the whole reason you could sleep and eat
+     at home but only pace about in the other two — the actions
+     hang off rooms, and only the house had rooms.
+
+     Rather than write two more plan systems, all three now share
+     the one the house already had. PLAN is a const array, so it
+     cannot be reassigned — but its CONTENTS can be swapped, and
+     every helper reads it fresh. Walking into a building therefore
+     means: empty PLAN, push that building's rooms into it, and
+     point g.planRooms and g.planFurn at that building's own lists.
+     planRoom, planDoor, planWalkable, planRoute, planFrame and the
+     drag-and-drop all carry on working without knowing anything
+     changed.
+
+     Same aliasing trick as g.interiors. It is worth the small
+     strangeness because the alternative is three copies of the
+     same routing and collision code drifting apart.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* Every layout keeps its corridor first: PLAN[0] is the way in and
+   the spine every other room opens onto. */
+const PLAN_LAYOUTS = {
+
+  house: PLAN.slice(),          // exactly what it was
+
+  masjid: [
+    { id:"mhall",   em:"🚪", name:"Entrance",      cost:0,   u:0,   v:3.6, w:10,  d:1.7,
+      floor:"#d8cdb4", note:"shoe racks and the way out" },
+    { id:"musalla", em:"🕌", name:"Prayer hall",   cost:0,   u:0,   v:0,   w:6,   d:3.6,
+      floor:"#9c6b52", note:"pray here" },
+    { id:"halaqa",  em:"📖", name:"Study circle",  cost:400, u:6,   v:0,   w:4,   d:3.6,
+      floor:"#c2a878", note:"sit and read here" },
+    { id:"wudu",    em:"🚿", name:"Wudu area",     cost:300, u:0,   v:5.3, w:3.5, d:3.3,
+      floor:"#cfe0e4", note:"wash before you pray" },
+    { id:"mlib",    em:"📚", name:"Library",       cost:450, u:3.5, v:5.3, w:3,   d:3.3,
+      floor:"#cdb890", note:"shelves of books" },
+    { id:"mstore",  em:"🕯", name:"Store room",    cost:200, u:6.5, v:5.3, w:3.5, d:3.3,
+      floor:"#c9c4b4", note:"mats, lamps and spare copies" },
+  ],
+
+  school: [
+    { id:"shall",   em:"🚪", name:"Corridor",      cost:0,   u:0,   v:3.6, w:10,  d:1.7,
+      floor:"#dcc79f", note:"pegs, and the way out" },
+    { id:"class1",  em:"🪑", name:"Classroom",     cost:0,   u:0,   v:0,   w:5,   d:3.6,
+      floor:"#d9b98a", note:"tables, chairs and a board" },
+    { id:"class2",  em:"✏️", name:"Second class",  cost:500, u:5,   v:0,   w:5,   d:3.6,
+      floor:"#d3b083", note:"for the older group" },
+    { id:"slib",    em:"📚", name:"Library",       cost:450, u:0,   v:5.3, w:3.5, d:3.3,
+      floor:"#cdb890", note:"read here" },
+    { id:"soffice", em:"🗂", name:"Office",        cost:350, u:3.5, v:5.3, w:3,   d:3.3,
+      floor:"#c9c4b4", note:"where the register lives" },
+    { id:"swudu",   em:"🚿", name:"Washroom",      cost:250, u:6.5, v:5.3, w:3.5, d:3.3,
+      floor:"#e3ebed", note:"say the dua going in and out" },
+  ],
+};
+
+/* which rooms a building starts with */
+const PLAN_FREE = {
+  house:  ["hall"],
+  masjid: ["mhall", "musalla"],       // a mosque without a prayer hall is not a mosque
+  school: ["shall", "class1"],        // nor a madrasah without one classroom
+};
+
+/* ---------- swapping PLAN over ---------- */
+
+function planUse(kind) {
+  const layout = PLAN_LAYOUTS[kind];
+  if (!layout) return false;
+  const g = gState();
+
+  // carry the old single-building save over the first time
+  if (!g.roomsBy) g.roomsBy = { house: g.planRooms || ["hall"] };
+  if (!g.furnBy) g.furnBy = { house: g.planFurn || [] };
+  if (!g.roomsBy[kind]) g.roomsBy[kind] = PLAN_FREE[kind].slice();
+  if (!g.furnBy[kind]) g.furnBy[kind] = [];
+
+  PLAN.length = 0;
+  layout.forEach(r => PLAN.push(r));
+  g.planRooms = g.roomsBy[kind];      // the same array, not a copy, so
+  g.planFurn = g.furnBy[kind];        // everything that writes still writes home
+  Garden.planKind = kind;
+  Garden.planNeedsSetup = true;
+  return true;
+}
+
+/* Entering is NOT the moment to swap the layout. gardenEnter returns
+   while the dua is still on screen, and Garden.inside is only set once
+   the child says they have read it — so a hook there runs too early and
+   sees the building they just left. The swap therefore happens on the
+   first frame that actually draws inside, which is the same lesson the
+   room setup learned before it. */
+const gardenFramePlans = gardenFrame;
+gardenFrame = function (ctx, W, H, t) {
+  const kind = Garden.inside;
+  if (kind && PLAN_LAYOUTS[kind] && Garden.planKind !== kind) {
+    planUse(kind);
+    const g = gState(), ch = g.child;
+    ch.pu = PLAN[0].u + 1.0; ch.pv = PLAN[0].v + PLAN[0].d / 2;
+    ch.ptu = ch.pu; ch.ptv = ch.pv; ch.path = null;
+    llSave();
+    setTimeout(render, 0);
+  } else if (!kind && Garden.planKind) {
+    Garden.planKind = null;
+  }
+  return gardenFramePlans(ctx, W, H, t);
+};
+
+/* A reload lands with PLAN holding the house; if the save says we were
+   somewhere else, put it back before anything draws. */
+if (Garden.inside && PLAN_LAYOUTS[Garden.inside]) planUse(Garden.inside);
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   What is in the new rooms
+   ------------------------------------------------------------
+   Same rules as the house: nothing taller than the 1.15 walls,
+   nothing hung above the wall top, everything handed to the
+   depth sort by the u+v of its own footprint so it paints in the
+   right order.
+   ============================================================ */
+
+/* a desk with a chair tucked under it — the madrasah's basic unit */
+function fDesk(c, u, v, W, H, night, facing) {
+  const wood = night ? "#6a4c2c" : "#a8763f";
+  const woodD = night ? "#523a20" : "#8a5f32";
+  const cloth = night ? "#4a5f78" : "#7fa0bc";
+  // top and legs
+  isoBox(c, u, v, 0.92, 0.5, 0.56, W, H, wood, woodD, mqShade(wood, .68));
+  isoBoxAt(c, u - 0.04, v - 0.04, 1.0, 0.58, 0.07, 0.56, W, H,
+    mqShade(wood, 1.12), mqShade(wood, .92), mqShade(wood, .76));
+  // a book left open on it
+  const q = isoPt(u + 0.46, v + 0.25, W, H);
+  c.fillStyle = "#f7f2e6";
+  c.beginPath();
+  c.moveTo(q.x - 9 * FZ(), q.y - isoH(0.65)); c.lineTo(q.x, q.y - isoH(0.69));
+  c.lineTo(q.x + 9 * FZ(), q.y - isoH(0.65)); c.lineTo(q.x, q.y - isoH(0.61));
+  c.closePath(); c.fill();
+  c.strokeStyle = "#c9bfa8"; c.lineWidth = 1; c.stroke();
+  // the chair, on whichever side the child sits
+  const cv = facing === "back" ? v - 0.5 : v + 0.62;
+  isoBox(c, u + 0.26, cv, 0.4, 0.4, 0.42, W, H, cloth,
+    mqShade(cloth, .84), mqShade(cloth, .7));
+  isoBoxAt(c, u + 0.26, cv + (facing === "back" ? -0.08 : 0.32), 0.4, 0.09, 0.48, 0.42, W, H,
+    cloth, mqShade(cloth, .84), mqShade(cloth, .7));
+}
+
+/* the board at the front of a classroom */
+function fBoard(c, u, v, W, H, night, wide) {
+  const frame = night ? "#5a4326" : "#8a6a3a";
+  const q = isoPt(u, v, W, H);
+  const w = (wide || 30) * FZ();
+  c.fillStyle = frame;
+  c.fillRect(q.x - w, q.y - isoH(1.04), w * 2, isoH(0.52));
+  c.fillStyle = night ? "#243a30" : "#2f4a3c";
+  c.fillRect(q.x - w + 3 * FZ(), q.y - isoH(1.0), w * 2 - 6 * FZ(), isoH(0.44));
+  // a letter or two chalked up, as shapes only — never anything that
+  // pretends to be Arabic script
+  c.strokeStyle = "rgba(244,240,226,.8)"; c.lineWidth = 2 * FZ(); c.lineCap = "round";
+  for (let i = 0; i < 3; i++) {
+    const x = q.x - w + (12 + i * 20) * FZ();
+    c.beginPath();
+    c.moveTo(x, q.y - isoH(0.78));
+    c.quadraticCurveTo(x + 6 * FZ(), q.y - isoH(0.92), x + 12 * FZ(), q.y - isoH(0.78));
+    c.stroke();
+  }
+  c.lineCap = "butt";
+  c.fillStyle = mqShade(frame, 1.1);          // chalk ledge
+  c.fillRect(q.x - w, q.y - isoH(0.52), w * 2, 3 * FZ());
+}
+
+/* a row of taps over a low trough */
+function fWudu(c, u, v, W, H, night, n) {
+  const tile = night ? "#5c6f76" : "#cfe0e4";
+  const steel = night ? "#7d848a" : "#cdd4d8";
+  isoBox(c, u, v, n * 0.62, 0.42, 0.34, W, H, tile,
+    mqShade(tile, .86), mqShade(tile, .72));
+  isoBoxAt(c, u + 0.05, v + 0.05, n * 0.62 - 0.1, 0.32, 0.05, 0.34, W, H,
+    mqShade(steel, 1.05), mqShade(steel, .9), mqShade(steel, .76));
+  for (let i = 0; i < n; i++) {
+    const q = isoPt(u + 0.31 + i * 0.62, v + 0.2, W, H);
+    c.strokeStyle = "#9aa2a8"; c.lineWidth = 2.6 * FZ();
+    c.beginPath();
+    c.moveTo(q.x, q.y - isoH(0.4)); c.lineTo(q.x, q.y - isoH(0.72));
+    c.lineTo(q.x + 7 * FZ(), q.y - isoH(0.68)); c.stroke();
+    // a low seat to sit on while washing, which is how it is actually done
+    isoBox(c, u + 0.1 + i * 0.62, v + 0.55, 0.34, 0.34, 0.2, W, H,
+      mqShade(tile, .94), mqShade(tile, .8), mqShade(tile, .68));
+  }
+}
+
+/* the mihrab niche, set into the qibla wall */
+function fMihrab(c, u, v, W, H, night) {
+  const q = isoPt(u, v, W, H);
+  const gold = night ? "#a88c52" : "#c9a86a";
+  c.fillStyle = night ? "#1d2a26" : "#7d6a45";
+  c.beginPath();
+  c.moveTo(q.x - 18 * FZ(), q.y);
+  c.lineTo(q.x - 18 * FZ(), q.y - isoH(0.7));
+  c.quadraticCurveTo(q.x, q.y - isoH(1.12), q.x + 18 * FZ(), q.y - isoH(0.7));
+  c.lineTo(q.x + 18 * FZ(), q.y);
+  c.closePath(); c.fill();
+  c.strokeStyle = gold; c.lineWidth = 3 * FZ(); c.stroke();
+  // the recess catches a little light
+  c.save(); c.globalAlpha = .45;
+  const gl = c.createLinearGradient(q.x, q.y - isoH(1.05), q.x, q.y);
+  gl.addColorStop(0, "rgba(255,238,190,.8)"); gl.addColorStop(1, "rgba(255,238,190,0)");
+  c.fillStyle = gl; c.fill(); c.restore();
+  // geometric strapwork round the arch, never letter-like
+  c.strokeStyle = gold; c.lineWidth = 1.4 * FZ();
+  for (let i = 0; i <= 6; i++) {
+    const k = i / 6;
+    const x = q.x - 14 * FZ() + k * 28 * FZ();
+    const y = q.y - isoH(0.74) - Math.sin(k * Math.PI) * isoH(0.3);
+    c.beginPath();
+    for (let s = 0; s < 4; s++) {
+      const a = (s / 4) * Math.PI * 2 + Math.PI / 4;
+      c[s ? "lineTo" : "moveTo"](x + Math.cos(a) * 4 * FZ(), y + Math.sin(a) * 2.4 * FZ());
+    }
+    c.closePath(); c.stroke();
+  }
+}
+
+/* the minbar: three steps and a canopy, beside the mihrab */
+function fMinbar(c, u, v, W, H, night) {
+  const wood = night ? "#5a4326" : "#8a6a3a";
+  for (let i = 0; i < 3; i++) {
+    isoBoxAt(c, u, v + i * 0.24, 0.5, 0.26, 0.26, (2 - i) * 0.26, W, H,
+      mqShade(wood, 1.06), mqShade(wood, .88), mqShade(wood, .72));
+  }
+  const q = isoPt(u + 0.25, v, W, H);
+  c.strokeStyle = mqShade(wood, .8); c.lineWidth = 2.4 * FZ();
+  c.beginPath(); c.moveTo(q.x, q.y - isoH(0.78)); c.lineTo(q.x, q.y - isoH(1.08)); c.stroke();
+  c.fillStyle = mqShade(wood, .9);
+  c.beginPath();
+  c.moveTo(q.x - 12 * FZ(), q.y - isoH(1.06)); c.lineTo(q.x + 12 * FZ(), q.y - isoH(1.06));
+  c.lineTo(q.x, q.y - isoH(1.3)); c.closePath(); c.fill();
+  isoFinial(c, q.x, q.y - isoH(1.3), 3.4 * FZ(), "#e8c05a");
+}
+
+/* a prayer mat laid on the floor, flat */
+function fMat(c, u, v, W, H, night) {
+  const quad = (a, b, e, f) => {
+    c.beginPath();
+    [a, b, e, f].forEach((q, i) => c[i ? "lineTo" : "moveTo"](q.x, q.y));
+    c.closePath();
+  };
+  const deep = night ? "#3f5c52" : "#2f7f6e";
+  quad(isoPt(u, v, W, H), isoPt(u + 0.55, v, W, H),
+       isoPt(u + 0.55, v + 0.85, W, H), isoPt(u, v + 0.85, W, H));
+  c.fillStyle = deep; c.fill();
+  c.strokeStyle = "#e8c05a"; c.lineWidth = 1.6 * FZ(); c.stroke();
+  const m = isoPt(u + 0.275, v + 0.22, W, H);
+  c.fillStyle = "#e8c05a";
+  c.beginPath();
+  c.moveTo(m.x - 6 * FZ(), m.y + 3 * FZ()); c.lineTo(m.x - 6 * FZ(), m.y - 2 * FZ());
+  c.quadraticCurveTo(m.x, m.y - 9 * FZ(), m.x + 6 * FZ(), m.y - 2 * FZ());
+  c.lineTo(m.x + 6 * FZ(), m.y + 3 * FZ()); c.closePath(); c.fill();
+}
+</script>
+
+<script>
+"use strict";
+
+/* ---------- laying the new rooms out ---------- */
+
+const planFixturesPlans = planFixtures;
+planFixtures = function (r, night) {
+  const out = [];
+  const add = (u, v, fn) => out.push({ u, v, kind: "fx", draw: fn });
+  const wood = night ? "#6a4c2c" : "#a8763f", woodD = night ? "#523a20" : "#8a5f32";
+  const cloth = night ? "#4a5f78" : "#9dbcd0";
+
+  /* ---- the madrasah ---- */
+
+  if (r.id === "class1" || r.id === "class2") {
+    // the board at the far wall, so it faces the class and the viewer
+    add(r.u + r.w / 2, r.v + 0.14, (c, W, H) =>
+      fBoard(c, r.u + r.w / 2, r.v + 0.12, W, H, night, r.w > 4 ? 34 : 28));
+    // the teacher's desk, side on at the front
+    add(r.u + 0.7, r.v + 0.95, (c, W, H) => {
+      isoBox(c, r.u + 0.25, r.v + 0.7, 1.1, 0.5, 0.6, W, H, woodD,
+        mqShade(woodD, .86), mqShade(woodD, .7));
+      isoBoxAt(c, r.u + 0.2, r.v + 0.65, 1.2, 0.6, 0.07, 0.6, W, H,
+        mqShade(wood, 1.1), mqShade(wood, .9), mqShade(wood, .74));
+    });
+    // rows of desks. Two columns with a gangway, which is how a room
+    // this size actually gets furnished.
+    const cols = r.w > 4 ? 2 : 2, rows = 2;
+    for (let cx = 0; cx < cols; cx++) {
+      for (let ry = 0; ry < rows; ry++) {
+        const du = r.u + 0.35 + cx * (r.w - 1.5) / Math.max(1, cols - 1 || 1);
+        const dv = r.v + 1.7 + ry * 0.95;
+        add(du + 0.46, dv + 0.6, (c, W, H) => fDesk(c, du, dv, W, H, night, "front"));
+      }
+    }
+    add(r.u + r.w - 0.5, r.v + r.d - 0.6, (c, W, H) =>
+      fShelf(c, r.u + r.w - 0.75, r.v + r.d - 1.3, 0.6, 0.9, 1.0, W, H, night, true));
+    return out;
+  }
+
+  if (r.id === "slib" || r.id === "mlib") {
+    add(r.u + 0.4, r.v + r.d / 2, (c, W, H) =>
+      fShelf(c, r.u + 0.2, r.v + 0.4, 0.42, r.d - 0.8, 1.02, W, H, night, true));
+    add(r.u + r.w - 0.4, r.v + r.d / 2, (c, W, H) =>
+      fShelf(c, r.u + r.w - 0.62, r.v + 0.4, 0.42, r.d - 0.8, 1.02, W, H, night, true));
+    add(r.u + r.w / 2, r.v + r.d / 2 + 0.4, (c, W, H) => {
+      isoBox(c, r.u + r.w / 2 - 0.55, r.v + r.d / 2 - 0.35, 1.1, 0.7, 0.6, W, H,
+        wood, woodD, mqShade(wood, .68));
+      isoBoxAt(c, r.u + r.w / 2 - 0.62, r.v + r.d / 2 - 0.42, 1.24, 0.84, 0.07, 0.6, W, H,
+        mqShade(wood, 1.1), mqShade(wood, .9), mqShade(wood, .74));
+      [-0.42, 0.42].forEach(o => {
+        isoBox(c, r.u + r.w / 2 + o - 0.2, r.v + r.d / 2 + 0.55, 0.4, 0.4, 0.42, W, H,
+          cloth, mqShade(cloth, .84), mqShade(cloth, .7));
+      });
+    });
+    return out;
+  }
+
+  if (r.id === "soffice") {
+    add(r.u + r.w / 2, r.v + 1.1, (c, W, H) => {
+      isoBox(c, r.u + 0.5, r.v + 0.6, 1.4, 0.65, 0.62, W, H, wood, woodD, mqShade(wood, .68));
+      isoBoxAt(c, r.u + 0.44, r.v + 0.54, 1.52, 0.77, 0.07, 0.62, W, H,
+        mqShade(wood, 1.1), mqShade(wood, .9), mqShade(wood, .74));
+      isoBox(c, r.u + 0.9, r.v + 1.5, 0.44, 0.44, 0.46, W, H,
+        cloth, mqShade(cloth, .84), mqShade(cloth, .7));
+    });
+    add(r.u + 0.4, r.v + r.d - 0.6, (c, W, H) =>
+      fShelf(c, r.u + 0.2, r.v + r.d - 1.3, 0.5, 0.9, 1.05, W, H, night, true));
+    return out;
+  }
+
+  if (r.id === "swudu" || r.id === "wudu") {
+    add(r.u + r.w / 2, r.v + 0.8, (c, W, H) =>
+      fWudu(c, r.u + 0.3, r.v + 0.5, W, H, night, Math.max(2, Math.floor(r.w / 0.8))));
+    add(r.u + r.w - 0.5, r.v + r.d - 0.7, (c, W, H) => {
+      // a towel rail
+      const q = isoPt(r.u + r.w - 0.5, r.v + r.d - 0.9, W, H);
+      c.strokeStyle = night ? "#7d848a" : "#b8c0c6"; c.lineWidth = 2.4 * FZ();
+      c.beginPath(); c.moveTo(q.x - 14 * FZ(), q.y - isoH(0.86));
+      c.lineTo(q.x + 14 * FZ(), q.y - isoH(0.86)); c.stroke();
+      ["#dfe8ea", "#cfe0e4"].forEach((col, i) => {
+        c.fillStyle = night ? mqShade(col, .6) : col;
+        c.fillRect(q.x - 10 * FZ() + i * 12 * FZ(), q.y - isoH(0.84), 9 * FZ(), isoH(0.32));
+      });
+    });
+    return out;
+  }
+
+  /* ---- the mosque ---- */
+
+  if (r.id === "musalla") {
+    // the qibla wall is the far one, so the mihrab goes on it and every
+    // mat lines up facing it
+    add(r.u + r.w / 2, r.v + 0.1, (c, W, H) =>
+      fMihrab(c, r.u + r.w / 2 - 0.6, r.v + 0.12, W, H, night));
+    add(r.u + r.w / 2 + 1.1, r.v + 0.3, (c, W, H) =>
+      fMinbar(c, r.u + r.w / 2 + 0.5, r.v + 0.2, W, H, night));
+    // rows of mats, set out in straight lines the way a congregation stands
+    const perRow = Math.max(3, Math.floor((r.w - 0.9) / 0.75));
+    for (let row = 0; row < 3; row++) {
+      for (let i = 0; i < perRow; i++) {
+        const mu = r.u + 0.5 + i * 0.75, mv = r.v + 1.15 + row * 0.78;
+        add(mu + 0.27, mv + 0.85, (c, W, H) => fMat(c, mu, mv, W, H, night));
+      }
+    }
+    /* Standing lamps at the corners, not hanging ones. Seen from above
+       with no ceiling to hang from, a pendant lamp is just a stick
+       coming up through the floor. */
+    [[r.u + 0.45, r.v + 0.5], [r.u + r.w - 0.45, r.v + 0.5]].forEach(([lu, lv]) => {
+      add(lu, lv, (c, W, H) => {
+        const q = isoPt(lu, lv, W, H);
+        isoCyl(c, lu, lv, 0.06, 0.95, W, H, night ? "#5a5040" : "#8a7c60");
+        c.fillStyle = mqShade(night ? "#5a5040" : "#8a7c60", 1.1);
+        c.beginPath();
+        c.ellipse(q.x, q.y - 1 * FZ(), 8 * FZ(), 4 * FZ(), 0, 0, Math.PI * 2); c.fill();
+        MQ.lamp(c, q.x, q.y - isoH(1.02), 7 * FZ(), mqPal("sand", night));
+        if (night) {
+          c.save(); c.globalCompositeOperation = "lighter";
+          const gl = c.createRadialGradient(q.x, q.y - isoH(0.98), 2,
+                                            q.x, q.y - isoH(0.98), 52 * FZ());
+          gl.addColorStop(0, "rgba(255,208,124,.5)");
+          gl.addColorStop(1, "rgba(255,208,124,0)");
+          c.fillStyle = gl;
+          c.beginPath(); c.arc(q.x, q.y - isoH(0.98), 52 * FZ(), 0, Math.PI * 2); c.fill();
+          c.restore();
+        }
+      });
+    });
+    return out;
+  }
+
+  if (r.id === "halaqa") {
+    // a low table with a stand on it, and cushions round it — a circle,
+    // which is what halaqa means
+    const cu = r.u + r.w / 2, cv = r.v + r.d / 2;
+    add(cu, cv + 0.3, (c, W, H) => {
+      isoBox(c, cu - 0.45, cv - 0.3, 0.9, 0.6, 0.28, W, H, wood, woodD, mqShade(wood, .68));
+      const q = isoPt(cu, cv, W, H);
+      c.fillStyle = "#8a5f32";
+      c.beginPath();
+      c.moveTo(q.x - 9 * FZ(), q.y - isoH(0.32)); c.lineTo(q.x, q.y - isoH(0.44));
+      c.lineTo(q.x + 9 * FZ(), q.y - isoH(0.32)); c.lineTo(q.x, q.y - isoH(0.28));
+      c.closePath(); c.fill();
+    });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const pu = cu + Math.cos(a) * 1.0, pv = cv + Math.sin(a) * 0.85;
+      add(pu, pv, (c, W, H) => {
+        const col = i % 2 ? (night ? "#5a4a68" : "#c0a8c8") : (night ? "#4a5f78" : "#9dbcd0");
+        isoBox(c, pu - 0.19, pv - 0.19, 0.38, 0.38, 0.14, W, H,
+          col, mqShade(col, .86), mqShade(col, .72));
+      });
+    }
+    add(r.u + r.w - 0.45, r.v + 0.6, (c, W, H) =>
+      fShelf(c, r.u + r.w - 0.66, r.v + 0.3, 0.42, 1.2, 1.0, W, H, night, true));
+    return out;
+  }
+
+  if (r.id === "mstore") {
+    add(r.u + 0.6, r.v + 0.8, (c, W, H) => {
+      // rolled mats stacked against the wall
+      for (let i = 0; i < 4; i++) {
+        const col = i % 2 ? (night ? "#3f5c52" : "#2f7f6e") : (night ? "#5c3a44" : "#8f3a4e");
+        isoCyl(c, r.u + 0.4 + i * 0.22, r.v + 0.6, 0.09, 0.9, W, H, col);
+      }
+    });
+    add(r.u + r.w - 0.7, r.v + r.d - 0.8, (c, W, H) =>
+      fShelf(c, r.u + r.w - 1.0, r.v + r.d - 1.4, 0.8, 0.42, 1.05, W, H, night, false));
+    return out;
+  }
+
+  if (r.id === "mhall" || r.id === "shall") {
+    // shoe racks by the door, pegs further along
+    add(r.u + 1.2, r.v + 0.5, (c, W, H) =>
+      fShelf(c, r.u + 0.7, r.v + 0.25, 1.1, 0.4, 0.7, W, H, night, false));
+    add(r.u + 4.4, r.v + 0.4, (c, W, H) => {
+      const q = isoPt(r.u + 4.4, r.v + 0.22, W, H);
+      c.strokeStyle = night ? "#5a4326" : "#8a6a3a"; c.lineWidth = 3 * FZ();
+      c.beginPath(); c.moveTo(q.x - 26 * FZ(), q.y - isoH(0.95));
+      c.lineTo(q.x + 26 * FZ(), q.y - isoH(0.95)); c.stroke();
+      for (let i = 0; i < 5; i++) {
+        c.strokeStyle = night ? "#7d848a" : "#b8c0c6"; c.lineWidth = 2 * FZ();
+        const x = q.x - 20 * FZ() + i * 10 * FZ();
+        c.beginPath(); c.moveTo(x, q.y - isoH(0.95)); c.lineTo(x, q.y - isoH(0.86)); c.stroke();
+      }
+    });
+    return out;
+  }
+
+  return planFixturesPlans(r, night);
+};
+</script>
+
+<script>
+"use strict";
+
+/* ---------- what you can do in each building ---------- */
+
+/* Reading in the mosque is worth a little more than reading at home,
+   not because the app can tell where you are, but because the point of
+   the building is that you go to it. */
+function roomStudyHere(where) {
+  if (!needsOk("read")) return;
+  duaAsk("study", () => {
+    const g = gState(), n = gNeeds();
+    n.study = Math.min(100, n.study + 30);
+    needsSpend("read");
+    const coins = where === "masjid" ? 8 : 6;
+    g.deeds += coins;
+    llSave(); Snd.win(); confetti(10);
+    toast("Rabbi zidni ilma — +" + coins + " coins");
+    render();
+  });
+}
+
+function roomWudu() {
+  duaAsk("wuduAfter", () => {
+    Snd.soft();
+    toast("Ready to pray");
+    render();
+  });
+}
+
+const planGoAndDoPlans = planGoAndDo;
+planGoAndDo = function (roomId, what) {
+  if (what === "study" || what === "wudu") {
+    const g = gState(), r = planRoom(roomId);
+    if (!planHas(roomId)) {
+      toast("Build the " + r.name.toLowerCase() + " first — " + r.cost + " coins");
+      Snd.wrong(); return;
+    }
+    if (planRoomAt(g.child.pu, g.child.pv) === r) {
+      if (what === "study") roomStudyHere(Garden.planKind); else roomWudu();
+      return;
+    }
+    g.child.path = planRoute(g.child.pu, g.child.pv, r.u + r.w / 2, r.v + r.d / 2);
+    g.child.ptu = r.u + r.w / 2; g.child.ptv = r.v + r.d / 2;
+    Garden.planThen = { room: roomId, what };
+    Snd.step(); toast("Walking to the " + r.name.toLowerCase() + "…"); render();
+    return;
+  }
+  return planGoAndDoPlans(roomId, what);
+};
+
+/* the errand runner only knew the house's four verbs */
+const planFrameVerbs = planFrame;
+planFrame = function (c, W, H, t) {
+  const job = Garden.planThen;
+  planFrameVerbs(c, W, H, t);
+  if (!job || Garden.planThen !== job || DUA_PENDING) return;
+};
+
+const planDoCardPlans = planDoCard;
+planDoCard = function () {
+  const kind = Garden.planKind;
+  if (kind !== "masjid" && kind !== "school") return planDoCardPlans();
+
+  const row = (roomId, what, em, label, note) => {
+    const r = planRoom(roomId), have = planHas(roomId);
+    return `<div class="room-buy${have ? " have" : ""}">
+      <span class="em">${em}</span>
+      <span class="t"><span class="n">${esc(label)}</span>
+        <span class="s">${have ? esc(note)
+          : "needs the " + esc(r.name.toLowerCase()) + " — " + r.cost + " 🌱"}</span></span>
+      ${have ? `<button class="btn primary"
+          onclick="planGoAndDo('${roomId}','${what}')">Go</button>`
+        : `<button class="btn" onclick="planBuy('${roomId}')">Build</button>`}
+    </div>`;
+  };
+
+  if (kind === "masjid") {
+    return `<div class="card" style="margin-bottom:12px">
+      <h3 class="card-title">What you can do here</h3>
+      ${row("wudu", "wudu", "🚿", "Make wudu", "say the dua afterwards")}
+      ${row("musalla", "pray", "🕌", "Pray", "opens the salah tracker")}
+      ${row("halaqa", "study", "📖", "Sit and read", "Rabbi zidni ilma — 8 coins")}
+      <p class="note" style="margin:10px 0 0">Walk where you like — tap the floor, or use the
+        arrow keys. The door out is at the left of the entrance.</p>
+    </div>`;
+  }
+
+  return `<div class="card" style="margin-bottom:12px">
+      <h3 class="card-title">What you can do here</h3>
+      ${row("class1", "study", "🪑", "Sit at a desk", "Rabbi zidni ilma — 6 coins")}
+      ${row("slib", "study", "📚", "Read in the library", "quieter, same reward")}
+      ${row("swudu", "wudu", "🚿", "Wash", "say the dua going in and out")}
+      <p class="note" style="margin:10px 0 0">Walk where you like — tap the floor, or use the
+        arrow keys. The door out is at the left of the corridor.</p>
+    </div>`;
+};
+
+/* the panel that lists rooms to buy titles itself after the house */
+const pageGardenPlans = pageGarden;
+pageGarden = function () {
+  let html = pageGardenPlans();
+  if (role !== "student") return html;
+  if (Garden.planKind === "masjid")
+    html = html.replace("Inside your house", "Inside the mosque")
+               .replace("Walk anywhere you have built. Tap a locked room on the floor — or its price here — to build it.",
+                        "Walk anywhere. Tap a locked room on the floor — or its price here — to add it to the mosque.");
+  else if (Garden.planKind === "school")
+    html = html.replace("Inside your house", "Inside the madrasah")
+               .replace("Walk anywhere you have built. Tap a locked room on the floor — or its price here — to build it.",
+                        "Walk anywhere. Tap a locked room on the floor — or its price here — to add it to the madrasah.");
+  return html;
+};
+PAGES.garden = pageGarden;
+
+render();
+</script>

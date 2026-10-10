@@ -1,0 +1,347 @@
+<!-- ============================================================
+     MON3 — the sticker look
+     ------------------------------------------------------------
+     The reference Yusuf sent is a sticker sheet: one heavy black
+     outline round everything, flat colour with no gradient, very large
+     eyes, and a mouth that is actually open — teeth, a tongue, a gap.
+     The old drawing was soft and gradient-shaded with a thin smile,
+     which read as a pastel app icon rather than something a seven-year
+     old would want to be.
+
+     Same thirty creatures and the SAME INDICES. A child's pick is
+     stored as an index in ll.qz.avatar and profiles.avatar.monster, so
+     Pip stays Pip; Pip is now drawn in ink.
+
+     Everything here is one function, qzDrawMonster, replaced whole.
+     Drawing it as outline-then-fill in layers was not workable — a
+     stroke on every shape overlaps the shape behind it and you get a
+     scribble. The order that works is: silhouette pieces first (ears,
+     horns, arms, tail) each stroked and filled, then the body over the
+     top of their roots, then the face, which is never stroked into the
+     body.
+     ============================================================ -->
+<script>
+"use strict";
+
+const MON_INK = "#241f1c";
+const MON_LW  = 3.4;
+
+/* every mouth in the reference is doing something; a thin smile is not
+   a look. Each monster gets one of these, picked off its own id so it
+   never changes between sessions. */
+const MON_MOUTHS = ["grin", "teeth", "tongue", "open", "fangs", "smile"];
+
+function monMouth(m) {
+  if (m.mouth) return m.mouth;
+  return MON_MOUTHS[(m.id * 5 + 3) % MON_MOUTHS.length];
+}
+
+function monInk(c, fill) {
+  c.fillStyle = fill;
+  c.fill();
+  c.strokeStyle = MON_INK;
+  c.lineWidth = MON_LW;
+  c.lineJoin = "round";
+  c.stroke();
+}
+
+qzDrawMonster = function (c, S, idx, mood) {
+  const m = monOf(idx);
+  const sh = monShape(m);
+  const k = S / 100;
+  c.save(); c.scale(k, k);
+
+  const body = m.c;
+  const dark = mqShade(body, 0.74), light = mqShade(body, 1.16);
+  const cx = 50, cy = 55, rx = sh.rx, ry = sh.ry;
+  const apex = cy - ry - 4;
+  const top  = cy - ry - 8;
+
+  c.lineJoin = "round";
+  c.lineCap = "round";
+
+  /* ---------- the ground shadow ---------- */
+  c.fillStyle = "rgba(30,25,20,.13)";
+  c.beginPath(); c.ellipse(cx, 93, rx * 0.78, 5.5, 0, 0, Math.PI * 2); c.fill();
+
+  /* ---------- everything that sticks out ----------
+     Stroked and filled BEFORE the body, so the body covers where they
+     join and there is no seam to see. */
+
+  if (m.tail) {
+    c.beginPath();
+    c.moveTo(cx + rx - 8, cy + 12);
+    c.quadraticCurveTo(cx + rx + 15, cy + 18, cx + rx + 10, cy + 32);
+    c.strokeStyle = MON_INK; c.lineWidth = MON_LW + 7; c.stroke();
+    c.strokeStyle = dark;    c.lineWidth = MON_LW + 1.5; c.stroke();
+    c.beginPath(); c.arc(cx + rx + 10, cy + 33, 6, 0, Math.PI * 2); monInk(c, dark);
+  }
+
+  // feet
+  [-sh.foot, sh.foot].forEach(o => {
+    c.beginPath(); c.ellipse(cx + o, 86, 10.5, 7, 0, 0, Math.PI * 2); monInk(c, dark);
+  });
+
+  // arms
+  const armY = cy + 5;
+  const arm = (s) => {
+    c.beginPath();
+    c.moveTo(cx + s * (rx - 7), armY);
+    c.quadraticCurveTo(cx + s * (rx + 13), armY - 3, cx + s * (rx + 17), armY - 17);
+    c.strokeStyle = MON_INK; c.lineWidth = MON_LW + 9; c.stroke();
+    c.strokeStyle = dark;    c.lineWidth = MON_LW + 3; c.stroke();
+    c.beginPath(); c.arc(cx + s * (rx + 17), armY - 19, 8, 0, Math.PI * 2); monInk(c, dark);
+  };
+  if (m.arms >= 1) arm(-1);
+  if (m.arms >= 2) arm(1);
+
+  /* head pieces */
+  if (m.horn === "round") {
+    [-1, 1].forEach(s => {
+      c.beginPath(); c.arc(cx + s * 17, top + 8, 8.5, 0, Math.PI * 2); monInk(c, dark);
+    });
+  } else if (m.horn === "spike") {
+    [-1, 1].forEach(s => {
+      c.beginPath();
+      c.moveTo(cx + s * 8, top + 16);
+      c.lineTo(cx + s * 19, top - 12);
+      c.lineTo(cx + s * 23, top + 12);
+      c.closePath(); monInk(c, "#fbf7ec");
+    });
+  } else if (m.horn === "leaf") {
+    c.beginPath();
+    c.moveTo(cx + 1, top + 16);
+    c.quadraticCurveTo(cx + 3, top - 2, cx + 6, top - 6);
+    c.strokeStyle = MON_INK; c.lineWidth = MON_LW + 3; c.stroke();
+    c.strokeStyle = "#4a8f52"; c.lineWidth = MON_LW - 0.6; c.stroke();
+    c.beginPath(); c.ellipse(cx + 14, top - 2, 13, 7, -0.5, 0, Math.PI * 2);
+    monInk(c, "#6cbb70");
+  } else if (m.horn === "antenna") {
+    [-1, 1].forEach(s => {
+      c.beginPath();
+      c.moveTo(cx + s * 9, top + 14);
+      c.quadraticCurveTo(cx + s * 15, top + 2, cx + s * 15, top - 6);
+      c.strokeStyle = MON_INK; c.lineWidth = MON_LW + 3; c.stroke();
+      c.strokeStyle = dark;    c.lineWidth = MON_LW - 0.8; c.stroke();
+      c.beginPath(); c.arc(cx + s * 15, top - 9, 6.5, 0, Math.PI * 2); monInk(c, light);
+    });
+  } else if (m.horn === "ears") {
+    [-1, 1].forEach(s => {
+      c.beginPath();
+      c.ellipse(cx + s * (rx + 1), cy - 15, 13, 15, s * 0.28, 0, Math.PI * 2);
+      monInk(c, body);
+      c.beginPath();
+      c.ellipse(cx + s * (rx + 1), cy - 15, 6.5, 8, s * 0.28, 0, Math.PI * 2);
+      c.fillStyle = "#f4c8bf"; c.fill();
+    });
+  } else if (m.horn === "tuft") {
+    [[-9, -14], [0, 0], [9, 14]].forEach(([bx, tx]) => {
+      c.beginPath();
+      c.moveTo(cx + bx, top + 14);
+      c.quadraticCurveTo(cx + tx, top + 2, cx + tx * 1.35, top - 8);
+      c.strokeStyle = MON_INK; c.lineWidth = MON_LW + 4; c.stroke();
+      c.strokeStyle = dark;    c.lineWidth = MON_LW; c.stroke();
+    });
+  } else if (m.horn === "curl") {
+    [-1, 1].forEach(s => {
+      c.beginPath();
+      c.moveTo(cx + s * 13, top + 14);
+      c.bezierCurveTo(cx + s * 30, top + 10, cx + s * 29, top - 10, cx + s * 13, top - 6);
+      c.strokeStyle = MON_INK; c.lineWidth = MON_LW + 5; c.stroke();
+      c.strokeStyle = "#fbf7ec"; c.lineWidth = MON_LW + 0.5; c.stroke();
+    });
+  }
+
+  /* ---------- the body ---------- */
+  c.beginPath();
+  c.moveTo(cx - rx, cy + 8);
+  c.bezierCurveTo(cx - rx - 3, cy - 24, cx - rx * 0.62, apex, cx, apex);
+  c.bezierCurveTo(cx + rx * 0.62, apex, cx + rx + 3, cy - 24, cx + rx, cy + 8);
+  c.bezierCurveTo(cx + rx, cy + 31, cx + rx * 0.55, cy + 35, cx, cy + 35);
+  c.bezierCurveTo(cx - rx * 0.55, cy + 35, cx - rx, cy + 31, cx - rx, cy + 8);
+  c.closePath();
+  monInk(c, body);
+
+  /* ---------- markings, clipped to the body ---------- */
+  c.save();
+  c.beginPath();
+  c.moveTo(cx - rx, cy + 8);
+  c.bezierCurveTo(cx - rx - 3, cy - 24, cx - rx * 0.62, apex, cx, apex);
+  c.bezierCurveTo(cx + rx * 0.62, apex, cx + rx + 3, cy - 24, cx + rx, cy + 8);
+  c.bezierCurveTo(cx + rx, cy + 31, cx + rx * 0.55, cy + 35, cx, cy + 35);
+  c.bezierCurveTo(cx - rx * 0.55, cy + 35, cx - rx, cy + 31, cx - rx, cy + 8);
+  c.closePath();
+  c.clip();
+
+  const mark = mqShade(body, 0.84);
+  if (m.spot === "dots") {
+    c.fillStyle = mark;
+    [[-19, 12, 6], [15, 18, 7], [22, -2, 5], [-9, 24, 5]].forEach(([ox, oy, r]) => {
+      c.beginPath(); c.arc(cx + ox, cy + oy, r, 0, Math.PI * 2); c.fill();
+    });
+  } else if (m.spot === "stripe") {
+    c.fillStyle = mark;
+    [14, 25].forEach(oy => {
+      c.beginPath(); c.roundRect(cx - rx, cy + oy, rx * 2, 6, 3); c.fill();
+    });
+  } else if (m.spot === "star") {
+    c.fillStyle = mark;
+    [[-16, 16, 7], [15, 21, 6], [1, 29, 5]].forEach(([ox, oy, r]) => {
+      c.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+        const rr = i % 2 ? r * 0.45 : r;
+        c[i ? "lineTo" : "moveTo"](cx + ox + Math.cos(a) * rr, cy + oy + Math.sin(a) * rr);
+      }
+      c.closePath(); c.fill();
+    });
+  } else if (m.spot === "swirl") {
+    c.strokeStyle = mark; c.lineWidth = 4;
+    [[-15, 15], [14, 22]].forEach(([ox, oy]) => {
+      c.beginPath();
+      for (let i = 0; i <= 22; i++) {
+        const a = i * 0.42, r = 1.2 + i * 0.42;
+        c[i ? "lineTo" : "moveTo"](cx + ox + Math.cos(a) * r, cy + oy + Math.sin(a) * r);
+      }
+      c.stroke();
+    });
+  }
+  if (m.spot === "patch") {
+    c.fillStyle = mark;
+    c.beginPath();
+    c.ellipse(cx - 14, cy + sh.eye + 2, 18, 17, -0.25, 0, Math.PI * 2); c.fill();
+  }
+  c.restore();
+
+  /* ---------- the face ----------
+     Eyes and a mouth. These are imaginary creatures, not people — the
+     faceless rule is about depicting human beings. */
+
+  const eyeY = cy + sh.eye;
+  const spread = m.eyes === 1 ? [0] : m.eyes === 2 ? [-12, 12] : [-17, 0, 17];
+  const eyeR = m.eyes === 3 ? 8 : m.eyes === 1 ? 13 : 10.5;
+  const shut = mood === "sad";
+
+  spread.forEach(ox => {
+    c.beginPath();
+    c.ellipse(cx + ox, eyeY, eyeR, eyeR * 1.06, 0, 0, Math.PI * 2);
+    monInk(c, "#fdfbf6");
+    if (shut) {
+      c.strokeStyle = MON_INK; c.lineWidth = 3;
+      c.beginPath();
+      c.arc(cx + ox, eyeY + 3, eyeR * 0.62, Math.PI * 1.12, Math.PI * 1.88);
+      c.stroke();
+      return;
+    }
+    const look = mood === "win" ? -eyeR * 0.28 : 0;
+    c.fillStyle = MON_INK;
+    c.beginPath();
+    c.arc(cx + ox + eyeR * 0.12, eyeY + look, eyeR * 0.46, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#fff";
+    c.beginPath();
+    c.arc(cx + ox + eyeR * 0.36, eyeY + look - eyeR * 0.3, eyeR * 0.17, 0, Math.PI * 2);
+    c.fill();
+  });
+
+  /* ---------- the mouth ----------
+     The reference sheet has no thin smiles on it. Every creature's
+     mouth is doing something, and that is most of what separates one
+     from another at 28px on a leaderboard row. */
+  const mY = cy + sh.mouth + 4;
+  const kind = shut ? "sad" : (mood === "win" ? "grin" : monMouth(m));
+
+  function mouthShape(w, h, drop) {
+    c.beginPath();
+    c.moveTo(cx - w, mY);
+    c.quadraticCurveTo(cx, mY + h + drop, cx + w, mY);
+    c.quadraticCurveTo(cx, mY + drop * 0.35, cx - w, mY);
+    c.closePath();
+  }
+
+  if (kind === "sad") {
+    c.strokeStyle = MON_INK; c.lineWidth = 3.2;
+    c.beginPath(); c.arc(cx, mY + 12, 8, Math.PI * 1.13, Math.PI * 1.87); c.stroke();
+
+  } else if (kind === "smile") {
+    c.strokeStyle = MON_INK; c.lineWidth = 3.4;
+    c.beginPath(); c.arc(cx, mY - 2, 9.5, 0.22, Math.PI - 0.22); c.stroke();
+
+  } else if (kind === "grin") {
+    // wide open, tongue at the bottom
+    mouthShape(15, 12, 4);
+    monInk(c, "#3a2320");
+    c.save(); c.clip();
+    c.fillStyle = "#e8657f";
+    c.beginPath(); c.ellipse(cx + 1, mY + 17, 9, 7, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#fdfbf6";
+    c.beginPath(); c.roundRect(cx - 14, mY - 1, 28, 5.5, 1.6); c.fill();
+    c.restore();
+
+  } else if (kind === "teeth") {
+    // a row of square teeth, the cartoon default
+    mouthShape(16, 10, 3);
+    monInk(c, "#3a2320");
+    c.save(); c.clip();
+    c.fillStyle = "#fdfbf6";
+    for (let i = -2; i <= 2; i++) {
+      c.beginPath(); c.roundRect(cx + i * 6.2 - 2.6, mY - 1, 5.2, 7, 1.2); c.fill();
+    }
+    c.restore();
+
+  } else if (kind === "tongue") {
+    mouthShape(15, 9, 3);
+    monInk(c, "#3a2320");
+    c.beginPath();
+    c.ellipse(cx + 2, mY + 15, 9.5, 11, 0.16, 0, Math.PI * 2);
+    monInk(c, "#e8657f");
+    c.strokeStyle = "#c94f68"; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(cx + 2, mY + 17); c.lineTo(cx + 2, mY + 23); c.stroke();
+
+  } else if (kind === "fangs") {
+    mouthShape(15, 10, 3);
+    monInk(c, "#3a2320");
+    c.save(); c.clip();
+    c.fillStyle = "#fdfbf6";
+    [-9, 9].forEach(o => {
+      c.beginPath();
+      c.moveTo(cx + o - 4.5, mY - 2); c.lineTo(cx + o + 4.5, mY - 2);
+      c.lineTo(cx + o, mY + 7.5); c.closePath(); c.fill();
+    });
+    c.restore();
+
+  } else {            // "open"
+    c.beginPath();
+    c.ellipse(cx, mY + 5, 9, 10.5, 0, 0, Math.PI * 2);
+    monInk(c, "#3a2320");
+    c.save(); c.clip();
+    c.fillStyle = "#e8657f";
+    c.beginPath(); c.ellipse(cx, mY + 15, 7, 7, 0, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+
+  /* a stray tooth poking out, for the ones that asked for one */
+  if (m.tooth && !shut && kind !== "teeth" && kind !== "fangs" && kind !== "grin") {
+    c.beginPath();
+    c.moveTo(cx - 7, mY - 1); c.lineTo(cx - 1, mY - 1); c.lineTo(cx - 4, mY + 6);
+    c.closePath(); monInk(c, "#fdfbf6");
+  }
+
+  if (mood === "win") {
+    c.fillStyle = "#f6cf3f";
+    c.strokeStyle = MON_INK; c.lineWidth = 2;
+    [[rx + 4, -26, 6], [-rx - 6, -16, 4.5], [rx + 10, 6, 3.5]].forEach(([ox, oy, r]) => {
+      c.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+        const rr = i % 2 ? r * 0.4 : r;
+        c[i ? "lineTo" : "moveTo"](cx + ox + Math.cos(a) * rr, cy + oy + Math.sin(a) * rr);
+      }
+      c.closePath(); c.fill(); c.stroke();
+    });
+  }
+
+  c.restore();
+};
+
+if (typeof MON_CACHE !== "undefined" && MON_CACHE.clear) MON_CACHE.clear();
+</script>

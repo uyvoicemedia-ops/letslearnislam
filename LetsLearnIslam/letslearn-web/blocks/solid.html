@@ -1,0 +1,205 @@
+<!-- ============================================================
+     Things you cannot walk through
+     ------------------------------------------------------------
+     The character walked straight through the house, the mosques,
+     the well and everything else, which is the single thing that
+     most makes a world feel like a drawing rather than a place.
+
+     Two rules decide what blocks:
+
+       * Buildings block their footprint, inset a little so you can
+         brush along a wall instead of catching on it.
+       * Items block a circle whose radius is written down per type.
+         A lamppost is a pole and blocks almost nothing; a shop is a
+         building and blocks a lot.
+
+     What does NOT block is as considered as what does. You walk
+     through an archway, because that is what an archway is for.
+     You stand in the sandpit. You walk along the bridge and across
+     the road and over a prayer mat. Blocking those would be
+     technically consistent and would feel wrong.
+
+     Walking is slid along obstacles rather than stopped dead: if
+     the diagonal is blocked, try each axis on its own. Without that
+     a child aiming past a corner sticks to it, and the game feels
+     broken rather than solid.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* how much room each kind of thing takes up, as a radius in tiles.
+   0 means you can walk over it. */
+const SOLID_R = {
+  // buildings on the ground
+  shop: 0.52, stall: 0.46, well: 0.30, clock: 0.32, fountain: 0.38,
+  // furniture and planting
+  bench: 0.34, palm: 0.20, fruit: 0.24, bush: 0.22, pond: 0.46,
+  lamppost: 0.13, lantern: 0.13, bird: 0.13, fence: 0.28,
+  // the playground is solid, except the sand
+  swing: 0.38, slide: 0.42, seesaw: 0.36, sandpit: 0,
+  // deliberately open
+  arch: 0, bridge: 0, road: 0, carpet: 0, flowers: 0.12, butterfly: 0,
+};
+const SOLID_DEFAULT = 0.24;
+const solidR = (type) => (type in SOLID_R) ? SOLID_R[type] : SOLID_DEFAULT;
+
+/* the boxes that buildings stand on, in the same maths the drawing uses */
+function isoSolidBoxes() {
+  const g = gState();
+  const out = [];
+  (g.buildings || []).forEach(b => {
+    const def = (b.kind === "masjid" ? mosqueDef(b.id)
+                                     : (SCHOOLS.find(s => s.id === b.id) || {}));
+    const big = 0.95 + ((def && def.plots) || 1) * 0.3;
+    const w = big * 1.3, d = big * 1.0;
+    out.push({ u0: b.u - w / 2, v0: b.v - d / 2, w, d });
+  });
+  const hl = Math.max(1, Math.min(5, g.house || 1));
+  out.push({
+    u0: g.houseU - (1.6 + hl * 0.16) / 2,
+    v0: g.houseV - (1.3 + hl * 0.12) / 2,
+    w: 1.6 + hl * 0.16, d: 1.3 + hl * 0.12,
+  });
+  return out;
+}
+
+/* Can the character stand here?
+   Buildings are inset by a fifth of a tile so you can walk along a wall
+   rather than catching on it — the drawn edge and the walkable edge
+   are not the same line, and the walkable one should be the forgiving
+   one. */
+function isoWalkable(u, v) {
+  const g = gState();
+  const { cols, rows } = landSize(gLand());
+  if (u < 0.3 || v < 0.3 || u > cols - 0.3 || v > rows - 0.3) return false;
+
+  const inset = 0.2;
+  const boxes = Garden._solids || (Garden._solids = isoSolidBoxes());
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i];
+    if (u > b.u0 + inset && u < b.u0 + b.w - inset &&
+        v > b.v0 + inset && v < b.v0 + b.d - inset) return false;
+  }
+
+  const items = g.items || [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const r = solidR(it.type);
+    if (!r) continue;
+    const du = it.u - u, dv = it.v - v;
+    if (du * du + dv * dv < r * r) return false;
+  }
+  return true;
+}
+
+/* the footprints only change when something is built, moved or sold */
+function isoSolidsDirty() { Garden._solids = null; }
+
+const llSaveSolids = llSave;
+llSave = function () { isoSolidsDirty(); return llSaveSolids.apply(this, arguments); };
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   The clock tower
+   ------------------------------------------------------------
+   The time was right all along — 9:36 really was 9:36. What was
+   wrong is that the faces were perfect circles pasted onto walls
+   that are seen at an angle, so they read as stickers hovering in
+   front of the tower rather than clocks set into it, and near the
+   corner the two of them overlapped.
+
+   A circle on a wall is an ellipse on screen, sheared by whichever
+   way that wall runs. Rather than work the ellipse out by hand,
+   the canvas is given the wall's own two directions as its basis —
+   one step along the wall, one step up it — and then an ordinary
+   circle and two straight hands are drawn into that. The
+   projection comes out of the transform for free, and the hands
+   sit in the face instead of in front of it.
+   ============================================================ */
+GI2.clock = function (c, u, v, W, H, t, night, z, lvl) {
+  const tier = Math.max(1, Math.min(4, lvl || 1));
+  const stone = night ? "#c6b99c" : "#efe2c4";
+  const w = 0.64, hgt = 3.4;
+  const u0 = u - w / 2, v0 = v - w / 2;
+
+  isoShadow(c, u0, v0, w, w, 1.1, W, H);
+  isoBox(c, u0, v0, w, w, hgt, W, H,
+    mqShade(stone, .92), mqShade(stone, .82), mqShade(stone, .66));
+
+  const now = new Date();
+  const hourTurn = ((now.getHours() % 12) + now.getMinutes() / 60) / 12;
+  const minTurn = (now.getMinutes() + now.getSeconds() / 60) / 60;
+
+  /* One clock face, drawn in the plane of the wall it sits on.
+     `along` is the world direction the wall runs in; `at` is the
+     centre of the face in world coordinates and height. */
+  const face = (alongU, alongV, atU, atV, atH, lit) => {
+    const o = isoPt(atU, atV, W, H);
+    const cx = o.x, cy = o.y - isoH(atH);
+    // one world unit along the wall, and one world unit straight up
+    const a = isoPt(0, 0, W, H), b = isoPt(alongU, alongV, W, H);
+    const e1x = b.x - a.x, e1y = b.y - a.y;
+    const e2x = 0, e2y = -isoH(1);
+    const R = 0.3;
+
+    c.save();
+    c.transform(e1x * R, e1y * R, e2x * R, e2y * R, cx, cy);
+    // from here on everything is in face units: a circle of radius 1
+    c.fillStyle = night ? "#3a4157" : "#f7f2e6";
+    c.beginPath(); c.arc(0, 0, 1, 0, Math.PI * 2); c.fill();
+    c.lineWidth = 0.1;
+    c.strokeStyle = tier >= 2 ? "#c9a86a" : mqShade(stone, .7);
+    c.stroke();
+
+    c.fillStyle = night ? "#e8dcc0" : "#5a5040";
+    for (let i = 0; i < 12; i++) {
+      const k = (i / 12) * Math.PI * 2;
+      c.beginPath();
+      c.arc(Math.sin(k) * 0.78, Math.cos(k) * 0.78, i % 3 ? 0.055 : 0.095, 0, Math.PI * 2);
+      c.fill();
+    }
+
+    // local +y is up the wall, so noon is (0, 1)
+    const hand = (turn, len, wide) => {
+      const k = turn * Math.PI * 2;
+      c.strokeStyle = night ? "#e8dcc0" : "#3a3327";
+      c.lineWidth = wide; c.lineCap = "round";
+      c.beginPath(); c.moveTo(0, 0);
+      c.lineTo(Math.sin(k) * len, Math.cos(k) * len);
+      c.stroke(); c.lineCap = "butt";
+    };
+    hand(hourTurn, 0.5, 0.16);
+    hand(minTurn, 0.76, 0.11);
+    c.fillStyle = "#c9a86a";
+    c.beginPath(); c.arc(0, 0, 0.11, 0, Math.PI * 2); c.fill();
+    c.restore();
+
+    if (lit) tGlow(c, cx, cy, 30 * z, night, 0.7);
+  };
+
+  // the two walls you can see, each with the face set into it
+  face(0, 1, u0 + w, v, hgt * 0.78, tier >= 3);       // lower-right wall
+  face(1, 0, u, v0 + w, hgt * 0.78, tier >= 3);       // lower-left wall
+
+  isoRoof(c, u0 - 0.1, v0 - 0.1, w + 0.2, w + 0.2, 0.9, hgt, W, H,
+    night ? "#5f7a86" : "#7fa8b8");
+  const q = isoPt(u, v, W, H);
+  isoFinial(c, q.x, q.y - isoH(hgt + 0.9), 4 * z, "#e8c05a");
+
+  // a bell under the eaves at the top tier, because a clock tower
+  // that never chimes is only a tall clock
+  if (tier >= 4) {
+    const bx = q.x, by = q.y - isoH(hgt + 0.34);
+    c.fillStyle = night ? "#8a7434" : "#c9a83e";
+    c.beginPath();
+    c.moveTo(bx - 5 * z, by); c.quadraticCurveTo(bx, by - 11 * z, bx + 5 * z, by);
+    c.closePath(); c.fill();
+    c.fillStyle = mqShade("#c9a83e", .7);
+    c.beginPath(); c.ellipse(bx, by, 5 * z, 1.6 * z, 0, 0, Math.PI * 2); c.fill();
+  }
+};
+GI2.clock.tiered = true;
+</script>

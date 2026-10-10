@@ -1,0 +1,371 @@
+<!-- ============================================================
+     Quiz sets for the Qaida, and for the basics of the deen
+     ------------------------------------------------------------
+     Sixteen sets, grouped so the picker stays readable:
+
+       The alphabet   — the 28 letters, in halves and then all mixed
+       Joining        — beginning, middle and end forms
+       Reading words  — three sets plain, three with the harakat
+       The deen       — wudu, salah, the five pillars, the six pillars
+
+     How the joined forms are written: a letter on its own is shaped
+     by the browser as an isolated form, so the connected forms are
+     written with a tatweel — the little joining stroke — on the side
+     that connects. بـ is the beginning form, ـبـ the middle, ـب the
+     end. That is how a Qaida prints them and how the child will meet
+     them on the page.
+
+     The six letters ا د ذ ر ز و never join to the letter AFTER them,
+     so they have no beginning or middle form of their own. Several
+     questions turn on exactly that, because it is the thing children
+     get wrong.
+
+     THE DEEN SETS ARE NOT SCRIPTURE. They are ordinary classroom
+     questions, and they follow what is taught in the practice flows.
+     A teacher should read them before a class sees them — the wudu
+     order especially, where schools differ on the head and the ears.
+     ============================================================ -->
+<style>
+  /* Arabic in a quiz wants a naskh face and a bit more room than
+     the Latin around it */
+  .qz-big, .qz-ans { font-family:"Noto Naskh Arabic","Scheherazade New",
+                     ui-rounded, system-ui, sans-serif; }
+  .qz-big { font-size:25px; line-height:1.7; }
+  .qz-ans { font-size:36px; line-height:1.6; }
+  .qz-setnote { font-size:12px; color:var(--muted); text-align:center;
+                margin:6px 0 0; }
+</style>
+<script>
+"use strict";
+
+/* a little help so the data below stays readable */
+const qq = (p, a, k, s) => ({ p, a, k, s: s || 15 });
+
+const TEACHER_CHECK = "Please read these through before a class sees them.";
+
+QUIZ_SETS.push(
+
+/* ============================================================
+   The alphabet
+   ============================================================ */
+{
+  id:"abc1", group:"The alphabet", title:"The alphabet — ا to ص",
+  qs:[
+    qq("Which one is ا?",  ["ل","ا","د","ر"], 1),
+    qq("Which one is ب?",  ["ت","ن","ب","ث"], 2),
+    qq("Which one is ت?",  ["ث","ب","ن","ت"], 3),
+    qq("Which one is ث?",  ["ث","ت","ب","ن"], 0),
+    qq("Which one is ج?",  ["ح","ج","خ","ع"], 1),
+    qq("Which one is ح?",  ["خ","ج","ح","ع"], 2),
+    qq("Which one is خ?",  ["ح","خ","ج","غ"], 1),
+    qq("Which one is د?",  ["ذ","ر","د","و"], 2),
+    qq("Which one is ذ?",  ["د","ذ","ز","ر"], 1),
+    qq("Which one is ر?",  ["ز","و","ر","د"], 2),
+    qq("Which one is ز?",  ["ر","ذ","د","ز"], 3),
+    qq("Which one is س?",  ["ش","ص","س","ث"], 2),
+    qq("Which one is ش?",  ["س","ش","ض","ص"], 1),
+    qq("Which one is ص?",  ["ض","س","ص","ط"], 2),
+  ],
+},
+{
+  id:"abc2", group:"The alphabet", title:"The alphabet — ض to ي",
+  qs:[
+    qq("Which one is ض?",  ["ص","ض","ظ","ط"], 1),
+    qq("Which one is ط?",  ["ظ","ص","ط","ض"], 2),
+    qq("Which one is ظ?",  ["ط","ض","ص","ظ"], 3),
+    qq("Which one is ع?",  ["غ","ع","ج","ح"], 1),
+    qq("Which one is غ?",  ["ع","ح","غ","خ"], 2),
+    qq("Which one is ف?",  ["ق","ف","ن","ث"], 1),
+    qq("Which one is ق?",  ["ف","ن","ق","ت"], 2),
+    qq("Which one is ك?",  ["ل","ك","م","ن"], 1),
+    qq("Which one is ل?",  ["ا","ك","ل","ن"], 2),
+    qq("Which one is م?",  ["ن","ه","م","و"], 2),
+    qq("Which one is ن?",  ["ب","ت","ث","ن"], 3),
+    qq("Which one is ه?",  ["ة","ه","م","و"], 1),
+    qq("Which one is و?",  ["ر","ز","و","د"], 2),
+    qq("Which one is ي?",  ["ب","ن","ت","ي"], 3),
+  ],
+},
+{
+  id:"abcall", group:"The alphabet", title:"All the letters — a quick round",
+  qs:[
+    qq("How many letters are in the Arabic alphabet?", ["26","28","29","30"], 1, 20),
+    qq("Which letter comes first?", ["ب","ا","ت","ج"], 1),
+    qq("Which letter comes last?", ["و","ه","ي","ن"], 2),
+    qq("How many dots does ب have?", ["1","2","3","0"], 0),
+    qq("How many dots does ت have?", ["1","2","3","0"], 1),
+    qq("How many dots does ث have?", ["1","2","3","0"], 2),
+    qq("Which one has its dot underneath?", ["ت","ن","ب","ث"], 2, 20),
+    qq("How many dots does ش have?", ["0","1","2","3"], 3),
+    qq("Which of these has no dots?", ["ج","خ","ح","ذ"], 2, 20),
+    qq("ج ح خ — which is the one with a dot on top?", ["ج","ح","خ","none of them"], 2, 20),
+    qq("Which pair looks the same apart from a dot?", ["س and ص","د and ذ","ل and ك","م and ن"], 1, 22),
+    qq("Which letter is a whole word on its own — the word for 'and'?", ["ا","و","ي","ه"], 1, 22),
+  ],
+},
+
+/* ============================================================
+   Joining
+   ============================================================ */
+{
+  id:"joinstart", group:"Joining", title:"Letters at the beginning",
+  note:"A beginning form joins forward, to the letter after it.",
+  qs:[
+    qq("Which is ب at the beginning of a word?", ["ب","بـ","ـبـ","ـب"], 1, 18),
+    qq("Which is ت at the beginning?",           ["ـت","تـ","ـتـ","ت"], 1, 18),
+    qq("Which is س at the beginning?",           ["ـس","س","سـ","ـسـ"], 2, 18),
+    qq("Which is م at the beginning?",           ["مـ","ـم","ـمـ","م"], 0, 18),
+    qq("Which is ك at the beginning?",           ["ـك","ك","ـكـ","كـ"], 3, 18),
+    qq("Which is ع at the beginning?",           ["عـ","ـعـ","ـع","ع"], 0, 18),
+    qq("Which is ه at the beginning?",           ["ـه","هـ","ـهـ","ه"], 1, 18),
+    qq("Which is ن at the beginning?",           ["ـن","ـنـ","نـ","ن"], 2, 18),
+    qq("Which of these does NOT join to the letter after it?", ["ب","ت","د","ن"], 2, 22),
+    qq("How many letters never join forward?",   ["4","5","6","7"], 2, 22),
+  ],
+},
+{
+  id:"joinmid", group:"Joining", title:"Letters in the middle",
+  note:"A middle form joins on both sides.",
+  qs:[
+    qq("Which is ب in the middle of a word?", ["بـ","ـب","ـبـ","ب"], 2, 18),
+    qq("Which is ج in the middle?",           ["ـجـ","جـ","ـج","ج"], 0, 18),
+    qq("Which is ف in the middle?",           ["ف","ـف","فـ","ـفـ"], 3, 18),
+    qq("Which is ق in the middle?",           ["ـقـ","قـ","ـق","ق"], 0, 18),
+    qq("Which is ل in the middle?",           ["لـ","ـل","ل","ـلـ"], 3, 18),
+    qq("Which is ص in the middle?",           ["ـصـ","صـ","ـص","ص"], 0, 18),
+    qq("Which is ي in the middle?",           ["ـي","يـ","ـيـ","ي"], 2, 18),
+    qq("Which is ه in the middle?",           ["ـهـ","هـ","ه","ـه"], 0, 18),
+    qq("ر is in the middle of a word. What does it look like?", ["ـرـ","رـ","ـر","ر"], 2, 22),
+    qq("Why does د look the same in the middle as at the end?",
+       ["it has no dots","it never joins forward","it is a short letter","it is the first letter"], 1, 25),
+  ],
+},
+{
+  id:"joinend", group:"Joining", title:"Letters at the end",
+  note:"An end form joins backward, to the letter before it.",
+  qs:[
+    qq("Which is ب at the end of a word?", ["ـب","بـ","ـبـ","ب"], 0, 18),
+    qq("Which is ن at the end?",           ["نـ","ـنـ","ن","ـن"], 3, 18),
+    qq("Which is م at the end?",           ["ـم","مـ","ـمـ","م"], 0, 18),
+    qq("Which is ي at the end?",           ["يـ","ـيـ","ـي","ي"], 2, 18),
+    qq("Which is ك at the end?",           ["ـكـ","ـك","كـ","ك"], 1, 18),
+    qq("Which is س at the end?",           ["سـ","ـسـ","س","ـس"], 3, 18),
+    qq("Which is ع at the end?",           ["ـع","عـ","ـعـ","ع"], 0, 18),
+    qq("Which is ا at the end?",           ["اـ","ـا","ا","ـاـ"], 1, 18),
+    qq("Which of these is an end form?",   ["تـ","ـتـ","ـت","ت"], 2, 20),
+    qq("A word ends in و. What does it look like?", ["ـوـ","وـ","و","ـو"], 3, 22),
+  ],
+},
+
+/* ============================================================
+   Reading words — plain
+   ============================================================ */
+{
+  id:"word1", group:"Reading words", title:"Read the word — no signs",
+  note:"Long vowels are written oo and ee, the way the letter names are.",
+  qs:[
+    qq("Read it: باب",  ["baab","baat","naab","baaz"], 0, 18),
+    qq("Read it: بيت",  ["bant","bayt","tayb","bayn"], 1, 18),
+    qq("Read it: قلم",  ["falam","kalam","qalam","qalab"], 2, 18),
+    qq("Read it: ولد",  ["walad","wald","dalaw","waraj"], 0, 18),
+    qq("Read it: بنت",  ["tinb","binn","bint","nabt"], 2, 18),
+    qq("Read it: يد",       ["yad","dab","yab","dad"], 0, 18),
+    qq("Read it: كتاب", ["katab","kitaab","kibaar","lataab"], 1, 20),
+    qq("Read it: دار",  ["raad","daaz","zaar","daar"], 3, 18),
+    qq("Read it: نور",  ["roon","noor","zoor","noon"], 1, 18),
+  ],
+},
+{
+  id:"word2", group:"Reading words", title:"Find the word",
+  note:"The other way round — you are given the reading and you find it written.",
+  qs:[
+    qq("Which one says 'shams'?", ["سمش","شمس","سشم","شسم"], 1, 20),
+    qq("Which one says 'qamar'?", ["قمر","رمق","مقر","قرم"], 0, 20),
+    qq("Which one says 'samak'?", ["مسك","كمس","سمك","سكم"], 2, 20),
+    qq("Which one says 'jamal'?", ["لمج","مجل","جلم","جمل"], 3, 20),
+    qq("Which one says 'masjid'?", ["مسجد","سمجد","مجسد","دجسم"], 0, 22),
+    qq("Which one says 'dars'?", ["ردس","درس","سدر","رسد"], 1, 20),
+    qq("Which one says 'bayt'?", ["تيب","يبت","بيت","بتي"], 2, 20),
+    qq("Which one says 'noor'?", ["رون","نرو","ونر","نور"], 3, 20),
+    qq("Which one says 'qalam'?", ["لقم","قلم","مقل","قمل"], 1, 20),
+  ],
+},
+{
+  id:"word3", group:"Reading words", title:"Inside a word",
+  note:"Nothing to read out here — just look at how the word is built.",
+  qs:[
+    qq("Which letter does مسجد begin with?", ["م","س","ج","د"], 0, 18),
+    qq("Which letter does مسجد end with?", ["م","س","ج","د"], 3, 18),
+    qq("Which two letters are in the middle of مسجد?",
+       ["م and س","ج and د","س and ج","م and د"], 2, 22),
+    qq("How many letters are in باب?", ["2","3","4","5"], 1, 18),
+    qq("How many letters are in كتاب?", ["3","4","5","6"], 1, 18),
+    qq("Which of these words has 4 letters?",
+       ["يد","شمس","قمر","مسجد"], 3, 20),
+    qq("Which word begins with ك?",
+       ["قلم","كتاب","جمل","بيت"], 1, 18),
+    qq("Which word ends with ت?",
+       ["ولد","بيت","قمر","سمك"], 1, 18),
+    qq("Read it: ق ل م joined together makes…",
+       ["قلم","ملق","لقم","قمل"], 0, 22),
+  ],
+},
+
+/* ============================================================
+   Reading words — with the harakat
+   ============================================================ */
+{
+  id:"hrk1", group:"Reading words", title:"With harakat — the signs",
+  qs:[
+    qq("Which sign makes the 'a' sound?", ["fatha","kasra","damma","sukun"], 0, 18),
+    qq("Which sign makes the 'i' sound?", ["fatha","damma","kasra","shadda"], 2, 18),
+    qq("Which sign makes the 'u' sound?", ["kasra","damma","fatha","sukun"], 1, 18),
+    qq("Which one is a fatha?", ["بِ","بُ","بْ","بَ"], 3, 18),
+    qq("Which one is a kasra?", ["بِ","بَ","بُ","بّ"], 0, 18),
+    qq("Which one is a damma?", ["بَ","بِ","بُ","بْ"], 2, 18),
+    qq("Which one is a sukun?", ["بّ","بْ","بً","بُ"], 1, 18),
+    qq("Which sign sits underneath the letter?", ["fatha","damma","kasra","sukun"], 2, 18),
+    qq("Which sign means there is no vowel on the letter?", ["shadda","sukun","kasra","tanween"], 1, 20),
+    qq("Which sign doubles the letter?", ["madda","sukun","shadda","fatha"], 2, 20),
+  ],
+},
+{
+  id:"hrk2", group:"Reading words", title:"With harakat — read the word",
+  qs:[
+    qq("Read it: بَيْت", ["bayt","bita","buyut","bat"], 0, 20),
+    qq("Read it: قَلَم", ["qulum","qalam","qilam","qalm"], 1, 20),
+    qq("Read it: وَلَد", ["walid","wulad","walad","wald"], 2, 20),
+    qq("Read it: شَمْس", ["shamas","shams","shims","shumus"], 1, 20),
+    qq("Read it: قَمَر", ["qumar","qamr","qamar","qimar"], 2, 20),
+    qq("Read it: نُور", ["nawr","neer","noor","naar"], 2, 20),
+    qq("Read it: دَار", ["daar","deer","door","dara"], 0, 20),
+    qq("Read it: سَمَك", ["simak","samak","sumak","samk"], 1, 20),
+    qq("Read it: جَمَل", ["jamil","jamal","jumal","jaml"], 1, 20),
+  ],
+},
+{
+  id:"hrk3", group:"Reading words", title:"With harakat — which sign is on it",
+  qs:[
+    qq("In بَيْت, which sign is on the ب?", ["fatha","kasra","damma","sukun"], 0, 20),
+    qq("In بَيْت, which sign is on the ي?", ["fatha","sukun","kasra","damma"], 1, 20),
+    qq("In كِتَاب, which sign is on the ك?", ["fatha","damma","kasra","sukun"], 2, 20),
+    qq("In نُور, which sign is on the ن?", ["kasra","damma","fatha","sukun"], 1, 20),
+    qq("In مَسْجِد, which sign is on the س?", ["fatha","kasra","sukun","damma"], 2, 22),
+    qq("In مَسْجِد, which sign is on the ج?", ["fatha","kasra","damma","sukun"], 1, 22),
+    qq("Which word has a sukun in it?", ["قَلَم","بَيْت","قَمَر","سَمَك"], 1, 22),
+    qq("Which word has a damma in it?", ["نُور","دَار","وَلَد","جَمَل"], 0, 22),
+    qq("Which word has a kasra in it?", ["شَمْس","قَمَر","كِتَاب","سَمَك"], 2, 22),
+  ],
+},
+
+/* ============================================================
+   The deen
+   ============================================================ */
+{
+  id:"qwudu", group:"The deen", title:"Wudu",
+  note:"Schools differ a little on the head and the ears. " + TEACHER_CHECK,
+  qs:[
+    qq("What do you say before you begin wudu?", ["Alhamdulillah","Bismillah","Subhanallah","Allahu akbar"], 1, 18),
+    qq("Where is the intention for wudu made?", ["out loud","in your heart","on paper","with your teacher"], 1, 20),
+    qq("After Bismillah, what do you wash first?", ["your face","your hands","your feet","your arms"], 1, 22),
+    qq("How many times do you wash your face?", ["1 time","2 times","3 times","4 times"], 2, 18),
+    qq("Which arm do you wash first?", ["the left","the right","either one","both together"], 1, 18),
+    qq("How far up the arm do you wash?", ["to the wrist","to the elbow","to the shoulder","to the fingers"], 1, 20),
+    qq("How many times do you wipe your head?", ["1 time","2 times","3 times","7 times"], 0, 20),
+    qq("What do you wash last?", ["your ears","your hands","your feet","your mouth"], 2, 18),
+    qq("How far up the foot do you wash?", ["to the toes","to the ankle","to the knee","just the sole"], 1, 20),
+    qq("What do you do straight after wudu?", ["eat","say the dua","go to sleep","wash again"], 1, 18),
+  ],
+},
+{
+  id:"qsalah", group:"The deen", title:"Salah",
+  note:TEACHER_CHECK,
+  qs:[
+    qq("How many prayers are there in a day?", ["3","4","5","6"], 2, 18),
+    qq("Which direction do we face?", ["north","the qiblah","east","the sunrise"], 1, 18),
+    qq("The qiblah faces which city?", ["Madinah","Jerusalem","Makkah","Cairo"], 2, 18),
+    qq("How many rak'ah is Fajr?", ["2","3","4","5"], 0, 18),
+    qq("How many rak'ah is Maghrib?", ["2","3","4","5"], 1, 18),
+    qq("How many rak'ah is Dhuhr?", ["2","3","4","5"], 2, 18),
+    qq("What do you say to begin the prayer?", ["Bismillah","Allahu akbar","Subhanallah","Ameen"], 1, 18),
+    qq("Which surah is read in every rak'ah?", ["al-Ikhlas","al-Fatihah","al-Nas","al-Falaq"], 1, 20),
+    qq("Bowing is called…", ["sujud","ruku","qiyam","salam"], 1, 20),
+    qq("What do you say in ruku?", ["Subhana Rabbiyal A'la","Subhana Rabbiyal Adheem",
+                                    "Rabbighfir li","Allahu akbar"], 1, 22),
+    qq("What do you say in sujud?", ["Subhana Rabbiyal Adheem","Rabbana laka-l-hamd",
+                                     "Subhana Rabbiyal A'la","Bismillah"], 2, 22),
+    qq("How many parts of the body touch the ground in sujud?", ["3","5","7","9"], 2, 22),
+    qq("What ends the prayer?", ["the takbir","the salam","the ruku","the dua"], 1, 20),
+    qq("Which way do you turn first for the salam?", ["the left","the right","straight ahead","up"], 1, 20),
+  ],
+},
+{
+  id:"qpillars", group:"The deen", title:"The five pillars of Islam",
+  note:TEACHER_CHECK,
+  qs:[
+    qq("How many pillars of Islam are there?", ["4","5","6","7"], 1, 18),
+    qq("Which is the first pillar?", ["salah","the shahadah","zakah","hajj"], 1, 20),
+    qq("The shahadah is…", ["a prayer","a fast","saying what you believe","a journey"], 2, 20),
+    qq("Which pillar is prayer?", ["sawm","zakah","salah","hajj"], 2, 18),
+    qq("Which pillar is giving to those in need?", ["zakah","sawm","hajj","salah"], 0, 18),
+    qq("Which pillar is fasting?", ["hajj","sawm","zakah","salah"], 1, 18),
+    qq("In which month do we fast?", ["Shawwal","Rajab","Ramadan","Muharram"], 2, 18),
+    qq("Which pillar is the journey to Makkah?", ["hajj","umrah","zakah","sawm"], 0, 18),
+    qq("Who has to make hajj?", ["everybody, every year","those who are able, once in a lifetime",
+                                 "only children","only teachers"], 1, 25),
+    qq("Which of these is NOT one of the five pillars?", ["salah","zakah","reading Qur'an","hajj"], 2, 22),
+  ],
+},
+{
+  id:"qiman", group:"The deen", title:"The six pillars of iman",
+  note:TEACHER_CHECK,
+  qs:[
+    qq("How many pillars of iman are there?", ["4","5","6","7"], 2, 18),
+    qq("The first is belief in…", ["the angels","Allah","the books","the Last Day"], 1, 18),
+    qq("The second is belief in…", ["the angels","the planets","the mountains","the seasons"], 0, 18),
+    qq("Which book was given to the Prophet Muhammad ﷺ?", ["the Tawrah","the Injil","the Qur'an","the Zabur"], 2, 20),
+    qq("Which book was given to Musa (peace be upon him)?", ["the Zabur","the Tawrah","the Injil","the Qur'an"], 1, 22),
+    qq("Which book was given to Isa (peace be upon him)?", ["the Injil","the Tawrah","the Zabur","the Qur'an"], 0, 22),
+    qq("Which book was given to Dawud (peace be upon him)?", ["the Injil","the Qur'an","the Zabur","the Tawrah"], 2, 22),
+    qq("We believe in Allah's messengers. Who was the last of them?",
+       ["Isa","Musa","Ibrahim","Muhammad ﷺ"], 3, 22),
+    qq("The Last Day is the day of…", ["rest","standing before Allah","travel","harvest"], 1, 22),
+    qq("The sixth pillar is belief in al-qadar, which means…",
+       ["the angels","Allah's decree","the books","the prophets"], 1, 25),
+  ],
+}
+
+);
+
+/* ---------- the picker, grouped ---------- */
+
+const quizStartPageSets = quizStartPage;
+quizStartPage = function () {
+  let html = quizStartPageSets.apply(this, arguments);
+  const groups = [];
+  QUIZ_SETS.forEach(s => {
+    const g = s.group || "Starter sets";
+    let e = groups.find(x => x.g === g);
+    if (!e) groups.push(e = { g, list: [] });
+    e.list.push(s);
+  });
+  /* a title that ends in Arabic drags the " — N questions" into the
+     right-to-left run, so close it with a left-to-right mark */
+  const LRM = "‎";
+  const opts = groups.map(e => `<optgroup label="${esc(e.g)}">${
+    e.list.map(s => `<option value="${s.id}" ${s.id === QZ.setId ? "selected" : ""}>${
+      esc(s.title)}${LRM} — ${s.qs.length} questions</option>`).join("")}</optgroup>`).join("");
+  return html.replace(/(<select id="qzSet"[\s\S]*?>)[\s\S]*?(<\/select>)/, "$1" + opts + "$2");
+};
+
+/* a set that carries a note says so in the lobby */
+const quizHostPageSets = quizHostPage;
+quizHostPage = function () {
+  let html = quizHostPageSets.apply(this, arguments);
+  if (QZ.stage !== "lobby") return html;
+  const set = quizSet();
+  if (!set || !set.note) return html;
+  return html.replace("</h1>", "</h1>" +
+    '<p class="qz-setnote">' + esc(set.note) + "</p>");
+};
+</script>

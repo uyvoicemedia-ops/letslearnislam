@@ -1,0 +1,691 @@
+<!-- ============================================================
+     WARDROBE — real clothes in Me, not five colour swatches
+     ------------------------------------------------------------
+     Me used to be one "Clothes" row of five flat colours and one row
+     of three hats. This is a dress-up screen: six slots that can be
+     mixed — top, legs, jacket, scarf, shoes, head — each item drawn as
+     an actual garment rather than a tint of the torso.
+
+     Two rules kept from the rest of the app:
+
+       * The figure stays FACELESS. The reference Yusuf sent is a
+         photoreal dress-up doll; everything else here follows the
+         faceless convention, and one screen breaking it would be the
+         odd one out rather than an improvement.
+       * Every garment is modest and would pass in a madrasah — long
+         sleeves or a jacket over them, nothing cropped, and the
+         girls' list runs up to a full khimar and abaya.
+
+     The old a.outfit / a.head numbers still exist in saved gardens, so
+     wardMigrate() turns them into the new slots once and leaves them
+     alone afterwards.
+     ============================================================ -->
+<style>
+.ward-wrap { display:grid; grid-template-columns:minmax(200px,260px) 1fr; gap:16px; }
+@media (max-width: 720px) { .ward-wrap { grid-template-columns:1fr; } }
+.ward-stage { background:linear-gradient(180deg,#dfe7ee 0%,#cfd9e3 62%,#b9c6d2 62%,#aebcc9 100%);
+              border-radius:18px; display:grid; place-items:center; padding:10px;
+              position:relative; }
+.ward-slots { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+.ward-slots button { font:inherit; font-size:13px; font-weight:700; cursor:pointer;
+  padding:8px 14px; border-radius:999px; border:1px solid var(--line);
+  background:var(--card); color:var(--muted); }
+.ward-slots button[aria-pressed="true"] { background:var(--qaida-green);
+  border-color:var(--qaida-green); color:#fff; }
+.ward-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:10px; }
+.ward-item { position:relative; font:inherit; cursor:pointer; padding:8px 6px 9px;
+  border-radius:16px; border:2px solid var(--line); background:var(--card);
+  display:flex; flex-direction:column; align-items:center; justify-content:flex-start; }
+.ward-item:hover { background:var(--bg); }
+.ward-item[aria-pressed="true"] { border-color:var(--qaida-green); background:#f1f7f3; }
+.ward-item[disabled] { opacity:.45; cursor:not-allowed; }
+.ward-item canvas { display:block; }
+.ward-item .nm { font-size:12.5px; font-weight:700; margin-top:4px; text-align:center;
+  line-height:1.25; }
+.ward-item .px { font-size:11.5px; color:var(--muted); margin-top:1px; }
+.ward-item .tick { position:absolute; top:5px; right:6px; width:18px; height:18px;
+  border-radius:50%; background:var(--qaida-green); color:#fff; font-size:11px;
+  display:grid; place-items:center; }
+body.kid .ward-item { min-height:118px; }
+body.kid .ward-slots button { font-size:15px; padding:11px 18px; min-height:46px; }
+</style>
+<script>
+"use strict";
+
+/* ---------- what there is to wear ---------- */
+
+const WARD = {
+  top: [
+    { id:"kurta-green", name:"Green kurta",  cost:0,  cut:"kurta",  c:"#2f9e8f" },
+    { id:"kurta-blue",  name:"Blue kurta",   cost:0,  cut:"kurta",  c:"#3f6fd8" },
+    { id:"tee-grey",    name:"Grey top",     cost:20, cut:"tee",    c:"#8d949e" },
+    { id:"tee-stripe",  name:"Stripy top",   cost:30, cut:"stripe", c:"#e4e9ef", c2:"#3f6fd8" },
+    { id:"tunic-lace",  name:"Lace tunic",   cost:40, cut:"lace",   c:"#fbf6ec", c2:"#e3d6bd" },
+    { id:"hoodie-navy", name:"Navy hoodie",  cost:50, cut:"hoodie", c:"#2c3a58" },
+    { id:"thobe-gold",  name:"Gold thobe",   cost:70, cut:"long",   c:"#e0a52e" },
+  ],
+  legs: [
+    { id:"trousers",  name:"Trousers",   cost:0,  cut:"trouser", c:"#3a3f4a" },
+    { id:"jeans",     name:"Jeans",      cost:20, cut:"trouser", c:"#6f93c4" },
+    { id:"joggers",   name:"Joggers",    cost:25, cut:"jogger",  c:"#9aa2ad" },
+    { id:"skirt",     name:"Long skirt", cost:35, cut:"skirt",   c:"#5f7fb0" },
+    { id:"shalwar",   name:"Shalwar",    cost:35, cut:"shalwar", c:"#efe6d2" },
+    { id:"abaya-skirt", name:"Long dress", cost:60, cut:"skirt", c:"#2a2a30" },
+  ],
+  outer: [
+    { id:"none",       name:"Nothing",       cost:0,  cut:"none" },
+    { id:"cardigan",   name:"Cardigan",      cost:40, cut:"cardi", c:"#d8a53a" },
+    { id:"denim",      name:"Denim jacket",  cost:55, cut:"jacket", c:"#5f83b5" },
+    { id:"gilet",      name:"Bodywarmer",    cost:55, cut:"gilet",  c:"#387a5c" },
+    { id:"abaya",      name:"Abaya",         cost:80, cut:"abaya",  c:"#232329" },
+    { id:"coat",       name:"Winter coat",   cost:90, cut:"jacket", c:"#8c3242" },
+  ],
+  neck: [
+    { id:"none",     name:"Nothing",      cost:0,  cut:"none" },
+    { id:"scarf",    name:"Scarf",        cost:30, cut:"scarf",  c:"#c4553f" },
+    { id:"woolly",   name:"Woolly scarf", cost:45, cut:"woolly", c:"#3f6fd8", c2:"#f0e7d2" },
+  ],
+  shoes: [
+    { id:"sandals",  name:"Sandals",  cost:0,  cut:"sandal",  c:"#8a6a44" },
+    { id:"trainers", name:"Trainers", cost:25, cut:"trainer", c:"#fbf7ee", c2:"#c4553f" },
+    { id:"boots",    name:"Boots",    cost:40, cut:"boot",    c:"#4a3a2c" },
+    { id:"khuff",    name:"Khuff",    cost:50, cut:"khuff",   c:"#6b4a30" },
+  ],
+  head: [
+    { id:"hijab",     name:"Hijab",        cost:0,  cut:"hijab",  c:"#f7f3ea", sex:"girl" },
+    { id:"hijab-pat", name:"Patterned",    cost:40, cut:"hijab",  c:"#c96a9a", sex:"girl", dots:true },
+    { id:"hijab-cap", name:"Hijab and cap",cost:60, cut:"hijabcap", c:"#5f7fb0", c2:"#2f4f70", sex:"girl" },
+    { id:"khimar",    name:"Long khimar",  cost:80, cut:"khimar", c:"#2a2a30", sex:"girl" },
+    { id:"topi",      name:"Topi",         cost:0,  cut:"topi",   c:"#f7f3ea", sex:"boy" },
+    { id:"kufi",      name:"Kufi",         cost:40, cut:"topi",   c:"#2f5f8f", sex:"boy" },
+    { id:"beanie",    name:"Woolly hat",   cost:45, cut:"beanie", c:"#8c3242", sex:"boy" },
+    { id:"turban",    name:"Turban",       cost:80, cut:"turban", c:"#f7f3ea", sex:"boy" },
+  ],
+};
+
+const WARD_SLOTS = [
+  ["top",   "Top"],
+  ["legs",  "Bottoms"],
+  ["outer", "Jacket"],
+  ["neck",  "Scarf"],
+  ["shoes", "Shoes"],
+  ["head",  "Head"],
+];
+
+function wardList(slot, sex) {
+  return WARD[slot].filter(it => !it.sex || it.sex === sex);
+}
+function wardFind(slot, id) {
+  return WARD[slot].find(it => it.id === id) || WARD[slot][0];
+}
+
+/* ---------- state ----------
+   The old five-colour outfit and three-hat numbers are still sitting in
+   saved gardens. Turn them into slots once, then never look again. */
+function wardMigrate(a) {
+  if (a.wear) return a.wear;
+  const OLD_TOP = ["kurta-green", "kurta-blue", "kurta-green", "kurta-blue", "thobe-gold"];
+  const oldHead = a.sex === "girl"
+    ? ["hijab", "hijab-pat", "khimar"]
+    : ["topi", "kufi", "turban"];
+  a.wear = {
+    top:   OLD_TOP[a.outfit | 0] || "kurta-green",
+    legs:  "trousers",
+    outer: (a.sex === "girl" && (a.head | 0) === 2) ? "abaya" : "none",
+    neck:  "none",
+    shoes: "sandals",
+    head:  oldHead[a.head | 0] || oldHead[0],
+  };
+  a.ownedW = {
+    top:   [a.wear.top, "kurta-green", "kurta-blue"],
+    legs:  ["trousers"],
+    outer: ["none", a.wear.outer],
+    neck:  ["none"],
+    shoes: ["sandals"],
+    head:  [a.wear.head, a.sex === "girl" ? "hijab" : "topi"],
+  };
+  /* the old colour list was free up to index 1, so nobody loses a thing
+     they had already paid for */
+  (a.owned && a.owned.outfit || []).forEach(i => {
+    const t = OLD_TOP[i]; if (t && a.ownedW.top.indexOf(t) < 0) a.ownedW.top.push(t);
+  });
+  (a.owned && a.owned.head || []).forEach(i => {
+    const h = oldHead[i]; if (h && a.ownedW.head.indexOf(h) < 0) a.ownedW.head.push(h);
+  });
+  return a.wear;
+}
+
+function wardState() {
+  const a = avatarState();
+  wardMigrate(a);
+  if (!a.ownedW) a.ownedW = { top:["kurta-green"], legs:["trousers"], outer:["none"],
+                              neck:["none"], shoes:["sandals"], head:["hijab","topi"] };
+  WARD_SLOTS.forEach(([s]) => { if (!a.ownedW[s]) a.ownedW[s] = []; });
+  /* a change of sex must not leave a turban on a girl */
+  const hd = wardFind("head", a.wear.head);
+  if (hd.sex && hd.sex !== a.sex) a.wear.head = wardList("head", a.sex)[0].id;
+  return a;
+}
+
+function wardWorn(a, slot) { return wardFind(slot, a.wear[slot]); }
+function wardOwns(a, slot, id) {
+  return (a.ownedW[slot] || []).indexOf(id) > -1;
+}
+</script>
+<script>
+"use strict";
+
+/* ============================================================
+   Drawing the figure, one garment at a time
+   ------------------------------------------------------------
+   Same proportions as the old drawAvatar, because the walk cycle,
+   the room scale and the garden scale are all tuned to them:
+   feet at y=0, hem around -0.18s, shoulders -0.52s, head at -0.64s.
+   Only what is painted between those lines has changed.
+   ============================================================ */
+
+function wardShade(col, f) {
+  const h = String(col || "#888").replace("#", "");
+  const n = h.length === 3 ? h.split("").map(x => x + x).join("") : h;
+  return "#" + (n.match(/../g) || ["88", "88", "88"])
+    .map(p => Math.max(0, Math.min(255, Math.round(parseInt(p, 16) * f)))
+      .toString(16).padStart(2, "0")).join("");
+}
+
+function wardLegs(c, s, it, step) {
+  const col = it.c, dk = wardShade(col, 0.82);
+  const hipY = -s * 0.2, footY = 0;
+  const lx = -s * 0.06, rx = s * 0.06;
+  const lo = step * s * 0.12, ro = -step * s * 0.12;
+
+  if (it.cut === "skirt") {
+    c.fillStyle = col;
+    c.beginPath();
+    c.moveTo(-s * 0.15, -s * 0.24);
+    c.lineTo(s * 0.15, -s * 0.24);
+    c.lineTo(s * 0.19, -s * 0.02);
+    c.lineTo(-s * 0.19, -s * 0.02);
+    c.closePath(); c.fill();
+    c.strokeStyle = dk; c.lineWidth = s * 0.008;
+    c.beginPath(); c.moveTo(0, -s * 0.24); c.lineTo(0, -s * 0.02); c.stroke();
+    return { ankleL: lx + lo * 0.3, ankleR: rx + ro * 0.3, bare: true };
+  }
+
+  const wide = it.cut === "shalwar" ? s * 0.055 : it.cut === "jogger" ? s * 0.045 : s * 0.038;
+  c.strokeStyle = col; c.lineCap = "round"; c.lineWidth = wide * 2;
+  c.beginPath();
+  c.moveTo(lx, hipY); c.lineTo(lx + lo, footY - s * 0.02);
+  c.moveTo(rx, hipY); c.lineTo(rx + ro, footY - s * 0.02);
+  c.stroke();
+  if (it.cut === "jogger") {                       // a cuff, so it is not just a leg
+    c.strokeStyle = dk; c.lineWidth = wide * 2;
+    c.beginPath();
+    c.moveTo(lx + lo, footY - s * 0.05); c.lineTo(lx + lo, footY - s * 0.02);
+    c.moveTo(rx + ro, footY - s * 0.05); c.lineTo(rx + ro, footY - s * 0.02);
+    c.stroke();
+  }
+  if (it.id === "jeans") {                          // a seam reads as denim
+    c.strokeStyle = wardShade(col, 0.88); c.lineWidth = s * 0.006;
+    c.beginPath();
+    c.moveTo(lx, hipY + s * 0.02); c.lineTo(lx + lo * 0.9, footY - s * 0.03);
+    c.moveTo(rx, hipY + s * 0.02); c.lineTo(rx + ro * 0.9, footY - s * 0.03);
+    c.stroke();
+  }
+  return { ankleL: lx + lo, ankleR: rx + ro, bare: false };
+}
+
+function wardShoes(c, s, it, at) {
+  const col = it.c, dk = wardShade(col, 0.78);
+  [at.ankleL, at.ankleR].forEach(x => {
+    if (it.cut === "boot") {
+      c.fillStyle = col;
+      c.beginPath(); c.roundRect(x - s * 0.045, -s * 0.075, s * 0.09, s * 0.075, s * 0.014); c.fill();
+      c.fillStyle = dk;
+      c.beginPath(); c.ellipse(x + s * 0.008, 0, s * 0.072, s * 0.026, 0, 0, Math.PI * 2); c.fill();
+      return;
+    }
+    if (it.cut === "khuff") {
+      c.fillStyle = col;
+      c.beginPath(); c.roundRect(x - s * 0.04, -s * 0.055, s * 0.08, s * 0.055, s * 0.012); c.fill();
+      c.fillStyle = dk;
+      c.beginPath(); c.ellipse(x + s * 0.008, 0, s * 0.066, s * 0.022, 0, 0, Math.PI * 2); c.fill();
+      return;
+    }
+    if (it.cut === "trainer") {
+      c.fillStyle = col;
+      c.beginPath(); c.ellipse(x + s * 0.008, -s * 0.016, s * 0.072, s * 0.03, 0, 0, Math.PI * 2); c.fill();
+      c.fillStyle = it.c2 || dk;
+      c.beginPath(); c.ellipse(x + s * 0.008, 0, s * 0.072, s * 0.018, 0, 0, Math.PI * 2); c.fill();
+      return;
+    }
+    c.fillStyle = col;                               // sandal
+    c.beginPath(); c.ellipse(x + s * 0.005, 0, s * 0.068, s * 0.022, 0, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = wardShade(col, 1.25); c.lineWidth = s * 0.008;
+    c.beginPath(); c.moveTo(x - s * 0.03, -s * 0.012); c.lineTo(x + s * 0.03, -s * 0.012); c.stroke();
+  });
+}
+
+/* The torso. Returns the sleeve colour, because a jacket over a top
+   changes what the arms are wearing. */
+function wardTop(c, s, it, long) {
+  const col = it.c, dk = wardShade(col, 0.82);
+  const shoulder = -s * 0.52;
+  const hem = (it.cut === "long" || long) ? -s * 0.04 : -s * 0.18;
+  const flare = (it.cut === "long" || long) ? 0.21 : 0.17;
+
+  c.fillStyle = col;
+  c.beginPath();
+  c.moveTo(-s * 0.13, shoulder);
+  c.lineTo(s * 0.13, shoulder);
+  c.lineTo(s * flare, hem);
+  c.lineTo(-s * flare, hem);
+  c.closePath(); c.fill();
+
+  if (it.cut === "stripe") {
+    c.fillStyle = it.c2;
+    for (let y = shoulder + s * 0.05; y < hem; y += s * 0.055) {
+      c.fillRect(-s * flare, y, s * flare * 2, s * 0.022);
+    }
+  } else if (it.cut === "lace") {
+    c.fillStyle = it.c2;
+    for (let y = shoulder + s * 0.04; y < hem; y += s * 0.035) {
+      for (let x = -s * 0.12; x < s * 0.12; x += s * 0.035) {
+        c.beginPath(); c.arc(x, y, s * 0.008, 0, Math.PI * 2); c.fill();
+      }
+    }
+  } else if (it.cut === "hoodie") {
+    c.fillStyle = dk;                                 // a hood behind the neck
+    c.beginPath(); c.ellipse(0, shoulder + s * 0.01, s * 0.115, s * 0.045, 0, 0, Math.PI); c.fill();
+    c.strokeStyle = "#e8e2d4"; c.lineWidth = s * 0.008;
+    c.beginPath();
+    c.moveTo(-s * 0.03, shoulder + s * 0.04); c.lineTo(-s * 0.03, shoulder + s * 0.11);
+    c.moveTo(s * 0.03, shoulder + s * 0.04); c.lineTo(s * 0.03, shoulder + s * 0.11);
+    c.stroke();
+  } else {
+    c.fillStyle = dk;                                 // the placket down a kurta
+    c.fillRect(-s * 0.02, shoulder + s * 0.02, s * 0.04, (hem - shoulder) * 0.8);
+  }
+  return col;
+}
+
+/* A jacket sits over the top: two front panels and a collar, so the
+   garment underneath still shows down the middle. */
+function wardOuter(c, s, it, sleeve) {
+  if (!it || it.cut === "none") return sleeve;
+  const col = it.c, dk = wardShade(col, 0.8), lt = wardShade(col, 1.12);
+  const shoulder = -s * 0.52;
+  const hem = (it.cut === "abaya") ? -s * 0.02
+            : (it.cut === "cardi") ? -s * 0.14 : -s * 0.2;
+  const flare = (it.cut === "abaya") ? 0.23 : 0.19;
+
+  [-1, 1].forEach(sd => {
+    c.fillStyle = col;
+    c.beginPath();
+    c.moveTo(sd * s * 0.045, shoulder);
+    c.lineTo(sd * s * 0.14, shoulder);
+    c.lineTo(sd * s * flare, hem);
+    c.lineTo(sd * s * 0.05, hem);
+    c.closePath(); c.fill();
+  });
+  c.fillStyle = dk;                                   // collar
+  c.beginPath();
+  c.moveTo(-s * 0.13, shoulder);
+  c.lineTo(s * 0.13, shoulder);
+  c.lineTo(s * 0.05, shoulder + s * 0.06);
+  c.lineTo(-s * 0.05, shoulder + s * 0.06);
+  c.closePath(); c.fill();
+
+  if (it.cut === "jacket" || it.cut === "abaya") {
+    c.fillStyle = lt;
+    c.fillRect(-s * 0.155, shoulder + s * 0.09, s * 0.02, s * 0.02);
+    c.fillRect(s * 0.135, shoulder + s * 0.09, s * 0.02, s * 0.02);
+  }
+  /* a bodywarmer has no sleeves, so the top's own colour keeps them */
+  return it.cut === "gilet" ? sleeve : col;
+}
+
+function wardNeck(c, s, it) {
+  if (!it || it.cut === "none") return;
+  const y = -s * 0.53;
+  c.fillStyle = it.c;
+  c.beginPath(); c.roundRect(-s * 0.1, y, s * 0.2, s * 0.045, s * 0.02); c.fill();
+  c.beginPath(); c.roundRect(s * 0.02, y + s * 0.03, s * 0.05, s * 0.14, s * 0.018); c.fill();
+  if (it.cut === "woolly") {
+    c.fillStyle = it.c2;
+    for (let i = 0; i < 3; i++) {
+      c.fillRect(-s * 0.1, y + s * 0.012 * i * 1.3, s * 0.2, s * 0.008);
+    }
+  }
+}
+</script>
+<script>
+"use strict";
+
+function wardHead(c, s, it, skin) {
+  const y = -s * 0.64;
+  c.fillStyle = skin;
+  c.beginPath(); c.arc(0, y, s * 0.115, 0, Math.PI * 2); c.fill();
+
+  if (!it) return;
+  const col = it.c, dk = wardShade(col, 0.82);
+
+  if (it.cut === "hijab" || it.cut === "hijabcap" || it.cut === "khimar") {
+    const drop = it.cut === "khimar" ? -s * 0.30 : -s * 0.50;
+    c.fillStyle = col;
+    c.beginPath();
+    c.moveTo(0, -s * 0.78);
+    c.quadraticCurveTo(s * 0.17, -s * 0.74, s * 0.16, drop);
+    c.quadraticCurveTo(0, drop - s * 0.06, -s * 0.16, drop);
+    c.quadraticCurveTo(-s * 0.17, -s * 0.74, 0, -s * 0.78);
+    c.closePath(); c.fill();
+    c.fillStyle = skin;                             // the face opening
+    c.beginPath(); c.ellipse(0, y + s * 0.01, s * 0.075, s * 0.085, 0, 0, Math.PI * 2); c.fill();
+    if (it.cut === "hijabcap") {
+      c.fillStyle = it.c2;
+      c.beginPath(); c.arc(0, -s * 0.735, s * 0.098, Math.PI, 0); c.fill();
+    }
+    if (it.dots) {
+      c.fillStyle = "rgba(255,255,255,.55)";
+      [[-0.1, -0.68], [0.1, -0.66], [0, -0.55], [-0.11, -0.57], [0.11, -0.53]].forEach(p => {
+        c.beginPath(); c.arc(s * p[0], s * p[1], s * 0.016, 0, Math.PI * 2); c.fill();
+      });
+    }
+    return;
+  }
+
+  if (it.cut === "turban") {
+    c.fillStyle = col;
+    c.beginPath(); c.ellipse(0, -s * 0.74, s * 0.15, s * 0.075, 0, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.ellipse(0, -s * 0.79, s * 0.12, s * 0.06, 0, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = dk; c.lineWidth = s * 0.007;
+    c.beginPath(); c.ellipse(0, -s * 0.755, s * 0.135, s * 0.05, 0, 0, Math.PI * 2); c.stroke();
+    return;
+  }
+
+  if (it.cut === "beanie") {
+    c.fillStyle = col;
+    c.beginPath(); c.arc(0, -s * 0.7, s * 0.12, Math.PI, 0); c.fill();
+    c.fillStyle = wardShade(col, 1.18);
+    c.fillRect(-s * 0.12, -s * 0.715, s * 0.24, s * 0.035);
+    c.beginPath(); c.arc(0, -s * 0.825, s * 0.028, 0, Math.PI * 2); c.fill();
+    return;
+  }
+
+  c.fillStyle = col;                                 // topi / kufi
+  c.beginPath(); c.arc(0, -s * 0.72, s * 0.11, Math.PI, 0); c.fill();
+  c.fillRect(-s * 0.11, -s * 0.73, s * 0.22, s * 0.02);
+  if (it.id === "kufi") {
+    c.strokeStyle = wardShade(col, 1.3); c.lineWidth = s * 0.006;
+    c.beginPath(); c.moveTo(-s * 0.1, -s * 0.755); c.lineTo(s * 0.1, -s * 0.755); c.stroke();
+  }
+}
+
+/* ---------- the whole figure ---------- */
+
+drawAvatar = function (c, x, y, s, t, o) {
+  const a = o || wardState();
+  if (!a.wear) wardMigrate(a);
+  const walking = !!a.walking;
+  const face = a.face || 1;
+  const step = walking ? Math.sin(t * 9) : 0;
+  const bob = walking ? Math.abs(Math.sin(t * 9)) * s * 0.02 : Math.sin(t * 2) * s * 0.015;
+  const skin = SKINS[a.skin] || SKINS[1];
+
+  const top   = wardFind("top",   a.wear.top);
+  const legs  = wardFind("legs",  a.wear.legs);
+  const outer = wardFind("outer", a.wear.outer);
+  const neck  = wardFind("neck",  a.wear.neck);
+  const shoes = wardFind("shoes", a.wear.shoes);
+  const head  = wardFind("head",  a.wear.head);
+
+  c.save();
+  c.translate(x, y - bob);
+  c.scale(face, 1);
+
+  const at = wardLegs(c, s, legs, step);
+  wardShoes(c, s, shoes, at);
+
+  /* A long top or a long jacket covers the legs, so it goes on after
+     them — the hem is the whole point of an abaya. */
+  const longUnder = legs.cut === "skirt" && outer.cut !== "abaya";
+  let sleeve = wardTop(c, s, top, longUnder && top.cut !== "long");
+  sleeve = wardOuter(c, s, outer, sleeve);
+  wardNeck(c, s, neck);
+
+  // arms, in whatever the sleeves ended up being
+  c.strokeStyle = sleeve; c.lineWidth = s * 0.075; c.lineCap = "round";
+  c.beginPath();
+  c.moveTo(-s * 0.12, -s * 0.46); c.lineTo(-s * 0.2 - step * s * 0.1, -s * 0.22);
+  c.moveTo(s * 0.12, -s * 0.46);  c.lineTo(s * 0.2 + step * s * 0.1, -s * 0.22);
+  c.stroke();
+  c.fillStyle = skin;
+  c.beginPath(); c.arc(-s * 0.2 - step * s * 0.1, -s * 0.2, s * 0.045, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(s * 0.2 + step * s * 0.1, -s * 0.2, s * 0.045, 0, Math.PI * 2); c.fill();
+
+  wardHead(c, s, head, skin);
+  c.restore();
+};
+
+/* ---------- buying and wearing ---------- */
+
+function wardPick(slot, id) {
+  const a = wardState(), g = gState();
+  const it = wardFind(slot, id);
+  if (wardOwns(a, slot, id) || !it.cost) {
+    if (!wardOwns(a, slot, id)) a.ownedW[slot].push(id);
+    a.wear[slot] = id;
+    llSave(); Snd.pop(); render();
+    return;
+  }
+  if (g.deeds < it.cost) {
+    toast("You need " + (it.cost - g.deeds) + " more coins"); Snd.wrong(); return;
+  }
+  g.deeds -= it.cost;
+  a.ownedW[slot].push(id);
+  a.wear[slot] = id;
+  llSave(); Snd.win(); confetti(12); render();
+  if (typeof coinPop === "function") coinPop();
+}
+</script>
+<script>
+"use strict";
+
+/* ============================================================
+   The screen
+   ------------------------------------------------------------
+   A full-width overlay, not a panel in the garden sidebar. That
+   sidebar is about 300px wide and a dress-up screen needs a big
+   figure next to a grid of clothes — and a CSS media query is no
+   help, because it measures the VIEWPORT, not the box the panel
+   happens to be sitting in. A two-column layout inside a narrow
+   sidebar on a wide screen collapses into a mess.
+
+   Every tile is the whole figure wearing that one item over what
+   the child already has on, which is the only honest preview: a
+   swatch of denim tells a seven-year-old nothing about whether the
+   jacket suits the scarf.
+   ============================================================ */
+
+Garden.wardSlot = Garden.wardSlot || "top";
+let WARD_TILE = new Map();
+let WARD_GEN = 0;
+
+function wardTileUrl(slot, id, a) {
+  const key = slot + "|" + id + "|" + a.sex + "|" + a.skin + "|"
+            + WARD_SLOTS.map(([s]) => a.wear[s]).join(",");
+  const hit = WARD_TILE.get(key);
+  if (hit) return hit;
+  const cv = document.createElement("canvas");
+  cv.width = 76; cv.height = 94;
+  const ctx = cv.getContext("2d");
+  drawAvatar(ctx, 38, 90, 120, 0.35, Object.assign({}, a, {
+    wear: Object.assign({}, a.wear, { [slot]: id }), walking: false, face: 1,
+  }));
+  const url = cv.toDataURL();
+  WARD_TILE.set(key, url);
+  if (WARD_TILE.size > 500) WARD_TILE.clear();
+  return url;
+}
+
+/* ---------- the compact panel that stays in the sidebar ---------- */
+
+avatarPanel = function () {
+  const a = wardState();
+  const worn = WARD_SLOTS.map(([s, l]) => wardWorn(a, s))
+    .filter(it => it.cut !== "none").map(it => it.name);
+  return `<div class="card">
+    <h3 class="card-title">Your character</h3>
+    <div class="ward-stage" style="margin-bottom:10px">
+      <canvas id="avPreview" width="150" height="190"></canvas></div>
+    <button class="btn primary" style="width:100%" onclick="wardOpen()">Change clothes</button>
+    <p class="note" style="margin:8px 0 0">${esc(worn.join(" · "))}</p>
+    <div class="note" style="font-weight:800;margin:12px 0 6px">Who are you?</div>
+    <div class="av-grid" style="margin-bottom:10px">
+      ${["girl", "boy"].map(sx => `<button class="av-opt" aria-pressed="${a.sex === sx}"
+        onclick="avatarSet('sex','${sx}')">${sx === "girl" ? "Girl" : "Boy"}</button>`).join("")}
+    </div>
+    <div class="note" style="font-weight:800;margin-bottom:6px">Skin</div>
+    <div class="av-grid">
+      ${SKINS.map((col, i) => `<button class="av-opt" aria-pressed="${a.skin === i}"
+        onclick="avatarSet('skin',${i})"><span class="sw"
+        style="background:${col}"></span></button>`).join("")}
+    </div>
+    <p class="note" style="margin-top:10px">Faces are left off on purpose — tell us if you
+      would rather they had one.</p>
+  </div>`;
+};
+
+/* ---------- the full dress-up screen ---------- */
+
+function wardOpen() { wardPaint(); }
+function wardClose() {
+  WARD_GEN++;
+  document.querySelectorAll(".ward-veil").forEach(v => v.remove());
+  render();
+}
+
+function wardPaint() {
+  document.querySelectorAll(".ward-veil").forEach(v => v.remove());
+  const a = wardState(), g = gState();
+  const slot = Garden.wardSlot;
+  const items = wardList(slot, a.sex);
+
+  const tabs = WARD_SLOTS.map(([s, label]) =>
+    `<button aria-pressed="${slot === s}"
+       onclick="Garden.wardSlot='${s}';wardPaint()">${esc(label)}</button>`).join("");
+
+  const grid = items.map(it => {
+    const owned = wardOwns(a, slot, it.id) || !it.cost;
+    const on = a.wear[slot] === it.id;
+    const afford = owned || g.deeds >= it.cost;
+    return `<button class="ward-item" aria-pressed="${on}" ${afford ? "" : "disabled"}
+        onclick="wardPick('${slot}','${it.id}')">
+        ${on ? '<span class="tick">✓</span>' : ""}
+        <img src="${wardTileUrl(slot, it.id, a)}" width="76" height="94" alt="">
+        <span class="nm">${esc(it.name)}</span>
+        <span class="px">${owned ? "yours" : it.cost + " 🌱"}</span>
+      </button>`;
+  }).join("");
+
+  const veil = document.createElement("div");
+  veil.className = "ward-veil";
+  veil.onclick = (e) => { if (e.target === veil) wardClose(); };
+  veil.innerHTML = `<div class="ward-box">
+    <div class="ward-head">
+      <h2>Get dressed</h2>
+      <span class="coins">🌱 ${g.deeds}</span>
+      <button class="btn" onclick="wardClose()">Done</button>
+    </div>
+    <div class="ward-wrap">
+      <div class="ward-stage"><canvas id="wardBig" width="230" height="290"></canvas></div>
+      <div>
+        <div class="ward-slots">${tabs}</div>
+        <div class="ward-grid">${grid}</div>
+        <p class="note" style="margin-top:12px">The jacket goes over the top, and a bodywarmer
+          leaves the sleeves showing. Your character wears this everywhere — the garden, the
+          house and every building you go into.</p>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(veil);
+  wardBigMount();
+}
+
+function wardBigMount() {
+  const c = document.getElementById("wardBig");
+  if (!c) return;
+  const ctx = c.getContext("2d");
+  const gen = ++WARD_GEN;
+  const t0 = performance.now();
+  const loop = () => {
+    if (gen !== WARD_GEN || !document.getElementById("wardBig")) return;
+    const t = (performance.now() - t0) / 1000;
+    ctx.clearRect(0, 0, c.width, c.height);
+    drawAvatar(ctx, c.width / 2, c.height - 28, 250,
+      t, Object.assign({}, wardState(), { walking: true, face: 1 }));
+    requestAnimationFrame(loop);
+  };
+  loop();
+}
+
+/* Wearing something repaints the dress-up screen rather than the page
+   behind it — render() would tear the overlay down mid-tap. */
+const wardPickBase = wardPick;
+wardPick = function (slot, id) {
+  const open = !!document.querySelector(".ward-veil");
+  WARD_TILE.clear();
+  if (!open) return wardPickBase.apply(this, arguments);
+
+  const a = wardState(), g = gState();
+  const it = wardFind(slot, id);
+  if (!wardOwns(a, slot, id) && it.cost) {
+    if (g.deeds < it.cost) {
+      toast("You need " + (it.cost - g.deeds) + " more coins"); Snd.wrong(); return;
+    }
+    g.deeds -= it.cost;
+    a.ownedW[slot].push(id);
+    Snd.win(); confetti(12);
+  } else {
+    if (!wardOwns(a, slot, id)) a.ownedW[slot].push(id);
+    Snd.pop();
+  }
+  a.wear[slot] = id;
+  llSave();
+  wardPaint();
+};
+
+const avatarSetWard = avatarSet;
+avatarSet = function (key, value) {
+  WARD_TILE.clear();
+  const a = avatarState();
+  if (key === "sex") {
+    wardMigrate(a);
+    a.sex = value;
+    const hd = wardFind("head", a.wear.head);
+    if (hd.sex && hd.sex !== value) {
+      const first = wardList("head", value)[0];
+      a.wear.head = first.id;
+      if (a.ownedW.head.indexOf(first.id) < 0) a.ownedW.head.push(first.id);
+    }
+    llSave(); Snd.pop();
+    if (document.querySelector(".ward-veil")) wardPaint(); else render();
+    return;
+  }
+  const out = avatarSetWard.apply(this, arguments);
+  if (document.querySelector(".ward-veil")) wardPaint();
+  return out;
+};
+</script>
+<style>
+.ward-veil { position:fixed; inset:0; z-index:880; background:rgba(30,25,15,.42);
+  display:flex; align-items:center; justify-content:center; padding:20px; overflow:auto; }
+.ward-box { background:var(--card); border-radius:22px; padding:18px 20px 20px;
+  width:min(980px, 100%); max-height:92vh; overflow:auto;
+  box-shadow:0 24px 60px rgba(30,20,5,.28); }
+.ward-head { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.ward-head h2 { margin:0; font-size:24px; flex:1; }
+.ward-head .coins { font-weight:800; font-size:15px; }
+.ward-box .ward-wrap { grid-template-columns:minmax(240px,300px) 1fr; }
+@media (max-width: 760px) { .ward-box .ward-wrap { grid-template-columns:1fr; } }
+.ward-box .ward-stage { min-height:300px; }
+</style>

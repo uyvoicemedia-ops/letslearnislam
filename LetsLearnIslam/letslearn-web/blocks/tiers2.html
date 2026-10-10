@@ -1,0 +1,942 @@
+<!-- ============================================================
+     The rest of the catalogue
+     ------------------------------------------------------------
+     Five things had real tiers and everything else still did the
+     old two-step scale, so half the garden improved properly and
+     half just got bigger. This finishes the job.
+
+     Same rule throughout: a level adds a part. Where a thing has
+     nothing sensible to add — a road is a road — it gains
+     craftsmanship instead: edging, a camber, worn ruts. Nothing
+     grows more than about five per cent a tier.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* The originals live inside an IIFE in an earlier block, so they are
+   private to it. These are the same two shapes, hoisted to where the
+   rest of the catalogue can reach them. Plain function declarations,
+   so redeclaring is safe. */
+function leafMass(c, x, y, rx, ry, night, tone) {
+  const lit = night ? mqShade(tone, .55) : tone;
+  c.fillStyle = mqShade(lit, .78);
+  c.beginPath(); c.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = lit;
+  c.beginPath(); c.ellipse(x - rx * .18, y - ry * .22, rx * .82, ry * .78, 0, 0, Math.PI * 2); c.fill();
+}
+
+function bloom(c, x, y, r, col, night) {
+  c.fillStyle = night ? mqShade(col, .6) : col;
+  for (let k = 0; k < 5; k++) {
+    const a = (k / 5) * Math.PI * 2 - Math.PI / 2;
+    c.beginPath();
+    c.ellipse(x + Math.cos(a) * r * .62, y + Math.sin(a) * r * .5, r * .55, r * .45, a, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.fillStyle = night ? "#c9b878" : "#ffe89a";
+  c.beginPath(); c.arc(x, y, r * .38, 0, Math.PI * 2); c.fill();
+}
+
+/* ---------- growing things ---------- */
+
+GI2.palm = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  const bark = night ? "#4a3524" : "#7a5637";
+  const hgt = 1.0 + lvl * 0.16;
+  const sway = Math.sin(t * 0.7 + u) * 2 * z;
+
+  c.strokeStyle = bark; c.lineWidth = 5 * z; c.lineCap = "round";
+  c.beginPath(); c.moveTo(p.x, p.y);
+  c.quadraticCurveTo(p.x + sway * 0.5, p.y - isoH(hgt * 0.6), p.x + sway, p.y - isoH(hgt));
+  c.stroke();
+  if (lvl >= 2) {                                   // ringed trunk
+    c.strokeStyle = mqShade(bark, .78); c.lineWidth = 1.2 * z;
+    for (let i = 1; i < 5; i++) {
+      const k = i / 5;
+      const x = p.x + sway * k * k, y = p.y - isoH(hgt * k);
+      c.beginPath(); c.moveTo(x - 3 * z, y); c.lineTo(x + 3 * z, y); c.stroke();
+    }
+  }
+  c.lineCap = "butt";
+
+  const tx = p.x + sway, ty = p.y - isoH(hgt);
+  const fronds = 5 + lvl;
+  for (let i = 0; i < fronds; i++) {
+    const a = (i / fronds) * Math.PI * 2 + 0.3;
+    const len = (16 + lvl * 2) * z;
+    c.strokeStyle = night ? "#2c5c3c" : (i % 2 ? "#4aa86a" : "#3f9a54");
+    c.lineWidth = (3.5 - Math.min(1, lvl * 0.15)) * z; c.lineCap = "round";
+    c.beginPath(); c.moveTo(tx, ty);
+    c.quadraticCurveTo(tx + Math.cos(a) * len * 0.6, ty + Math.sin(a) * len * 0.3 - 6 * z,
+                       tx + Math.cos(a) * len, ty + Math.sin(a) * len * 0.5 + 3 * z);
+    c.stroke();
+  }
+  c.lineCap = "butt";
+  if (lvl >= 3) {                                   // dates
+    const col = night ? "#8a5a2a" : "#c9762e";
+    for (let i = 0; i < 5; i++) {
+      const a = i * 1.3;
+      c.fillStyle = col;
+      c.beginPath();
+      c.arc(tx + Math.cos(a) * 6 * z, ty + 4 * z + Math.sin(a) * 3 * z, 2 * z, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+  if (lvl >= 4) {                                   // a ring of stones at the foot
+    c.fillStyle = night ? "#6a6458" : "#c9c2ae";
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      c.beginPath();
+      c.ellipse(p.x + Math.cos(a) * 15 * z, p.y + Math.sin(a) * 7.5 * z,
+                3.4 * z, 2.2 * z, 0, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+};
+GI2.palm.tiered = true;
+
+GI2.fruit = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  const bark = night ? "#4a3524" : "#7a5637";
+  const sway = Math.sin(t * 0.7 + v) * 1.6 * z;
+  const hgt = 1.0 + lvl * 0.1;
+  isoCyl(c, u, v, 0.09, hgt, W, H, bark);
+  const top = p.y - isoH(hgt);
+  c.strokeStyle = bark; c.lineWidth = 3 * z; c.lineCap = "round";
+  c.beginPath(); c.moveTo(p.x, top + 8 * z); c.lineTo(p.x - 9 * z, top - 2 * z); c.stroke();
+  c.beginPath(); c.moveTo(p.x, top + 8 * z); c.lineTo(p.x + 9 * z, top - 1 * z); c.stroke();
+  c.lineCap = "butt";
+
+  const tone = "#3f9a54";
+  const masses = lvl >= 3 ? 4 : 3;
+  const spread = 12 + lvl;
+  for (let i = 0; i < masses; i++) {
+    const a = (i / masses) * Math.PI * 2;
+    leafMass(c, p.x + Math.cos(a) * spread * 0.8 * z + sway,
+             top - 5 * z + Math.sin(a) * 5 * z,
+             (12 + lvl) * z, (10 + lvl) * z, night, mqShade(tone, .92 + i * 0.03));
+  }
+  leafMass(c, p.x + sway, top - 13 * z, (15 + lvl) * z, (12 + lvl) * z, night, tone);
+
+  const cols = ["#e2513c", "#e2513c", "#f0972f"];
+  const n = 4 + lvl * 2;
+  for (let i = 0; i < n; i++) {
+    const a = i * 2.399 + u * 3;
+    const fx = p.x + sway + Math.cos(a) * (14 + lvl) * z;
+    const fy = top - 8 * z + Math.sin(a) * 10 * z;
+    c.fillStyle = night ? mqShade(cols[i % 3], .55) : cols[i % 3];
+    c.beginPath(); c.arc(fx, fy, 3.2 * z, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "rgba(255,255,255,.4)";
+    c.beginPath(); c.arc(fx - 1 * z, fy - 1.1 * z, 1.1 * z, 0, Math.PI * 2); c.fill();
+  }
+  if (lvl >= 4) {                                   // a basket of windfalls
+    const bx = p.x + 20 * z, by = p.y + 2 * z;
+    c.fillStyle = night ? "#6a4c2c" : "#a8763f";
+    c.beginPath(); c.ellipse(bx, by, 8 * z, 4.4 * z, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = night ? "#8a3a2c" : "#e2513c";
+    [[-3, -2], [3, -2], [0, -4]].forEach(([ox, oy]) => {
+      c.beginPath(); c.arc(bx + ox * z, by + oy * z, 2.6 * z, 0, Math.PI * 2); c.fill();
+    });
+  }
+};
+GI2.fruit.tiered = true;
+
+GI2.bush = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  const tone = "#4aa05e";
+  const sway = Math.sin(t * .8 + u) * 1.2 * z;
+  if (lvl >= 4) {                                   // clipped into a low hedge with a base
+    c.fillStyle = night ? "#3a3a34" : "#b9b2a0";
+    c.beginPath(); c.ellipse(p.x, p.y + 2 * z, 24 * z, 11 * z, 0, 0, Math.PI * 2); c.fill();
+  }
+  const lumps = 2 + Math.min(3, lvl);
+  for (let i = 0; i < lumps; i++) {
+    const a = (i / lumps) * Math.PI * 2 + 0.6;
+    leafMass(c, p.x + Math.cos(a) * 11 * z + sway * .4, p.y - 7 * z + Math.sin(a) * 4 * z,
+             (11 + lvl) * z, (9 + lvl) * z, night, mqShade(tone, .9 + i * 0.04));
+  }
+  leafMass(c, p.x + sway, p.y - (13 + lvl) * z, (13 + lvl) * z, (11 + lvl) * z, night, tone);
+  if (lvl >= 2) {
+    const berry = night ? "#8a3a4a" : "#d8546a";
+    for (let i = 0; i < 3 + lvl * 2; i++) {
+      const a = i * 2.399 + u;
+      c.fillStyle = berry;
+      c.beginPath();
+      c.arc(p.x + Math.cos(a) * 11 * z, p.y - 12 * z + Math.sin(a) * 8 * z, 2 * z, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+  if (lvl >= 3) {                                   // in flower
+    for (let i = 0; i < 4; i++) {
+      const a = i * 1.9 + v;
+      bloom(c, p.x + Math.cos(a) * 13 * z, p.y - 15 * z + Math.sin(a) * 6 * z,
+            2.6 * z, i % 2 ? "#f4f0e2" : "#f2b93c", night);
+    }
+  }
+};
+GI2.bush.tiered = true;
+
+GI2.flowers = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  const soil = night ? "#4a3a28" : "#7d5c3d";
+
+  if (lvl >= 3) {                                   // a built edge, not just a hole in the grass
+    const brick = night ? "#6a5238" : "#b08a5c";
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      c.fillStyle = i % 2 ? brick : mqShade(brick, 1.08);
+      c.beginPath();
+      c.ellipse(p.x + Math.cos(a) * 26 * z, p.y + Math.sin(a) * 13 * z,
+                4.4 * z, 3 * z, a, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+  c.fillStyle = mqShade(soil, .8);
+  c.beginPath(); c.ellipse(p.x, p.y, 26 * z, 13 * z, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = soil;
+  c.beginPath(); c.ellipse(p.x, p.y - 1.6 * z, 24 * z, 11.5 * z, 0, 0, Math.PI * 2); c.fill();
+
+  const cols = ["#e0587a", "#f2b93c", "#e8748f", "#b96ad0", "#f0864a", "#f4f0e2"];
+  const n = 10 + lvl * 4;
+  const seed = (u * 7.3 + v * 3.1);
+  for (let i = 0; i < n; i++) {
+    const a = i * 2.399 + seed;
+    const rad = Math.sqrt((i + 0.5) / n);
+    const bx = p.x + Math.cos(a) * rad * 19 * z;
+    const by = p.y + Math.sin(a) * rad * 9 * z;
+    const hgt = (7 + ((i * 37) % 5)) * z;
+    const sway = Math.sin(t * 1.4 + i * .9) * 1.1 * z;
+    c.strokeStyle = night ? "#2f5f3e" : "#46a05f";
+    c.lineWidth = 1.5 * z; c.lineCap = "round";
+    c.beginPath(); c.moveTo(bx, by);
+    c.quadraticCurveTo(bx + sway * .5, by - hgt * .6, bx + sway, by - hgt); c.stroke();
+    bloom(c, bx + sway, by - hgt, (3.2 + lvl * 0.2) * z, cols[i % cols.length], night);
+  }
+  c.lineCap = "butt";
+  if (lvl >= 4) {                                   // a little cane arch of climbers
+    c.strokeStyle = night ? "#5a4326" : "#8a6a3a"; c.lineWidth = 2 * z;
+    c.beginPath();
+    c.moveTo(p.x - 18 * z, p.y - 2 * z);
+    c.quadraticCurveTo(p.x, p.y - 34 * z, p.x + 18 * z, p.y - 2 * z);
+    c.stroke();
+    for (let i = 0; i <= 8; i++) {
+      const k = i / 8, mk = 1 - k;
+      const x = mk * mk * (p.x - 18 * z) + 2 * mk * k * p.x + k * k * (p.x + 18 * z);
+      const y = mk * mk * (p.y - 2 * z) + 2 * mk * k * (p.y - 34 * z) + k * k * (p.y - 2 * z);
+      bloom(c, x, y - 2 * z, 2.4 * z, i % 2 ? "#e8748f" : "#f4f0e2", night);
+    }
+  }
+};
+GI2.flowers.tiered = true;
+</script>
+
+<script>
+"use strict";
+
+/* ---------- water ---------- */
+
+GI2.pond = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  const R = 30 + lvl * 2;
+
+  if (lvl >= 3) {                                   // a laid stone rim
+    const stone = night ? "#6a6458" : "#c2bba7";
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      c.fillStyle = i % 2 ? stone : mqShade(stone, 1.08);
+      c.beginPath();
+      c.ellipse(p.x + Math.cos(a) * (R + 3) * z, p.y + Math.sin(a) * (R + 3) * z * 0.5,
+                5 * z, 3.2 * z, a, 0, Math.PI * 2);
+      c.fill();
+    }
+  } else {
+    c.fillStyle = night ? "#3b4a35" : "#6f9c52";
+    c.beginPath(); c.ellipse(p.x, p.y, (R + 2) * z, (R + 2) * z * 0.5, 0, 0, Math.PI * 2); c.fill();
+  }
+  c.fillStyle = night ? "#57604a" : "#a89f7d";
+  c.beginPath(); c.ellipse(p.x, p.y, (R - 2) * z, (R - 2) * z * 0.5, 0, 0, Math.PI * 2); c.fill();
+
+  const gr = c.createLinearGradient(p.x, p.y - R * 0.5 * z, p.x, p.y + R * 0.5 * z);
+  gr.addColorStop(0, night ? "#1c3247" : "#4f9ec4");
+  gr.addColorStop(1, night ? "#0f2233" : "#2f7fa8");
+  c.fillStyle = gr;
+  c.beginPath(); c.ellipse(p.x, p.y, (R - 6) * z, (R - 6) * z * 0.5, 0, 0, Math.PI * 2); c.fill();
+
+  c.strokeStyle = "rgba(255,255,255,.42)"; c.lineWidth = 1.4 * z;
+  for (let i = 0; i < 1 + lvl; i++) {
+    const rr = 5 + i * 6 + Math.sin(t * 1.3 + i * 2) * 2.5;
+    c.beginPath();
+    c.ellipse(p.x + 4 * z, p.y - 1 * z, rr * z, rr * 0.5 * z, 0, 0, Math.PI * 2); c.stroke();
+  }
+  const pads = 2 + lvl;
+  for (let i = 0; i < pads; i++) {
+    const a = i * 2.399 + u;
+    const px = p.x + Math.cos(a) * (R - 12) * z, py = p.y + Math.sin(a) * (R - 12) * z * 0.5;
+    c.fillStyle = night ? "#2c5c3c" : "#4aa86a";
+    c.beginPath(); c.ellipse(px, py, 6 * z, 3.2 * z, 0, 0, Math.PI * 2); c.fill();
+    if (lvl >= 2 && i % 2 === 0) bloom(c, px, py - 2 * z, 3 * z, "#f4f0e2", night);
+  }
+  const fish = lvl >= 3 ? 3 : 1;
+  for (let i = 0; i < fish; i++) {
+    const fx = p.x + Math.sin(t * 0.7 + i * 2) * (R - 14) * z;
+    const fy = p.y + Math.cos(t * 0.9 + i * 2) * (R - 14) * z * 0.4;
+    c.fillStyle = night ? "#c98a4a" : "#f0913a";
+    c.beginPath(); c.ellipse(fx, fy, 4 * z, 2 * z, 0, 0, Math.PI * 2); c.fill();
+  }
+  if (lvl >= 4) {                                   // reeds at the near edge
+    c.strokeStyle = night ? "#3a5a3a" : "#5f8f4a"; c.lineWidth = 1.6 * z; c.lineCap = "round";
+    for (let i = 0; i < 7; i++) {
+      const bx = p.x - 20 * z + i * 7 * z, by = p.y + (R - 4) * z * 0.5;
+      c.beginPath(); c.moveTo(bx, by);
+      c.lineTo(bx + Math.sin(t + i) * 2 * z, by - (10 + (i % 3) * 5) * z); c.stroke();
+    }
+    c.lineCap = "butt";
+  }
+};
+GI2.pond.tiered = true;
+
+GI2.fountain = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  const stone = night ? "#8a8478" : "#ddd6c6";
+  const R = 26 + lvl * 2;
+
+  c.fillStyle = mqShade(stone, .82);
+  c.beginPath(); c.ellipse(p.x, p.y, R * z, R * z * 0.5, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = night ? "#1c3247" : "#4f9ec4";
+  c.beginPath(); c.ellipse(p.x, p.y - 1 * z, (R - 6) * z, (R - 6) * z * 0.5, 0, 0, Math.PI * 2); c.fill();
+
+  // tiers of basins, literally
+  const bowls = Math.min(lvl, 3);
+  for (let i = 0; i < bowls; i++) {
+    const hh = 0.28 + i * 0.3, rr = (13 - i * 3.5) * z;
+    isoCyl(c, u, v, 0.06, hh, W, H, stone);
+    c.fillStyle = mqShade(stone, 1.06);
+    c.beginPath(); c.ellipse(p.x, p.y - isoH(hh), rr, rr * 0.5, 0, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = mqShade(stone, .76); c.lineWidth = 1.4 * z; c.stroke();
+  }
+  const topH = 0.28 + Math.max(0, bowls - 1) * 0.3;
+
+  // the jet
+  const jets = lvl >= 4 ? 5 : lvl >= 2 ? 3 : 1;
+  c.strokeStyle = night ? "rgba(180,220,240,.75)" : "rgba(255,255,255,.85)";
+  c.lineWidth = 1.8 * z;
+  for (let i = 0; i < jets; i++) {
+    const a = (i / jets) * Math.PI * 2 + t * 0.4;
+    const reach = (10 + lvl * 2) * z;
+    c.beginPath();
+    c.moveTo(p.x, p.y - isoH(topH));
+    c.quadraticCurveTo(p.x + Math.cos(a) * reach * 0.5, p.y - isoH(topH) - 16 * z,
+                       p.x + Math.cos(a) * reach, p.y - isoH(topH) + 8 * z);
+    c.stroke();
+  }
+  if (lvl >= 3) {                                   // lamps round the rim
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + 0.7;
+      const lx = p.x + Math.cos(a) * (R + 5) * z, ly = p.y + Math.sin(a) * (R + 5) * z * 0.5;
+      MQ.lamp(c, lx, ly - 8 * z, 4.5 * z, mqPal("sand", night));
+      tGlow(c, lx, ly - 8 * z, 22 * z, night, 0.6);
+    }
+  }
+};
+GI2.fountain.tiered = true;
+
+/* ---------- flat things, which earn craft rather than parts ---------- */
+
+GI2.road = function (c, u, v, W, H, t, night, z, lvl) {
+  const quad = (du0, dv0, du1, dv1) => {
+    const a = isoPt(u + du0, v + dv0, W, H), b = isoPt(u + du1, v + dv0, W, H),
+          e = isoPt(u + du1, v + dv1, W, H), f = isoPt(u + du0, v + dv1, W, H);
+    c.beginPath();
+    [a, b, e, f].forEach((q, i) => c[i ? "lineTo" : "moveTo"](q.x, q.y));
+    c.closePath();
+  };
+  const pave = night ? "#5a5a54" : "#cfcabb";
+  quad(-0.5, -0.5, 0.5, 0.5); c.fillStyle = mqShade(pave, .92); c.fill();
+
+  if (lvl === 1) return;
+  quad(-0.44, -0.44, 0.44, 0.44); c.fillStyle = pave; c.fill();   // a kerb appears
+
+  if (lvl >= 3) {                                   // set setts, not poured concrete
+    c.strokeStyle = mqShade(pave, .82); c.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const k = -0.44 + (i / 4) * 0.88;
+      const a = isoPt(u + k, v - 0.44, W, H), b = isoPt(u + k, v + 0.44, W, H);
+      c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+      const e = isoPt(u - 0.44, v + k, W, H), f = isoPt(u + 0.44, v + k, W, H);
+      c.beginPath(); c.moveTo(e.x, e.y); c.lineTo(f.x, f.y); c.stroke();
+    }
+  }
+  if (lvl >= 4) {                                   // worn where feet go
+    const p = isoPt(u, v, W, H);
+    c.fillStyle = night ? "rgba(255,255,255,.05)" : "rgba(255,255,255,.22)";
+    c.beginPath(); c.ellipse(p.x, p.y, 18 * z, 9 * z, 0, 0, Math.PI * 2); c.fill();
+  }
+};
+GI2.road.tiered = true;
+
+GI2.carpet = function (c, u, v, W, H, t, night, z, lvl) {
+  const quad = (du0, dv0, du1, dv1) => {
+    const a = isoPt(u + du0, v + dv0, W, H), b = isoPt(u + du1, v + dv0, W, H),
+          e = isoPt(u + du1, v + dv1, W, H), f = isoPt(u + du0, v + dv1, W, H);
+    c.beginPath();
+    [a, b, e, f].forEach((q, i) => c[i ? "lineTo" : "moveTo"](q.x, q.y));
+    c.closePath();
+  };
+  const deep = night ? "#4a2530" : "#8f3a4e";
+  const gold = night ? "#a88c52" : "#e8c05a";
+  quad(-0.46, -0.34, 0.46, 0.34); c.fillStyle = deep; c.fill();
+  quad(-0.40, -0.28, 0.40, 0.28); c.strokeStyle = gold; c.lineWidth = 2 * z; c.stroke();
+  quad(-0.36, -0.24, 0.36, 0.24);
+  c.fillStyle = night ? "#5c2f3c" : "#a8475e"; c.fill();
+
+  const m = isoPt(u - 0.16, v - 0.02, W, H);
+  c.fillStyle = gold;
+  c.beginPath();
+  c.moveTo(m.x - 8 * z, m.y + 7 * z); c.lineTo(m.x - 8 * z, m.y);
+  c.quadraticCurveTo(m.x, m.y - 10 * z, m.x + 8 * z, m.y);
+  c.lineTo(m.x + 8 * z, m.y + 7 * z); c.closePath(); c.fill();
+  c.fillStyle = deep;
+  c.beginPath();
+  c.moveTo(m.x - 5 * z, m.y + 7 * z); c.lineTo(m.x - 5 * z, m.y + 1 * z);
+  c.quadraticCurveTo(m.x, m.y - 6 * z, m.x + 5 * z, m.y + 1 * z);
+  c.lineTo(m.x + 5 * z, m.y + 7 * z); c.closePath(); c.fill();
+
+  if (lvl >= 2) {                                   // a woven border
+    c.strokeStyle = gold; c.lineWidth = 1 * z;
+    quad(-0.31, -0.19, 0.31, 0.19); c.stroke();
+  }
+  if (lvl >= 3) {                                   // strapwork corners, geometric only
+    [[-0.26, -0.14], [0.26, -0.14], [-0.26, 0.14], [0.26, 0.14]].forEach(([du, dv]) => {
+      const q = isoPt(u + du, v + dv, W, H);
+      c.strokeStyle = gold; c.lineWidth = 1.2 * z;
+      c.beginPath();
+      for (let k = 0; k < 4; k++) {
+        const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+        c[k ? "lineTo" : "moveTo"](q.x + Math.cos(a) * 5 * z, q.y + Math.sin(a) * 2.6 * z);
+      }
+      c.closePath(); c.stroke();
+    });
+  }
+  c.strokeStyle = night ? "#c9b98a" : "#f4e6bc"; c.lineWidth = 1.3 * z;
+  const fringe = lvl >= 4 ? 10 : 6;
+  [-0.46, 0.46].forEach(du => {
+    for (let i = 0; i <= fringe; i++) {
+      const q = isoPt(u + du, v - 0.34 + (i / fringe) * 0.68, W, H);
+      c.beginPath(); c.moveTo(q.x, q.y);
+      c.lineTo(q.x + (du < 0 ? -5 : 5) * z, q.y + (du < 0 ? 2.5 : -2.5) * z); c.stroke();
+    }
+  });
+};
+GI2.carpet.tiered = true;
+</script>
+
+<script>
+"use strict";
+
+/* ---------- the playground ----------
+   These take a fifth argument the others do not: `ride`, a 0..1 phase
+   supplied when a child is actually on the thing. At rest it is null
+   and everything hangs still. */
+
+GI2.swing = function (c, u, v, W, H, t, night, z, lvl, ride) {
+  z *= TZ(lvl);
+  const bar = lvl >= 3 ? (night ? "#7a5a3a" : "#c9873f") : (night ? "#8a5a3a" : "#c07a45");
+  const dark = mqShade(bar, .74);
+  const TOP = 1.55, SPAN = 0.46, SPLAY = 0.26;
+  const l = isoPt(u - SPAN, v, W, H), r = isoPt(u + SPAN, v, W, H);
+  const yTop = l.y - isoH(TOP);
+
+  const leg = (du, dv, tx, col) => {
+    const g = isoPt(u + du, v + dv, W, H);
+    c.strokeStyle = col; c.lineWidth = 4 * z; c.lineCap = "round";
+    c.beginPath(); c.moveTo(g.x, g.y); c.lineTo(tx, yTop); c.stroke();
+  };
+  leg(-SPAN - SPLAY * .4, -SPLAY, l.x, dark);
+  leg(SPAN + SPLAY * .4, -SPLAY, r.x, dark);
+  leg(-SPAN - SPLAY * .4, SPLAY, l.x, bar);
+  leg(SPAN + SPLAY * .4, SPLAY, r.x, bar);
+
+  const seats = lvl >= 3 ? [-0.5, -0.05, 0.42] : [-0.42, 0.34];
+  seats.forEach((s, i) => {
+    // a child on board swings hard; otherwise it drifts
+    const amp = ride == null ? 8 : 30;
+    const rate = ride == null ? 1.5 : 3.4;
+    const phase = ride == null ? t * rate + i * 2.2 : ride * Math.PI * 2;
+    const sw = Math.sin(phase) * amp * z * (ride != null && i !== 0 ? 0.25 : 1);
+    const px = l.x + (r.x - l.x) * (0.5 + s * 0.5);
+    const drop = 26 * z;
+    c.strokeStyle = night ? "#7a7a82" : "#a8a8b0"; c.lineWidth = 1.5 * z;
+    [-5, 5].forEach(o => {
+      c.beginPath(); c.moveTo(px + o * z, yTop);
+      c.lineTo(px + o * z + sw, yTop + drop); c.stroke();
+    });
+    const seat = i === 0 ? "#3a8ad0" : i === 1 ? "#4aa86a" : "#e0603a";
+    c.fillStyle = seat;
+    c.beginPath();
+    c.moveTo(px - 9 * z + sw, yTop + drop);
+    c.lineTo(px + 9 * z + sw, yTop + drop);
+    c.lineTo(px + 9 * z + sw, yTop + drop + 3.4 * z);
+    c.lineTo(px - 9 * z + sw, yTop + drop + 3.4 * z);
+    c.closePath(); c.fill();
+    c.fillStyle = mqShade(seat, .78);
+    c.fillRect(px - 9 * z + sw, yTop + drop + 3.4 * z, 18 * z, 1.4 * z);
+    if (lvl >= 2) {                                 // a back rail on the seat
+      c.strokeStyle = mqShade(seat, .7); c.lineWidth = 1.6 * z;
+      c.beginPath();
+      c.moveTo(px - 8 * z + sw, yTop + drop - 5 * z);
+      c.lineTo(px + 8 * z + sw, yTop + drop - 5 * z); c.stroke();
+    }
+  });
+
+  c.strokeStyle = bar; c.lineWidth = 6 * z; c.lineCap = "round";
+  c.beginPath(); c.moveTo(l.x - 5 * z, yTop); c.lineTo(r.x + 5 * z, yTop); c.stroke();
+  c.strokeStyle = mqShade(bar, 1.12); c.lineWidth = 2 * z;
+  c.beginPath(); c.moveTo(l.x - 5 * z, yTop - 1.6 * z); c.lineTo(r.x + 5 * z, yTop - 1.6 * z); c.stroke();
+  c.lineCap = "butt";
+  if (lvl >= 4) isoFinial(c, (l.x + r.x) / 2, yTop - 4 * z, 3.4 * z, "#e8c05a");
+};
+GI2.swing.tiered = true;
+
+GI2.slide = function (c, u, v, W, H, t, night, z, lvl, ride) {
+  z *= TZ(lvl);
+  const frame = lvl >= 3 ? (night ? "#94804f" : "#cbb072") : (night ? "#8a7550" : "#c0a469");
+  const TOP = 1.5;
+  const topP = isoPt(u - 0.34, v, W, H), botP = isoPt(u + 0.56, v, W, H);
+  const yTop = topP.y - isoH(TOP), yBot = botP.y - isoH(0.06);
+
+  isoCyl(c, u - 0.44, v - 0.18, 0.055, TOP, W, H, mqShade(frame, .82));
+  isoCyl(c, u - 0.44, v + 0.18, 0.055, TOP, W, H, frame);
+
+  const chute = lvl >= 4 ? (night ? "#8a6a2a" : "#e8b23a") : (night ? "#3d86a8" : "#4fb0d8");
+  const poly = (o1, o2) => {
+    c.beginPath();
+    c.moveTo(topP.x - 9 * z, yTop + o1); c.lineTo(topP.x + 9 * z, yTop + o1);
+    c.lineTo(botP.x + 9 * z, yBot + o2); c.lineTo(botP.x - 9 * z, yBot + o2);
+    c.closePath();
+  };
+  c.fillStyle = mqShade(chute, .72); poly(4 * z, 4 * z); c.fill();
+  c.fillStyle = chute; poly(0, 0); c.fill();
+  c.fillStyle = mqShade(chute, 1.15);
+  c.beginPath();
+  c.moveTo(topP.x - 3 * z, yTop); c.lineTo(topP.x + 1 * z, yTop);
+  c.lineTo(botP.x + 1 * z, yBot); c.lineTo(botP.x - 3 * z, yBot);
+  c.closePath(); c.fill();
+  c.strokeStyle = mqShade(chute, .68); c.lineWidth = 2.4 * z; c.lineCap = "round";
+  [-9, 9].forEach(o => {
+    c.beginPath(); c.moveTo(topP.x + o * z, yTop - 2 * z);
+    c.lineTo(botP.x + o * z, yBot - 2 * z); c.stroke();
+  });
+
+  c.fillStyle = frame;
+  c.fillRect(topP.x - 14 * z, yTop - 3 * z, 24 * z, 4 * z);
+  c.fillStyle = mqShade(frame, .76);
+  c.fillRect(topP.x - 14 * z, yTop + 1 * z, 24 * z, 2 * z);
+  c.strokeStyle = frame; c.lineWidth = 2.6 * z;
+  c.beginPath(); c.moveTo(topP.x - 13 * z, yTop - 3 * z); c.lineTo(topP.x - 13 * z, yTop - 18 * z); c.stroke();
+  c.beginPath(); c.moveTo(topP.x - 13 * z, yTop - 18 * z); c.lineTo(topP.x + 4 * z, yTop - 18 * z); c.stroke();
+
+  const lx = topP.x - 19 * z;
+  c.strokeStyle = mqShade(frame, .84); c.lineWidth = 2.6 * z;
+  [0, 7].forEach(o => {
+    c.beginPath(); c.moveTo(lx + o * z, topP.y); c.lineTo(lx + o * z + 4 * z, yTop - 3 * z); c.stroke();
+  });
+  c.lineWidth = 2 * z;
+  const rungs = lvl >= 2 ? 5 : 4;
+  for (let i = 1; i <= rungs; i++) {
+    const f = i / (rungs + 1);
+    const y = topP.y + (yTop - 3 * z - topP.y) * f, x = lx + 4 * z * f;
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x + 7 * z, y); c.stroke();
+  }
+  if (lvl >= 3) {                                   // a canopy over the platform
+    c.fillStyle = night ? "#7a3a3a" : "#c94a4a";
+    c.beginPath();
+    c.moveTo(topP.x - 17 * z, yTop - 20 * z);
+    c.lineTo(topP.x + 8 * z, yTop - 20 * z);
+    c.lineTo(topP.x - 4 * z, yTop - 30 * z);
+    c.closePath(); c.fill();
+  }
+  c.lineCap = "butt";
+};
+GI2.slide.tiered = true;
+
+GI2.seesaw = function (c, u, v, W, H, t, night, z, lvl, ride) {
+  z *= TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  const wood = night ? "#6a4c2c" : "#a8763f";
+  const tilt = Math.sin(ride == null ? t * 0.9 : ride * Math.PI * 2) * (ride == null ? 5 : 13) * z;
+
+  isoBox(c, u - 0.12, v - 0.12, 0.24, 0.24, 0.3, W, H,
+    wood, mqShade(wood, .84), mqShade(wood, .68));
+  const pivot = p.y - isoH(0.34);
+  const half = (18 + lvl) * z;
+
+  c.strokeStyle = lvl >= 3 ? "#e0603a" : wood; c.lineWidth = 5 * z; c.lineCap = "round";
+  c.beginPath();
+  c.moveTo(p.x - half, pivot + tilt); c.lineTo(p.x + half, pivot - tilt); c.stroke();
+  if (lvl >= 2) {                                   // handles
+    c.strokeStyle = night ? "#7a7a82" : "#b0b0b8"; c.lineWidth = 2 * z;
+    c.beginPath(); c.moveTo(p.x - half + 5 * z, pivot + tilt);
+    c.lineTo(p.x - half + 5 * z, pivot + tilt - 9 * z); c.stroke();
+    c.beginPath(); c.moveTo(p.x + half - 5 * z, pivot - tilt);
+    c.lineTo(p.x + half - 5 * z, pivot - tilt - 9 * z); c.stroke();
+  }
+  [[-1, "#3a8ad0"], [1, "#4aa86a"]].forEach(([s, col]) => {
+    c.fillStyle = col;
+    c.beginPath();
+    c.arc(p.x + s * (half - 2 * z), pivot - s * tilt, 4 * z, 0, Math.PI * 2); c.fill();
+  });
+  c.lineCap = "butt";
+  if (lvl >= 4) {                                   // sprung stops so it lands softly
+    [-1, 1].forEach(s => {
+      c.strokeStyle = night ? "#5a5a54" : "#8a8a84"; c.lineWidth = 2 * z;
+      const bx = p.x + s * (half - 4 * z);
+      c.beginPath();
+      for (let i = 0; i < 4; i++) {
+        c.moveTo(bx - 3 * z, p.y - i * 3 * z);
+        c.lineTo(bx + 3 * z, p.y - (i + 0.5) * 3 * z);
+      }
+      c.stroke();
+    });
+  }
+};
+GI2.seesaw.tiered = true;
+
+GI2.sandpit = function (c, u, v, W, H, t, night, z, lvl) {
+  const R = 0.5;
+  const quad = (r) => {
+    const a = isoPt(u - r, v - r, W, H), b = isoPt(u + r, v - r, W, H),
+          e = isoPt(u + r, v + r, W, H), f = isoPt(u - r, v + r, W, H);
+    c.beginPath();
+    [a, b, e, f].forEach((q, i) => c[i ? "lineTo" : "moveTo"](q.x, q.y));
+    c.closePath();
+  };
+  const frame = night ? "#6a4c2c" : "#a8763f";
+  const sand = night ? "#8a7a5a" : "#e8d49a";
+  quad(R); c.fillStyle = frame; c.fill();
+  quad(R - 0.08); c.fillStyle = sand; c.fill();
+  const p = isoPt(u, v, W, H);
+
+  if (lvl >= 2) {                                   // a seat along one edge
+    isoBoxAt(c, u - R, v + R - 0.1, R * 2, 0.12, 0.1, 0.1, W, H,
+      mqShade(frame, 1.1), mqShade(frame, .9), mqShade(frame, .74));
+  }
+  // bucket and spade
+  c.fillStyle = "#e0603a";
+  c.beginPath();
+  c.moveTo(p.x - 3 * z, p.y - 4 * z); c.lineTo(p.x + 5 * z, p.y - 4 * z);
+  c.lineTo(p.x + 4 * z, p.y + 3 * z); c.lineTo(p.x - 2 * z, p.y + 3 * z);
+  c.closePath(); c.fill();
+  c.strokeStyle = "#f0c04a"; c.lineWidth = 1.6 * z;
+  c.beginPath(); c.moveTo(p.x + 8 * z, p.y + 2 * z); c.lineTo(p.x + 12 * z, p.y - 9 * z); c.stroke();
+  if (lvl >= 3) {                                   // a sandcastle, which is the point of sand
+    c.fillStyle = mqShade(sand, .88);
+    [[-12, 0, 7], [-6, 2, 5], [-18, 2, 5]].forEach(([ox, oy, hh]) => {
+      c.fillRect(p.x + ox * z, p.y + oy * z - hh * z, 7 * z, hh * z);
+      c.fillStyle = mqShade(sand, .78);
+      c.fillRect(p.x + ox * z, p.y + oy * z - hh * z, 7 * z, 1.6 * z);
+      c.fillStyle = mqShade(sand, .88);
+    });
+  }
+  if (lvl >= 4) {                                   // a parasol
+    const sx = p.x + 20 * z, sy = p.y - 2 * z;
+    c.strokeStyle = night ? "#7a7a82" : "#b0b0b8"; c.lineWidth = 2 * z;
+    c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx, sy - 30 * z); c.stroke();
+    for (let i = 0; i < 6; i++) {
+      c.fillStyle = i % 2 ? "#f4efe2" : (night ? "#7a3a3a" : "#c94a4a");
+      c.beginPath();
+      c.moveTo(sx, sy - 30 * z);
+      c.arc(sx, sy - 30 * z, 15 * z, Math.PI + i * Math.PI / 6, Math.PI + (i + 1) * Math.PI / 6);
+      c.closePath(); c.fill();
+    }
+  }
+};
+GI2.sandpit.tiered = true;
+</script>
+
+<script>
+"use strict";
+
+/* ---------- the rest of the town ---------- */
+
+GI2.fence = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const wood = lvl >= 3 ? (night ? "#7a6a4a" : "#c2ab77") : (night ? "#6a4c2c" : "#a8763f");
+  const HGT = 0.36 + lvl * 0.05;
+  // the run goes along the screen-horizontal diagonal so a line of them
+  // reads as one fence rather than a staircase
+  const a = isoPt(u - 0.5, v + 0.5, W, H), b = isoPt(u + 0.5, v - 0.5, W, H);
+  const yTop = (q) => q.y - isoH(HGT);
+
+  const posts = lvl >= 2 ? 4 : 3;
+  for (let i = 0; i < posts; i++) {
+    const k = i / (posts - 1);
+    const x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k;
+    c.strokeStyle = mqShade(wood, .8); c.lineWidth = 3.4 * z; c.lineCap = "round";
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - isoH(HGT)); c.stroke();
+    if (lvl >= 3) {                                 // shaped post tops
+      c.fillStyle = mqShade(wood, 1.1);
+      c.beginPath(); c.arc(x, y - isoH(HGT) - 1 * z, 2.4 * z, 0, Math.PI * 2); c.fill();
+    }
+  }
+  const rails = lvl >= 2 ? 3 : 2;
+  for (let i = 0; i < rails; i++) {
+    const h = HGT * (0.32 + i * (0.62 / Math.max(1, rails - 1)));
+    c.strokeStyle = i % 2 ? wood : mqShade(wood, 1.06);
+    c.lineWidth = 3 * z;
+    c.beginPath();
+    c.moveTo(a.x, a.y - isoH(h)); c.lineTo(b.x, b.y - isoH(h)); c.stroke();
+  }
+  c.lineCap = "butt";
+  if (lvl >= 4) {                                   // climbing roses
+    for (let i = 0; i <= 6; i++) {
+      const k = i / 6;
+      const x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k - isoH(HGT * 0.9);
+      c.fillStyle = night ? "#2c5c3c" : "#4aa86a";
+      c.beginPath(); c.ellipse(x, y, 3.4 * z, 2.2 * z, 0, 0, Math.PI * 2); c.fill();
+      if (i % 2) bloom(c, x, y - 2 * z, 2.4 * z, "#e8748f", night);
+    }
+  }
+};
+GI2.fence.tiered = true;
+
+GI2.well = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  const stone = night ? "#7a746a" : "#c4bda9";
+  const wood = night ? "#5a4326" : "#8a6a3a";
+
+  isoCyl(c, u, v, 0.26, 0.46, W, H, stone);
+  if (lvl >= 2) {                                   // coursed stone, not a grey tube
+    c.strokeStyle = mqShade(stone, .78); c.lineWidth = 1.2 * z;
+    for (let i = 1; i < 3; i++) {
+      const h = 0.46 * (i / 3);
+      c.beginPath();
+      c.ellipse(p.x, p.y - isoH(h), 0.26 * ISO.tw * z, 0.26 * ISO.th * z, 0, 0, Math.PI);
+      c.stroke();
+    }
+  }
+  c.fillStyle = night ? "#14202c" : "#243444";
+  c.beginPath();
+  c.ellipse(p.x, p.y - isoH(0.46), 0.2 * ISO.tw * z, 0.2 * ISO.th * z, 0, 0, Math.PI * 2);
+  c.fill();
+
+  [-0.22, 0.22].forEach(o => isoCyl(c, u + o, v, 0.045, 1.0, W, H, wood));
+  const top = p.y - isoH(1.0);
+  c.strokeStyle = wood; c.lineWidth = 3.4 * z;
+  c.beginPath(); c.moveTo(p.x - 15 * z, top); c.lineTo(p.x + 15 * z, top); c.stroke();
+
+  // roof
+  c.fillStyle = lvl >= 3 ? (night ? "#6a3a2a" : "#a8503a") : (night ? "#5a4326" : "#8a6a3a");
+  c.beginPath();
+  c.moveTo(p.x - 20 * z, top + 2 * z); c.lineTo(p.x + 20 * z, top + 2 * z);
+  c.lineTo(p.x, top - 15 * z); c.closePath(); c.fill();
+  if (lvl >= 3) {
+    c.strokeStyle = mqShade("#a8503a", .7); c.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const k = i / 4;
+      c.beginPath();
+      c.moveTo(p.x - 20 * z + k * 20 * z, top + 2 * z - k * 17 * z);
+      c.lineTo(p.x + 20 * z - k * 20 * z, top + 2 * z - k * 17 * z);
+      c.stroke();
+    }
+  }
+  // the bucket, on a rope
+  const drop = 14 + Math.sin(t * 0.8) * 3;
+  c.strokeStyle = night ? "#6a6458" : "#9a9080"; c.lineWidth = 1.2 * z;
+  c.beginPath(); c.moveTo(p.x, top + 3 * z); c.lineTo(p.x, top + drop * z); c.stroke();
+  c.fillStyle = wood;
+  c.beginPath();
+  c.moveTo(p.x - 5 * z, top + drop * z); c.lineTo(p.x + 5 * z, top + drop * z);
+  c.lineTo(p.x + 4 * z, top + (drop + 8) * z); c.lineTo(p.x - 4 * z, top + (drop + 8) * z);
+  c.closePath(); c.fill();
+  if (lvl >= 4) {                                   // a winding handle
+    c.strokeStyle = night ? "#5a5a54" : "#8a8a84"; c.lineWidth = 2.2 * z;
+    c.beginPath();
+    c.moveTo(p.x + 15 * z, top); c.lineTo(p.x + 21 * z, top + 4 * z);
+    c.lineTo(p.x + 21 * z, top + 9 * z); c.stroke();
+  }
+};
+GI2.well.tiered = true;
+
+GI2.bridge = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const stone = night ? "#7a746a" : "#c4bda9";
+  const plank = lvl >= 3 ? (night ? "#7a5a3a" : "#b98d55") : (night ? "#6a4f34" : "#a87c4d");
+  const RISE = 0.34, LEN = 0.75, WID = 0.32;
+
+  const deckY = (f) => -isoH(0.16 + Math.sin(f * Math.PI) * RISE);
+  const edge = (dv, steps) => {
+    const pts = [];
+    for (let i = 0; i <= steps; i++) {
+      const f = i / steps;
+      const q = isoPt(u - LEN + f * LEN * 2, v + dv, W, H);
+      pts.push({ x: q.x, y: q.y + deckY(f) });
+    }
+    return pts;
+  };
+  const far = edge(-WID, 16), near = edge(WID, 16);
+
+  [-LEN, LEN].forEach(du =>
+    isoBox(c, u + du - 0.1, v - WID, 0.2, WID * 2, 0.18, W, H,
+      mqShade(stone, .95), mqShade(stone, .84), mqShade(stone, .7)));
+
+  c.beginPath();
+  far.forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y));
+  for (let i = near.length - 1; i >= 0; i--) c.lineTo(near[i].x, near[i].y);
+  c.closePath();
+  c.fillStyle = plank; c.fill();
+  c.strokeStyle = mqShade(plank, .72); c.lineWidth = 1.2 * z;
+  const step = lvl >= 2 ? 1 : 2;
+  for (let i = 1; i < far.length; i += step) {
+    c.beginPath(); c.moveTo(far[i].x, far[i].y); c.lineTo(near[i].x, near[i].y); c.stroke();
+  }
+
+  c.beginPath();
+  near.forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y));
+  for (let i = near.length - 1; i >= 0; i--) c.lineTo(near[i].x, near[i].y + 4 * z);
+  c.closePath();
+  c.fillStyle = mqShade(plank, .68); c.fill();
+
+  const rail = (pts, col) => {
+    c.strokeStyle = col; c.lineWidth = 2.2 * z; c.lineCap = "round";
+    for (let i = 0; i < pts.length; i += 4) {
+      c.beginPath(); c.moveTo(pts[i].x, pts[i].y); c.lineTo(pts[i].x, pts[i].y - 15 * z); c.stroke();
+    }
+    c.lineWidth = 2.6 * z;
+    const bars = lvl >= 2 ? [15, 10, 5] : [15, 8];
+    bars.forEach(h => {
+      c.beginPath();
+      pts.forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y - h * z));
+      c.stroke();
+    });
+    c.lineCap = "butt";
+  };
+  rail(far, mqShade(plank, .8));
+  rail(near, mqShade(plank, 1.08));
+
+  if (lvl >= 4) {                                   // lamps at both ends
+    [-LEN, LEN].forEach(du => {
+      const q = isoPt(u + du, v, W, H);
+      MQ.lamp(c, q.x, q.y - isoH(0.7), 5 * z, mqPal("sand", night));
+      tGlow(c, q.x, q.y - isoH(0.7), 26 * z, night, 0.7);
+    });
+  }
+};
+GI2.bridge.tiered = true;
+
+GI2.bird = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  const wood = night ? "#5a4326" : "#8a6a3a";
+  isoCyl(c, u, v, 0.06, 1.0, W, H, wood);
+  const top = p.y - isoH(1.0);
+  c.fillStyle = night ? "#6a5a44" : "#a08a63";
+  c.beginPath(); c.ellipse(p.x, top, (12 + lvl) * z, (6 + lvl * 0.5) * z, 0, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = mqShade(wood, .8); c.lineWidth = 1.5 * z; c.stroke();
+  if (lvl >= 2) {                                   // a rim so the water stays in
+    c.strokeStyle = mqShade(wood, 1.1); c.lineWidth = 2.2 * z;
+    c.beginPath(); c.ellipse(p.x, top, (12 + lvl) * z, (6 + lvl * 0.5) * z, 0, 0, Math.PI * 2); c.stroke();
+    c.fillStyle = night ? "#2a3f52" : "#7fb3c4";
+    c.beginPath(); c.ellipse(p.x, top, (9 + lvl) * z, (4 + lvl * 0.4) * z, 0, 0, Math.PI * 2); c.fill();
+  }
+  if (lvl >= 3) {                                   // a little roof over it
+    c.fillStyle = night ? "#5a4326" : "#8a6a3a";
+    c.beginPath();
+    c.moveTo(p.x - 14 * z, top - 22 * z); c.lineTo(p.x + 14 * z, top - 22 * z);
+    c.lineTo(p.x, top - 34 * z); c.closePath(); c.fill();
+    c.strokeStyle = wood; c.lineWidth = 1.6 * z;
+    c.beginPath(); c.moveTo(p.x, top - 2 * z); c.lineTo(p.x, top - 22 * z); c.stroke();
+  }
+  const doves = 2 + lvl;
+  for (let i = 0; i < doves; i++) {
+    const a = t * 0.5 + i * 2.1;
+    const bx = p.x + Math.cos(a) * (7 + i * 2) * z;
+    const by = top - 5 * z - Math.abs(Math.sin(a * 1.4)) * 9 * z;
+    c.fillStyle = night ? "#c9c9cf" : "#f4f4f0";
+    c.beginPath(); c.ellipse(bx, by, 4.6 * z, 3.2 * z, 0.2, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(bx + 4 * z, by - 2 * z, 2.2 * z, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#e8a04a";
+    c.beginPath(); c.arc(bx + 6.4 * z, by - 2 * z, 0.9 * z, 0, Math.PI * 2); c.fill();
+  }
+};
+GI2.bird.tiered = true;
+
+GI2.butterfly = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  c.strokeStyle = night ? "#2f5f3e" : "#46a05f"; c.lineWidth = 1.5 * z; c.lineCap = "round";
+  const stems = 3 + lvl;
+  for (let i = 0; i < stems; i++) {
+    const bx = p.x + (i - stems / 2) * 3.6 * z;
+    c.beginPath(); c.moveTo(bx, p.y);
+    c.lineTo(bx + Math.sin(t + i) * 1.2 * z, p.y - (7 + (i % 3) * 3) * z); c.stroke();
+  }
+  c.lineCap = "butt";
+  for (let i = 0; i < 1 + Math.floor(lvl / 2); i++)
+    bloom(c, p.x + (i * 9 - 4) * z, p.y - (9 + i * 2) * z, 2.8 * z,
+          i % 2 ? "#e8748f" : "#f2b93c", night);
+
+  const wings = [["#f0904a", "#e8c05a"], ["#5f9ee0", "#a8d0f0"],
+                 ["#d06ac0", "#f0a8e0"], ["#6ad0a0", "#c0f0dc"]];
+  for (let i = 0; i < 1 + lvl; i++) {
+    const a = t * .55 + i * 2.1;
+    const bx = p.x + Math.cos(a) * (10 + i * 4) * z;
+    const by = p.y - (16 + i * 7) * z + Math.sin(a * 1.7) * 5 * z;
+    const flap = Math.abs(Math.sin(t * 7 + i * 1.3));
+    const [w1, w2] = wings[i % wings.length];
+    c.save(); c.translate(bx, by);
+    [-1, 1].forEach(s => {
+      c.fillStyle = night ? mqShade(w1, .6) : w1;
+      c.beginPath();
+      c.ellipse(s * 3.4 * z * (.35 + flap * .65), -1.4 * z,
+                3.6 * z * (.35 + flap * .65), 3 * z, 0, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = night ? mqShade(w2, .6) : w2;
+      c.beginPath();
+      c.ellipse(s * 2.8 * z * (.35 + flap * .65), 2 * z,
+                2.6 * z * (.35 + flap * .65), 2.2 * z, 0, 0, Math.PI * 2);
+      c.fill();
+    });
+    c.fillStyle = night ? "#3a3a44" : "#4a4038";
+    c.beginPath(); c.ellipse(0, 0, 1 * z, 3.4 * z, 0, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+};
+GI2.butterfly.tiered = true;
+
+/* the arch already had four tiers of greenery in all but name; this
+   just puts it on the same footing as everything else */
+const GI2archPlain = GI2.arch;
+GI2.arch = function (c, u, v, W, H, t, night, z, lvl) {
+  GI2archPlain(c, u, v, W, H, t, night, z);
+  if (!lvl || lvl < 2) return;
+  const P = mqPal("sand", night);
+  const D = 0.72, HGT = 1.35;
+  const l = isoPt(u - D, v + D, W, H), r = isoPt(u + D, v - D, W, H);
+  const yL = l.y - isoH(HGT), yR = r.y - isoH(HGT);
+  if (lvl >= 2) {                                   // a gate between the piers
+    c.strokeStyle = night ? "#5a5a54" : "#8a8a84"; c.lineWidth = 1.6 * z;
+    for (let i = 1; i < 6; i++) {
+      const k = i / 6;
+      const x = l.x + (r.x - l.x) * k, yb = l.y + (r.y - l.y) * k;
+      c.beginPath(); c.moveTo(x, yb); c.lineTo(x, yb - isoH(0.55)); c.stroke();
+    }
+  }
+  if (lvl >= 3) {                                   // lamps on the piers
+    [[l.x, yL], [r.x, yR]].forEach(([x, y]) => {
+      MQ.lamp(c, x, y - 10 * z, 5 * z, P);
+      tGlow(c, x, y - 10 * z, 26 * z, night, 0.7);
+    });
+  }
+  if (lvl >= 4) {
+    isoFinial(c, (l.x + r.x) / 2, (yL + yR) / 2 - isoH(0.86), 4 * z, "#e8c05a");
+  }
+};
+GI2.arch.tiered = true;
+</script>

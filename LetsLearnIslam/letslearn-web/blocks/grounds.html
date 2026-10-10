@@ -1,0 +1,427 @@
+<!-- ============================================================
+     What the ground around a building is for
+     ------------------------------------------------------------
+     Until now an upgrade bought a taller building on the same
+     patch of grass. A real mosque or a real house has GROUNDS: a
+     garden you walk through to get to the door, somewhere to
+     leave the car, and — for the children — a corner with a
+     swing and a slide in it.
+
+     Grounds unlock as the building rises, so an upgrade buys a
+     PLACE and not just a taller wall:
+
+        tier >= 0.12   lawn, a paved path to the door, flower beds
+        tier >= 0.38   a car park with marked bays
+        tier >= 0.62   a play area: swing, slide, sandpit
+        tier >= 0.85   the finished estate — hedge, benches, trees
+
+     `tier` runs 0 at level one to 1 when the building is finished,
+     so it reads the same for a five-level house and a twenty-level
+     great mosque.
+
+     Painting order is the whole trick. Grounds are flat and must
+     lie UNDER the building, so a wrapper that only ever runs after
+     the original is no good. These wrappers REPLACE IB.mosque /
+     IB.school / IB.house: they lay the ground and everything
+     standing behind the building first, then delegate to the
+     original, then paint the things that stand in FRONT of it
+     (the play area) so the building does not cover them.
+     ============================================================ -->
+<script>
+
+/* Where the grounds sit, and how much of them has been unlocked. */
+function llgPlot(kind, id, u, v, lvl) {
+  let w, d, tier;
+  if (kind === "mosque") {
+    const def = mosqueDef(id);
+    const SZ = mqSize(def, lvl);
+    w = SZ.w; d = SZ.d; tier = mosqueTier(def, lvl);
+  } else if (kind === "school") {
+    const def = (typeof SCHOOLS !== "undefined" && SCHOOLS.find(s => s.id === id)) || {};
+    const big = 0.95 + (def.plots || 1) * 0.3;
+    w = big * 1.3; d = big * 1.0;
+    tier = (Math.max(1, Math.min(3, lvl || 1)) - 1) / 2;
+  } else {
+    const L = Math.max(1, Math.min(5, lvl || 1));
+    w = 1.6 + L * 0.16; d = 1.3 + L * 0.12;
+    tier = (L - 1) / 4;
+  }
+  /* the apron grows with the building as well as with the level, or a
+     great mosque four tiles wide ends up with a suburban front garden */
+  const m = Math.min(2.1, Math.max(0.44 + tier * 0.78,
+                                   (0.26 + tier * 0.3) * Math.max(w, d)));
+  const land = landSize(gLand());
+  const cl = (x, hi) => Math.max(0.08, Math.min(hi - 0.08, x));
+  return {
+    w, d, tier, m,
+    U0: u - w / 2, U1: u + w / 2, V0: v - d / 2, V1: v + d / 2,
+    P0u: cl(u - w / 2 - m, land.cols), P1u: cl(u + w / 2 + m, land.cols),
+    P0v: cl(v - d / 2 - m, land.rows), P1v: cl(v + d / 2 + m, land.rows),
+  };
+}
+
+/* a flat patch of ground, in tile coordinates */
+function llgQuad(c, u0, v0, u1, v1, W, H, fill, stroke) {
+  if (u1 <= u0 || v1 <= v0) return;
+  const a = isoPt(u0, v0, W, H), b = isoPt(u1, v0, W, H),
+        e = isoPt(u1, v1, W, H), f = isoPt(u0, v1, W, H);
+  c.beginPath();
+  c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.lineTo(e.x, e.y); c.lineTo(f.x, f.y);
+  c.closePath();
+  if (fill) { c.fillStyle = fill; c.fill(); }
+  if (stroke) { c.strokeStyle = stroke; c.lineWidth = 1.4; c.stroke(); }
+}
+
+function llgLine(c, u0, v0, u1, v1, W, H, col, wd) {
+  const a = isoPt(u0, v0, W, H), b = isoPt(u1, v1, W, H);
+  c.save(); c.strokeStyle = col; c.lineWidth = (wd || 2) * isoScale(); c.lineCap = "round";
+  c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke(); c.restore();
+}
+
+/* ---------- the things that stand on the grounds ---------- */
+
+function llgBush(c, u, v, W, H, s, night) {
+  const p = isoPt(u, v, W, H), z = isoScale() * (s || 1), r = 9 * z;
+  c.save();
+  c.fillStyle = "rgba(0,0,0,.13)";
+  c.beginPath(); c.ellipse(p.x, p.y, r * 1.1, r * 0.44, 0, 0, 6.2832); c.fill();
+  const g1 = night ? "#2c5c40" : "#4e9a55", g2 = night ? "#3a7550" : "#6cba6a";
+  c.fillStyle = g1;
+  c.beginPath(); c.arc(p.x - r * 0.5, p.y - r * 0.4, r * 0.64, 0, 6.2832); c.fill();
+  c.beginPath(); c.arc(p.x + r * 0.48, p.y - r * 0.34, r * 0.6, 0, 6.2832); c.fill();
+  c.fillStyle = g2;
+  c.beginPath(); c.arc(p.x, p.y - r * 0.9, r * 0.72, 0, 6.2832); c.fill();
+  c.restore();
+}
+
+function llgTree(c, u, v, W, H, s, night) {
+  const p = isoPt(u, v, W, H), z = isoScale() * (s || 1);
+  c.save();
+  c.fillStyle = "rgba(0,0,0,.15)";
+  c.beginPath(); c.ellipse(p.x, p.y, 13 * z, 5.4 * z, 0, 0, 6.2832); c.fill();
+  c.fillStyle = night ? "#5a4632" : "#8a6440";
+  c.fillRect(p.x - 2.6 * z, p.y - 26 * z, 5.2 * z, 26 * z);
+  const g1 = night ? "#2f6244" : "#54a25a", g2 = night ? "#3d7f56" : "#74c477";
+  c.fillStyle = g1;
+  c.beginPath(); c.arc(p.x, p.y - 33 * z, 15 * z, 0, 6.2832); c.fill();
+  c.fillStyle = g2;
+  c.beginPath(); c.arc(p.x - 6 * z, p.y - 40 * z, 10 * z, 0, 6.2832); c.fill();
+  c.beginPath(); c.arc(p.x + 8 * z, p.y - 36 * z, 9 * z, 0, 6.2832); c.fill();
+  c.restore();
+}
+
+/* a bed of flowers — soil, then dots of colour that do not move */
+function llgBed(c, u0, v0, u1, v1, W, H, night) {
+  llgQuad(c, u0, v0, u1, v1, W, H, night ? "#40311f" : "#6b5334",
+          night ? "rgba(255,255,255,.08)" : "rgba(0,0,0,.16)");
+  const cols = night ? ["#b06a86", "#c8a84a", "#8f7fc0"] : ["#f2789f", "#ffd24a", "#b79bec"];
+  const z = isoScale();
+  c.save();
+  for (let i = 0; i < 14; i++) {
+    const r1 = isoSeed(u0 * 7 + i, v0 * 11 + i * 3);
+    const r2 = isoSeed(v0 * 5 + i * 2, u0 * 13 + i);
+    const p = isoPt(u0 + (u1 - u0) * (0.1 + r1 * 0.8), v0 + (v1 - v0) * (0.1 + r2 * 0.8), W, H);
+    c.fillStyle = cols[i % cols.length];
+    c.beginPath(); c.arc(p.x, p.y - 3 * z, 2.5 * z, 0, 6.2832); c.fill();
+    c.strokeStyle = night ? "#2f6244" : "#4c9a53"; c.lineWidth = 1.3 * z;
+    c.beginPath(); c.moveTo(p.x, p.y); c.lineTo(p.x, p.y - 3 * z); c.stroke();
+  }
+  c.restore();
+}
+
+function llgCar(c, u, v, W, H, col, night) {
+  const body = night ? mqShade(col, 0.78) : col;
+  const z = isoScale();
+  const p = isoPt(u + 0.26, v + 0.4, W, H);
+  c.fillStyle = "rgba(0,0,0,.2)";
+  c.beginPath(); c.ellipse(p.x, p.y, 17 * z, 7 * z, 0, 0, 6.2832); c.fill();
+  isoBoxAt(c, u, v, 0.52, 0.82, 0.24, 0.04, W, H,
+           mqShade(body, 1.12), mqShade(body, 0.86), mqShade(body, 0.72));
+  isoBoxAt(c, u + 0.08, v + 0.2, 0.36, 0.42, 0.2, 0.28, W, H,
+           mqShade(body, 1.2), night ? "#4b6a7c" : "#bfe0ef", night ? "#3e5b6b" : "#a9cfe0");
+  c.fillStyle = night ? "#ffe6a8" : "#fff3c8";
+  const nose = isoPt(u + 0.26, v + 0.84, W, H);
+  c.beginPath(); c.ellipse(nose.x - 7 * z, nose.y - 5 * z, 3 * z, 2 * z, 0, 0, 6.2832); c.fill();
+  c.beginPath(); c.ellipse(nose.x + 7 * z, nose.y - 5 * z, 3 * z, 2 * z, 0, 0, 6.2832); c.fill();
+}
+
+function llgSwing(c, u, v, W, H, t, night, ride) {
+  const z = isoScale();
+  const a = isoPt(u, v, W, H), b = isoPt(u + 0.8, v, W, H), hz = isoH(0.95);
+  const post = night ? "#8a5b3b" : "#c9714f";
+  c.save(); c.strokeStyle = post; c.lineWidth = 4 * z; c.lineCap = "round";
+  c.beginPath(); c.moveTo(a.x - 7 * z, a.y); c.lineTo(a.x, a.y - hz); c.lineTo(a.x + 7 * z, a.y); c.stroke();
+  c.beginPath(); c.moveTo(b.x - 7 * z, b.y); c.lineTo(b.x, b.y - hz); c.lineTo(b.x + 7 * z, b.y); c.stroke();
+  c.beginPath(); c.moveTo(a.x, a.y - hz); c.lineTo(b.x, b.y - hz); c.stroke();
+  /* it barely stirs on its own; with somebody on it, it really goes */
+  const ang = ride == null ? Math.sin((t || 0) * 1.5) * 0.34
+                           : Math.sin(ride * Math.PI * 2) * 0.9;
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - hz, L = hz * 0.66;
+  const sx = mx + Math.sin(ang) * L, sy = my + Math.cos(ang) * L;
+  c.strokeStyle = night ? "#aab6be" : "#8d9aa4"; c.lineWidth = 2 * z;
+  c.beginPath();
+  c.moveTo(mx - 6 * z, my); c.lineTo(sx - 6 * z, sy);
+  c.moveTo(mx + 6 * z, my); c.lineTo(sx + 6 * z, sy); c.stroke();
+  c.fillStyle = night ? "#c9922f" : "#f2b13c";
+  c.fillRect(sx - 10 * z, sy, 20 * z, 4.5 * z);
+  c.restore();
+  if (ride != null && typeof playRider === "function")
+    playRider(c, sx, sy, z, night, "sit");
+}
+
+function llgSlide(c, u, v, W, H, night, ride) {
+  const z = isoScale();
+  const top = isoPt(u, v, W, H), bot = isoPt(u, v + 0.9, W, H), hz = isoH(0.9);
+  c.save();
+  c.strokeStyle = night ? "#7e8c96" : "#9fb0bb"; c.lineWidth = 3 * z; c.lineCap = "round";
+  c.beginPath();
+  c.moveTo(top.x - 8 * z, top.y); c.lineTo(top.x - 8 * z, top.y - hz);
+  c.moveTo(top.x + 8 * z, top.y); c.lineTo(top.x + 8 * z, top.y - hz); c.stroke();
+  for (let i = 1; i <= 3; i++) {
+    const y = top.y - hz * (i / 4);
+    c.beginPath(); c.moveTo(top.x - 8 * z, y); c.lineTo(top.x + 8 * z, y); c.stroke();
+  }
+  c.fillStyle = night ? "#2f7f8e" : "#45b7c9";
+  c.beginPath();
+  c.moveTo(top.x - 9 * z, top.y - hz); c.lineTo(top.x + 9 * z, top.y - hz);
+  c.lineTo(bot.x + 9 * z, bot.y - 3 * z); c.lineTo(bot.x - 9 * z, bot.y - 3 * z);
+  c.closePath(); c.fill();
+  c.strokeStyle = night ? "#8fd7e2" : "#dff5f9"; c.lineWidth = 2 * z;
+  c.beginPath();
+  c.moveTo(top.x - 9 * z, top.y - hz); c.lineTo(bot.x - 9 * z, bot.y - 3 * z);
+  c.moveTo(top.x + 9 * z, top.y - hz); c.lineTo(bot.x + 9 * z, bot.y - 3 * z); c.stroke();
+  c.restore();
+
+  /* the first third of a go is the ladder, the rest is the way down */
+  if (ride == null || typeof playRider !== "function") return;
+  let x, y;
+  if (ride < 0.33) {
+    const k = ride / 0.33;
+    x = top.x; y = top.y - hz * k;
+  } else {
+    const k = (ride - 0.33) / 0.67;
+    x = top.x + (bot.x - top.x) * k;
+    y = (top.y - hz) + ((bot.y - 3 * z) - (top.y - hz)) * k;
+  }
+  playRider(c, x, y, z, night, ride < 0.33 ? "stand" : "sit");
+}
+
+function llgSandpit(c, u, v, W, H, night, ride) {
+  const p = isoPt(u, v, W, H), z = isoScale();
+  c.save();
+  c.fillStyle = night ? "#8a7a4f" : "#e8d49a";
+  c.beginPath(); c.ellipse(p.x, p.y, 15 * z, 7 * z, 0, 0, 6.2832); c.fill();
+  c.strokeStyle = night ? "#6d5c39" : "#c2a765"; c.lineWidth = 2.5 * z; c.stroke();
+  c.fillStyle = night ? "#b8442f" : "#ef6a4c";
+  c.beginPath(); c.ellipse(p.x + 6 * z, p.y - 1.5 * z, 3.6 * z, 2.4 * z, 0, 0, 6.2832); c.fill();
+  c.fillRect(p.x + 2.9 * z, p.y - 5 * z, 7.2 * z, 3.6 * z);
+  c.restore();
+
+  if (ride == null || typeof playRider !== "function") return;
+  playRider(c, p.x - 9 * z, p.y - 2 * z, z, night, "sit");
+  c.save();                                    // sand being flicked about
+  c.fillStyle = night ? "#c9b478" : "#f2e3b0";
+  for (let i = 0; i < 5; i++) {
+    const ang = ride * Math.PI * 4 + i * 1.3;
+    c.beginPath();
+    c.arc(p.x + 2 * z + Math.cos(ang) * 8 * z, p.y - 5 * z + Math.sin(ang) * 4 * z,
+          1.6 * z, 0, 6.2832);
+    c.fill();
+  }
+  c.restore();
+}
+
+function llgBench(c, u, v, W, H, night) {
+  const wood = night ? "#7a5a3c" : "#b98a55";
+  isoBoxAt(c, u, v, 0.62, 0.16, 0.06, 0.16, W, H,
+           mqShade(wood, 1.15), mqShade(wood, 0.86), mqShade(wood, 0.74));
+  const z = isoScale(), a = isoPt(u + 0.06, v + 0.08, W, H), b = isoPt(u + 0.56, v + 0.08, W, H);
+  c.save(); c.strokeStyle = night ? "#5f6b73" : "#8a97a0"; c.lineWidth = 2.5 * z;
+  c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(a.x, a.y - isoH(0.16)); c.stroke();
+  c.beginPath(); c.moveTo(b.x, b.y); c.lineTo(b.x, b.y - isoH(0.16)); c.stroke();
+  c.restore();
+}
+
+/* ---------- the grounds, in two passes ----------
+   Which side of the building a thing goes on is not a matter of taste:
+   in this projection screen x runs with (u - v) and screen y with
+   (u + v), so the corner where BOTH are small is straight behind the
+   building and nothing put there is ever seen. So:
+
+        small u, large v  -> the left flank    the car park
+        large u, small v  -> the right flank   the flower beds
+        large u, large v  -> the front         the path and the play area
+        small u, small v  -> hidden            only the hedge and a tree,
+                                               which are tall enough to
+                                               show over the roof
+
+   pass 0 lays everything flat and everything standing to the left or
+   behind; pass 1 runs after the building and paints what stands in
+   front of it, which the building would otherwise cover. */
+function llgPaint(c, kind, id, u, v, W, H, t, night, lvl, pass) {
+  const g = llgPlot(kind, id, u, v, lvl);
+  if (g.tier < 0.12) return;                       // level one is still bare ground
+  const cu = (g.U0 + g.U1) / 2;
+  const hasPark = g.tier >= 0.38;
+  const hasPlay = g.tier >= 0.62;
+  const hasFull = g.tier >= 0.85;
+
+  if (pass === 0) {
+    /* the lawn the whole plot sits on */
+    llgQuad(c, g.P0u, g.P0v, g.P1u, g.P1v, W, H,
+            night ? "#35604a" : "#9ad477", night ? "rgba(255,255,255,.07)" : "rgba(255,255,255,.35)");
+
+    /* the path from the gate to the door */
+    const pw = Math.min(0.3, g.w * 0.2);
+    const slab = night ? "#5d5f5a" : "#ddd6c4";
+    llgQuad(c, cu - pw, g.V1, cu + pw, g.P1v, W, H, slab, night ? "rgba(0,0,0,.25)" : "rgba(0,0,0,.13)");
+    for (let s = g.V1 + 0.22; s < g.P1v; s += 0.22)
+      llgLine(c, cu - pw, s, cu + pw, s, W, H, night ? "rgba(0,0,0,.3)" : "rgba(0,0,0,.14)", 1.2);
+
+    /* the beds, in an L down the right-hand side where they can be seen */
+    llgBed(c, Math.min(g.P1u - 0.3, cu + 0.2), g.P0v + 0.06, g.P1u - 0.06, g.V0 - 0.12, W, H, night);
+    llgBed(c, g.U1 + 0.14, g.V0 + 0.05, g.P1u - 0.06, g.V1 + 0.05, W, H, night);
+
+    /* the car park, down the left flank */
+    if (hasPark) {
+      /* clear of the hedge, or the car parks inside it */
+      const k0 = g.P0u + (hasFull ? 0.18 : 0.02), k1 = g.U0 - 0.06,
+            kv0 = g.V0 + 0.1, kv1 = g.P1v;
+      const kd = kv1 - kv0;
+      llgQuad(c, k0, kv0, k1, kv1, W, H, night ? "#33363b" : "#5f636a", "rgba(0,0,0,.28)");
+      for (let s = kv0 + 0.42; s < kv1 - 0.05; s += 0.42)
+        llgLine(c, k0 + 0.05, s, k1 - 0.05, s, W, H, "rgba(255,255,255,.55)", 1.6);
+      /* far enough down the strip to be clear of the roof overhang */
+      llgCar(c, k0 + 0.06, kv0 + kd * 0.3, W, H, "#3f8fd0", night);
+      if (hasFull && kd > 2.2) llgCar(c, k0 + 0.06, kv0 + kd * 0.68, W, H, "#e0704f", night);
+    }
+
+    /* the play area surface — flat, so it is safe to lay it now */
+    if (hasPlay)
+      llgQuad(c, cu + 0.3, g.V1 + 0.12, g.P1u, g.P1v, W, H,
+              night ? "#6b4a44" : "#e0a487", night ? "rgba(0,0,0,.25)" : "rgba(0,0,0,.12)");
+
+    /* the tall things behind: a tree that shows over the roof, and the
+       hedge that says where the grounds stop */
+    llgTree(c, g.P0u + 0.3, g.P0v + 0.28, W, H, 1, night);
+    if (hasFull) {
+      const hedge = night ? "#2d5c3f" : "#4f9a58";
+      isoBoxAt(c, g.P0u, g.P0v, g.P1u - g.P0u, 0.12, 0.34, 0, W, H,
+               mqShade(hedge, 1.15), mqShade(hedge, 0.88), mqShade(hedge, 0.76));
+      isoBoxAt(c, g.P0u, g.P0v, 0.12, g.P1v - g.P0v, 0.34, 0, W, H,
+               mqShade(hedge, 1.15), mqShade(hedge, 0.88), mqShade(hedge, 0.76));
+    }
+  }
+
+  if (pass === 1) {
+    /* the play area itself, spread across its surface so the swing and
+       the slide are not standing on each other */
+    if (hasPlay) {
+      const s = llgPlay(kind, id, u, v, lvl);
+      const on = (what) => (typeof playPhase === "function" ? playPhase(s.key + ":" + what) : null);
+      llgSlide(c, s.slide.u, s.slide.v, W, H, night, on("slide"));
+      llgSwing(c, s.swing.u, s.swing.v, W, H, t, night, on("swing"));
+      if (hasFull) llgSandpit(c, s.sandpit.u, s.sandpit.v, W, H, night, on("sandpit"));
+    }
+    /* a pot each side of the door, a bench, and a tree on the right */
+    llgBush(c, cu - 0.44, g.V1 + 0.08, W, H, 0.6, night);
+    llgBush(c, cu + 0.2, g.V1 + 0.08, W, H, 0.6, night);
+    if (hasFull) llgBench(c, g.U1 + 0.18, g.V1 - 0.42, W, H, night);
+    if (hasPark) llgTree(c, g.P1u - 0.22, g.V0 - 0.18, W, H, 0.9, night);
+  }
+}
+
+/* ---------- the wrappers ---------- */
+const IBmosqueNoGround = IB.mosque;
+IB.mosque = function (c, id, u, v, W, H, t, night, lvl) {
+  llgPaint(c, "mosque", id, u, v, W, H, t, night, lvl, 0);
+  const r = IBmosqueNoGround.apply(this, arguments);
+  llgPaint(c, "mosque", id, u, v, W, H, t, night, lvl, 1);
+  return r;
+};
+
+const IBschoolNoGround = IB.school;
+IB.school = function (c, id, u, v, W, H, t, night, lvl) {
+  llgPaint(c, "school", id, u, v, W, H, t, night, lvl, 0);
+  const r = IBschoolNoGround.apply(this, arguments);
+  llgPaint(c, "school", id, u, v, W, H, t, night, lvl, 1);
+  return r;
+};
+
+const IBhouseNoGround = IB.house;
+IB.house = function (c, u, v, W, H, t, night, house) {
+  llgPaint(c, "house", null, u, v, W, H, t, night, house, 0);
+  const r = IBhouseNoGround.apply(this, arguments);
+  llgPaint(c, "house", null, u, v, W, H, t, night, house, 1);
+  return r;
+};
+
+/* ---------- playing on it ----------
+   The garden already knows how to put a child on a swing: PLAY holds
+   `Garden.ride`, the phase clock, the faceless rider and the button.
+   All that was missing was somewhere to stand. These are not items in
+   `g.items` — they belong to the building, not to the child's
+   inventory — so they are given the same shape `playNear` expects and
+   handed to it, and `playPhase` is keyed by a string so a ride on a
+   building's swing can never be mistaken for a ride on a bought one. */
+
+/* One place decides where the three toys stand, so the drawing and the
+   thing you walk up to can never drift apart. */
+function llgPlay(kind, id, u, v, lvl) {
+  const g = llgPlot(kind, id, u, v, lvl);
+  const cu = (g.U0 + g.U1) / 2;
+  const x0 = cu + 0.3, wd = Math.max(1.1, g.P1u - x0);
+  return {
+    key: kind + ":" + (id == null ? "home" : id) + ":" + u.toFixed(2) + "," + v.toFixed(2),
+    tier: g.tier,
+    slide:   { u: x0 + wd * 0.16, v: g.V1 + 0.2 },
+    swing:   { u: x0 + Math.min(wd * 0.5, wd - 0.85), v: g.V1 + 0.3 },
+    sandpit: { u: x0 + wd * 0.72, v: g.P1v - 0.2 },
+  };
+}
+
+/* every toy on every building's grounds, and where you stand to use it */
+function llgSpots() {
+  if (Garden._gspots) return Garden._gspots;
+  const g = gState(), out = [];
+  const add = (kind, id, u, v, lvl) => {
+    const s = llgPlay(kind, id, u, v, lvl);
+    if (s.tier < 0.62) return;                       // no play area yet
+    out.push({ key: s.key + ":slide", type: "slide",
+               u: s.slide.u, v: s.slide.v + 0.55 });
+    out.push({ key: s.key + ":swing", type: "swing",
+               u: s.swing.u + 0.4, v: s.swing.v + 0.25 });
+    if (s.tier >= 0.85)
+      out.push({ key: s.key + ":sandpit", type: "sandpit",
+                 u: s.sandpit.u, v: s.sandpit.v });
+  };
+  (g.buildings || []).forEach(b =>
+    add(b.kind === "masjid" ? "mosque" : "school", b.id, b.u, b.v, b.lvl || 1));
+  add("house", null, g.houseU, g.houseV, g.house);
+  return (Garden._gspots = out);
+}
+
+/* they move when a building is built, moved, sold or upgraded — which
+   is exactly when the walkable boxes are thrown away */
+const isoSolidsDirtyGP = isoSolidsDirty;
+isoSolidsDirty = function () { Garden._gspots = null; return isoSolidsDirtyGP.apply(this, arguments); };
+
+/* a bought toy still wins if it is nearer — this only fills the gap */
+const playNearNoGrounds = typeof playNear === "function" ? playNear : null;
+if (playNearNoGrounds) {
+  playNear = function () {
+    const own = playNearNoGrounds.apply(this, arguments);
+    const g = gState(), ch = g.child;
+    if (Garden.inside || role !== "student") return own;
+    if (!ch || !Number.isFinite(ch.u)) return own;
+    let best = own, bestD = own
+      ? Math.hypot(own.it.u - ch.u, own.it.v - ch.v)
+      : (typeof PLAY_REACH === "number" ? PLAY_REACH : 1.05);
+    llgSpots().forEach(sp => {
+      const d = Math.hypot(sp.u - ch.u, sp.v - ch.v);
+      if (d < bestD) { bestD = d; best = { i: sp.key, it: { type: sp.type, u: sp.u, v: sp.v } }; }
+    });
+    return best;
+  };
+}
+</script>

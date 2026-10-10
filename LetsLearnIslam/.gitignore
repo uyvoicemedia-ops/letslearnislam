@@ -1,0 +1,5 @@
+# Timestamped safety copies made by tools/llinsert.py — regenerated on every insert
+letslearn-web/backups/
+letslearn-web/index.html.bak-*
+letslearn-web/index.backup.html
+.DS_Store

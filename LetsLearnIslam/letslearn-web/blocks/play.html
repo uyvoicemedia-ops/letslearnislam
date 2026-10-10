@@ -1,0 +1,233 @@
+<!-- ============================================================
+     Playing on things
+     ------------------------------------------------------------
+     The playground was scenery. You could buy a swing and never
+     swing on it, which is a strange thing to sell a child.
+
+     No new tap plumbing was needed, because the toys became solid
+     in the last change: walk at a swing and you stop beside it. So
+     the rule is simply "if you are standing near something you can
+     play on, a Play button appears". Press it and the character
+     gets on for a few seconds.
+
+     The rider is drawn by the toy rather than by the character
+     code, because only the swing knows where its own seat is at
+     this instant. Faceless, like every other character here.
+     ============================================================ -->
+<style>
+  .play-btn { position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
+              z-index:6; border:0; border-radius:999px; padding:11px 22px;
+              background:var(--qaida-green); color:#fff; font:inherit; font-size:14px;
+              font-weight:800; cursor:pointer; box-shadow:0 8px 22px rgba(0,0,0,.24);
+              animation:fadeUp .2s ease both; }
+  .play-btn:hover { filter:brightness(1.06); }
+  .play-btn.stop { background:#c9483a; }
+</style>
+<script>
+"use strict";
+
+/* how long a go lasts, and how near you have to be to start one */
+const PLAYABLE = { swing: "the swing", slide: "the slide",
+                   seesaw: "the see-saw", sandpit: "the sand" };
+const PLAY_REACH = 1.05;
+const PLAY_SECS = { swing: 9, slide: 4.5, seesaw: 8, sandpit: 10 };
+
+/* the nearest thing the character could get on right now */
+function playNear() {
+  const g = gState(), ch = g.child;
+  if (Garden.inside || role !== "student") return null;
+  if (!Number.isFinite(ch.u)) return null;
+  let best = null, bestD = PLAY_REACH;
+  (g.items || []).forEach((it, i) => {
+    if (!PLAYABLE[it.type]) return;
+    const d = Math.hypot(it.u - ch.u, it.v - ch.v);
+    if (d < bestD) { bestD = d; best = { i, it }; }
+  });
+  return best;
+}
+
+function playStart() {
+  const near = playNear();
+  if (!near) { toast("Stand next to something first"); return; }
+  Garden.ride = { i: near.i, type: near.it.type, start: performance.now() / 1000 };
+  Snd.pop();
+  render();
+}
+
+function playStop() {
+  Garden.ride = null;
+  Snd.soft();
+  render();
+}
+
+/* the phase the toy should be drawn at, 0..1 per swing of the thing,
+   or null when nobody is on it */
+function playPhase(index) {
+  const r = Garden.ride;
+  if (!r || r.i !== index) return null;
+  const secs = PLAY_SECS[r.type] || 8;
+  const now = performance.now() / 1000;
+  const gone = now - r.start;
+  if (gone > secs) {                       // a go ends on its own
+    Garden.ride = null;
+    setTimeout(() => { toast("That was fun"); render(); }, 0);
+    return null;
+  }
+  // slides run once top to bottom; everything else cycles
+  if (r.type === "slide") return Math.min(1, gone / secs);
+  return (gone * 0.55) % 1;
+}
+
+/* Hand the phase to the toy. The index has to come from the draw
+   loop, which does not pass one, so it is stashed on Garden just
+   before each item is drawn — see the isoFrame wrapper below. */
+const IBitemPlay = IB.item;
+IB.item = function (c, type, u, v, W, H, t, night, lvl) {
+  const fn = GI2 && GI2[type];
+  if (!fn || !fn.tiered || !PLAYABLE[type]) {
+    IBitemPlay(c, type, u, v, W, H, t, night, lvl);
+    return;
+  }
+  const phase = playPhase(Garden._drawingItem);
+  const z = isoScale();
+  isoShadowRound(c, u, v, 0.34, 0.9, W, H);
+  fn(c, u, v, W, H, t, night, z, Math.max(1, Math.min(4, lvl || 1)), phase);
+};
+
+/* ---------- a small faceless rider ---------- */
+function playRider(c, x, y, z, night, pose) {
+  const skin = night ? "#c9a882" : "#e8c9a0";
+  const shirt = night ? "#3a5a7a" : "#4a86c4";
+  const trouser = night ? "#2a3444" : "#3a4a5c";
+  c.fillStyle = trouser;
+  if (pose === "sit") {
+    c.fillRect(x - 4 * z, y, 8 * z, 5 * z);
+    c.fillRect(x + 2 * z, y + 3 * z, 6 * z, 3 * z);       // legs forward
+  } else {
+    c.fillRect(x - 3.5 * z, y, 7 * z, 8 * z);
+  }
+  c.fillStyle = shirt;
+  c.beginPath();
+  c.ellipse(x, y - 5 * z, 5 * z, 6 * z, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = skin;
+  c.beginPath(); c.arc(x, y - 13 * z, 4.4 * z, 0, Math.PI * 2); c.fill();
+  c.fillStyle = night ? "#2a2a2e" : "#3a3230";           // hair, no face
+  c.beginPath(); c.arc(x, y - 14.6 * z, 4.4 * z, Math.PI, Math.PI * 2); c.fill();
+}
+</script>
+
+<script>
+"use strict";
+
+/* ---------- riders ----------
+   Each toy gets a wrapper that draws its own rider on top, because the
+   seat position is only known inside the toy's own maths. */
+
+const GI2swingRide = GI2.swing;
+GI2.swing = function (c, u, v, W, H, t, night, z0, lvl, ride) {
+  GI2swingRide(c, u, v, W, H, t, night, z0, lvl, ride);
+  if (ride == null) return;
+  const z = z0 * TZ(lvl);
+  const TOP = 1.55, SPAN = 0.46;
+  const l = isoPt(u - SPAN, v, W, H), r = isoPt(u + SPAN, v, W, H);
+  const yTop = l.y - isoH(TOP);
+  const sw = Math.sin(ride * Math.PI * 2) * 30 * z;
+  const px = l.x + (r.x - l.x) * (0.5 + (-0.42) * 0.5);
+  playRider(c, px + sw, yTop + 26 * z - 2 * z, z, night, "sit");
+};
+GI2.swing.tiered = true;
+
+const GI2slideRide = GI2.slide;
+GI2.slide = function (c, u, v, W, H, t, night, z0, lvl, ride) {
+  GI2slideRide(c, u, v, W, H, t, night, z0, lvl, ride);
+  if (ride == null) return;
+  const z = z0 * TZ(lvl);
+  const TOP = 1.5;
+  const topP = isoPt(u - 0.34, v, W, H), botP = isoPt(u + 0.56, v, W, H);
+  const yTop = topP.y - isoH(TOP), yBot = botP.y - isoH(0.06);
+  // the first fifth is spent climbing the ladder, the rest sliding
+  let x, y;
+  if (ride < 0.35) {
+    const k = ride / 0.35;
+    x = topP.x - 19 * z + 4 * z * k;
+    y = topP.y + (yTop - 3 * z - topP.y) * k;
+  } else {
+    const k = (ride - 0.35) / 0.65;
+    x = topP.x + (botP.x - topP.x) * k;
+    y = yTop + (yBot - yTop) * k;
+  }
+  playRider(c, x, y - 2 * z, z, night, ride < 0.35 ? "stand" : "sit");
+};
+GI2.slide.tiered = true;
+
+const GI2seesawRide = GI2.seesaw;
+GI2.seesaw = function (c, u, v, W, H, t, night, z0, lvl, ride) {
+  GI2seesawRide(c, u, v, W, H, t, night, z0, lvl, ride);
+  if (ride == null) return;
+  const z = z0 * TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  const tilt = Math.sin(ride * Math.PI * 2) * 13 * z;
+  const pivot = p.y - isoH(0.34);
+  const half = (18 + lvl) * z;
+  playRider(c, p.x - half + 2 * z, pivot + tilt - 4 * z, z, night, "sit");
+};
+GI2.seesaw.tiered = true;
+
+const GI2sandpitRide = GI2.sandpit;
+GI2.sandpit = function (c, u, v, W, H, t, night, z0, lvl, ride) {
+  GI2sandpitRide(c, u, v, W, H, t, night, z0, lvl);
+  if (ride == null) return;
+  const z = z0 * TZ(lvl);
+  const p = isoPt(u, v, W, H);
+  playRider(c, p.x - 6 * z, p.y + 2 * z, z * 0.9, night, "sit");
+  // a bit of sand being patted about
+  c.fillStyle = "rgba(232,212,154,.8)";
+  for (let i = 0; i < 4; i++) {
+    const a = ride * Math.PI * 4 + i;
+    c.beginPath();
+    c.arc(p.x + 4 * z + Math.cos(a) * 5 * z, p.y - 3 * z + Math.sin(a) * 3 * z,
+          1.4 * z, 0, Math.PI * 2);
+    c.fill();
+  }
+};
+GI2.sandpit.tiered = true;
+
+/* ---------- the button ---------- */
+
+const pageGardenPlay = pageGarden;
+pageGarden = function () {
+  let html = pageGardenPlay();
+  if (role !== "student" || Garden.inside) return html;
+
+  let btn = "";
+  if (Garden.ride) {
+    btn = `<button class="play-btn stop" onclick="playStop()">Get off</button>`;
+  } else {
+    const near = playNear();
+    if (near) {
+      btn = `<button class="play-btn" onclick="playStart()">
+        Play on ${esc(PLAYABLE[near.it.type])}</button>`;
+    }
+  }
+  if (!btn) return html;
+  return html.replace('<canvas id="gCanvas"></canvas>',
+    '<canvas id="gCanvas"></canvas>' + btn);
+};
+PAGES.garden = pageGarden;
+
+/* The button only exists while the character is standing near a toy,
+   and nothing re-renders while they walk, so the panel is nudged when
+   what is in reach changes. Cheap: one comparison a frame. */
+const isoFramePlay = isoFrame;
+isoFrame = function (c, W, H, t) {
+  isoFramePlay(c, W, H, t);
+  if (role !== "student" || Garden.inside) return;
+  const near = playNear();
+  const key = Garden.ride ? "ride" : (near ? "near" + near.i : "");
+  if (key !== Garden._playKey) {
+    Garden._playKey = key;
+    // out of the frame, so we are not rebuilding the DOM mid-draw
+    setTimeout(render, 0);
+  }
+};
+</script>

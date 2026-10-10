@@ -1,0 +1,271 @@
+<!-- ============================================================
+     The mosques, corrected against the real buildings
+     ------------------------------------------------------------
+     Researched building by building (sources listed in DESIGN.md
+     section 6g). Two kinds of change:
+
+     1. NO POOLS. A blue disc in the courtyard was a swimming pool.
+        Hardly any of these mosques has open water in the sahn:
+        Kairouan drains rain into an underground cistern, Bukhara,
+        Samarkand and Djenne have nothing at all, and what Istanbul
+        and Cairo have is a SADIRVAN — a stone ablution fountain,
+        with a roof over it at the Blue Mosque, Suleymaniye, Muhammad
+        Ali and Sarajevo, and famously WITHOUT one at Selimiye, where
+        Sinan left it open so it would not break the dome's outline.
+        Even where a real open tank exists — Badshahi, Jama Masjid,
+        Wazir Khan — it is a plain stone tank, not a blue pond, so it
+        is drawn as a basin.
+
+     2. FACTS THE SPEC HAD WRONG. The big ones: the Blue Mosque is
+        grey stone with a LEAD dome (the blue is Iznik tile inside);
+        Kuwait's Grand Mosque is sand-coloured with one Andalusian
+        square minaret, not an azure dome; the Dome of the Rock is a
+        gold dome on a BLUE-TILED octagon, not a gold building;
+        Hazrat Sultan's dome is white marble, not turquoise; Ibn
+        Tulun has no dome over the prayer hall at all; Cambridge has
+        no minaret; Bibi-Khanym was missing its great dome entirely.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* The Dome of the Rock's upper octagon is a wall of blue-and-white
+   Iznik tile — Suleyman's 1550s revetment over the original mosaic.
+   No existing palette had blue WALLS; every blue in the set was a
+   dome on a cream building, which is why it came out as a gold shed. */
+MQ_PAL.iznik = { wall:"#c3d3e4", dome:"#e0b13a", trim:"#5b83ad", accent:"#2f5f9e" };
+
+/* ---------- the ablution fountain that replaces the pool ---------- */
+
+function mqFountain(c, u, v, W, H, P, night, z, kind, tier) {
+  const stone = mqShade(P.wall, night ? 0.92 : 1.02);
+  const p = isoPt(u, v, W, H);
+  const R = 0.3;
+  // an octagonal stone kerb
+  const oct = (rr, lift) => {
+    c.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+      const x = p.x + Math.cos(a) * rr * ISO.tw * 0.5 * z;
+      const y = p.y + Math.sin(a) * rr * ISO.th * 0.5 * z - isoH(lift || 0);
+      c[i ? "lineTo" : "moveTo"](x, y);
+    }
+    c.closePath();
+  };
+  isoShadowRound && isoShadowRound(c, u, v, R * 0.9, 0.5, W, H);
+  oct(R * 2, 0);      c.fillStyle = mqShade(stone, .84); c.fill();
+  oct(R * 2, 0.22);   c.fillStyle = stone; c.fill();
+  c.strokeStyle = mqShade(stone, .7); c.lineWidth = Math.max(1, 1.4 * z); c.stroke();
+  // the basin, sunk into it — wet stone, not a pond
+  oct(R * 1.4, 0.24); c.fillStyle = night ? "#3d4a52" : "#b9c6c9"; c.fill();
+  c.strokeStyle = "rgba(255,255,255,.4)"; c.lineWidth = 1; c.stroke();
+  // the spout in the middle
+  isoCyl(c, u, v, 0.05, 0.34, W, H, mqShade(stone, 1.06), 0.22);
+  c.strokeStyle = night ? "rgba(190,215,225,.5)" : "rgba(255,255,255,.75)";
+  c.lineWidth = Math.max(1, 1.6 * z);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.6;
+    const x0 = p.x + Math.cos(a) * 3 * z, y0 = p.y - isoH(0.54);
+    c.beginPath();
+    c.moveTo(x0, y0);
+    c.quadraticCurveTo(x0 + Math.cos(a) * 11 * z, y0 + 4 * z,
+                       p.x + Math.cos(a) * R * ISO.tw * 0.5 * z,
+                       p.y + Math.sin(a) * R * ISO.th * 0.5 * z - isoH(0.26));
+    c.stroke();
+  }
+  if (kind !== "covered") return;
+  /* a roofed sadirvan: eight little columns and a low tiled cap */
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+    isoCyl(c, u + Math.cos(a) * R * 1.7, v + Math.sin(a) * R * 1.7,
+      0.035, 0.85, W, H, mqShade(stone, 1.04), 0.22);
+  }
+  isoDome(c, u, v, R * 2.5, 0.34, W, H, mqShade(P.wall, .96), 0, "cone", 1.07);
+  isoFinial(c, p.x, p.y - isoH(1.5), Math.max(2, 2.8 * z), P.gold);
+}
+
+/* a courtyard is not universal either — Sheikh Lotfollah is a single
+   domed room behind a bent corridor and has none at all */
+const mqFeatReal = mqFeat;
+mqFeat = function (sp) {
+  const f = mqFeatReal(sp);
+  if (sp && sp.yard === false) { f.yard = false; f.arcade = false; f.gate = false; }
+  return f;
+};
+
+/* ---------- what the research changed ---------- */
+
+const MQ_REAL = {
+  /* --- the starter set --- */
+  quba: { pal:"white", arch:"pointed", fountain:false,
+    domes:[{ x:-0.3, r:0.11, ribs:9 }, { x:-0.1, r:0.15, ribs:11 },
+           { x:0.12, r:0.15, ribs:11 }, { x:0.32, r:0.11, ribs:9 }],
+    minarets:[{ x:-0.62, h:2.2, w:0.1, style:"pencil" }, { x:0.62, h:2.2, w:0.1, style:"pencil" }],
+    extraMinarets:[{ x:-0.4, h:2.2, w:0.1, style:"pencil" }, { x:0.4, h:2.2, w:0.1, style:"pencil" }] },
+  demak: { fountain:false, minarets:[{ x:0.6, h:1.9, w:0.07, style:"slim" }] },
+  larabanga: { fountain:false, yard:false,
+    minarets:[{ x:0.44, h:1.5, w:0.14, style:"torons" }, { x:0.1, h:1.25, w:0.12, style:"torons" }] },
+  /* no minaret at all — the mosque's own FAQ says so — and a fountain
+     in the garden rather than a sahn */
+  cambridge: { minarets:[], extraMinarets:[], fountain:"open", arch:"pointed",
+    domes:[{ x:0, r:0.15, shape:"saucer", colour:"#c9a86a", drum:0.06 }] },
+
+  /* --- Arabia and the Levant --- */
+  nabawi: { pal:"marble", ablaq:true, fountain:false,
+    minarets:[{ x:-0.62, h:3.0, w:0.085, style:"pencil" }, { x:0.62, h:3.0, w:0.085, style:"pencil" }],
+    extraMinarets:[{ x:-0.42, h:3.0, w:0.085, style:"pencil" }, { x:0.42, h:3.0, w:0.085, style:"pencil" }] },
+  haram: { fountain:false },
+  /* a GOLD dome on a BLUE-TILED octagon. It was a gold building. */
+  aqsa: { pal:"iznik", band:"star", fountain:false, yard:false,
+    windows:true, winN:4, arch:"round",
+    domes:[{ x:0, r:0.34, colour:"gold", drum:0.42, ribs:0 }] },
+  /* three minarets, all different, and a domed ablution fountain */
+  umayyad: { ablaq:false, band:"star", fountain:"covered",
+    domes:[{ x:0.1, r:0.16, drum:0.12 }],
+    minarets:[{ x:-0.62, h:2.4, w:0.12, style:"square" }, { x:0.62, h:2.7, w:0.11, style:"square" }],
+    extraMinarets:[{ x:0.3, h:2.2, w:0.09, style:"tiered" }] },
+  /* sand-coloured stone with ONE square Andalusian minaret. Not azure. */
+  kuwait: { pal:"sand", band:"star", fountain:false,
+    domes:[{ x:0, r:0.24, drum:0.13, colour:"#e6dcc4" }],
+    minarets:[{ x:0.62, h:2.9, w:0.15, style:"square" }] },
+  zayed: { fountain:false,
+    minarets:[{ x:-0.64, h:2.9, w:0.1, style:"pencil" }, { x:0.64, h:2.9, w:0.1, style:"pencil" }],
+    extraMinarets:[{ x:-0.44, h:2.9, w:0.1, style:"pencil" }, { x:0.44, h:2.9, w:0.1, style:"pencil" }] },
+
+  /* --- Türkiye: the blue is INSIDE --- */
+  ottoman: { pal:"stone", band:"star", fountain:"covered",
+    domes:[{ x:0, r:0.21, drum:0.13, colour:"#8d949c" },
+           { x:-0.28, r:0.13, shape:"saucer", colour:"#8d949c" },
+           { x:0.28, r:0.13, shape:"saucer", colour:"#8d949c" },
+           { x:-0.44, r:0.09, shape:"saucer", colour:"#8d949c", back:true },
+           { x:0.44, r:0.09, shape:"saucer", colour:"#8d949c", back:true }],
+    minarets:[{ x:-0.62, h:3.1, w:0.075, style:"pencil" }, { x:0.62, h:3.1, w:0.075, style:"pencil" }],
+    extraMinarets:[{ x:-0.44, h:2.7, w:0.07, style:"pencil" }, { x:0.44, h:2.7, w:0.07, style:"pencil" }] },
+  suleymaniye: { fountain:"covered",
+    domes:[{ x:0, r:0.24, drum:0.14, colour:"#8d949c" },
+           { x:-0.3, r:0.14, shape:"saucer", colour:"#8d949c", back:true },
+           { x:0.3, r:0.14, shape:"saucer", colour:"#8d949c" }] },
+  /* four identical minarets round the prayer hall, one vast lead dome,
+     and the sadirvan left UNROOFED on purpose */
+  selimiye: { fountain:"open",
+    domes:[{ x:0, r:0.31, drum:0.17, colour:"#8d949c" },
+           { x:-0.36, r:0.08, shape:"saucer", colour:"#8d949c" },
+           { x:0.36, r:0.08, shape:"saucer", colour:"#8d949c" }],
+    minarets:[{ x:-0.6, h:3.6, w:0.065, style:"pencil" }, { x:0.6, h:3.6, w:0.065, style:"pencil" }],
+    extraMinarets:[{ x:-0.4, h:3.6, w:0.065, style:"pencil" }, { x:0.4, h:3.6, w:0.065, style:"pencil" }] },
+
+  /* --- Egypt and North Africa --- */
+  /* no dome over the prayer hall; the only dome is the fountain kiosk */
+  ibntulun: { domes:[], fountain:"covered" },
+  samarra: { fountain:false },
+  azhar: { fountain:false,
+    minarets:[{ x:-0.58, h:2.7, w:0.1, style:"tiered" }, { x:0.58, h:2.4, w:0.09, style:"tiered" }],
+    extraMinarets:[{ x:0.24, h:2.2, w:0.08, style:"tiered" }, { x:-0.28, h:2.0, w:0.08, style:"tiered" }] },
+  /* lead domes, alabaster walls, round Ottoman arches */
+  muhammadali: { arch:"round", fountain:"covered",
+    domes:[{ x:0, r:0.22, drum:0.15, colour:"#8d949c" },
+           { x:-0.3, r:0.11, shape:"saucer", colour:"#8d949c" },
+           { x:0.3, r:0.11, shape:"saucer", colour:"#8d949c" },
+           { x:-0.42, r:0.08, shape:"saucer", colour:"#8d949c", back:true },
+           { x:0.42, r:0.08, shape:"saucer", colour:"#8d949c", back:true }] },
+  /* rain drains to a cistern; there is no open water */
+  kairouan: { fountain:false,
+    domes:[{ x:0.26, r:0.12, ribs:24, drum:0.1 }, { x:-0.3, r:0.09, ribs:16, drum:0.06 }] },
+  koutoubia: { fountain:"open", roof:"#3f7d52" },
+  qarawiyyin: { fountain:"open" },
+  hassan2: { fountain:"open",
+    minarets:[{ x:0.5, h:4.6, w:0.2, style:"square" }] },
+  abuja: { fountain:false,
+    minarets:[{ x:-0.6, h:2.8, w:0.09, style:"pencil" }, { x:0.6, h:2.8, w:0.09, style:"pencil" }],
+    extraMinarets:[{ x:-0.42, h:2.8, w:0.09, style:"pencil" }, { x:0.42, h:2.8, w:0.09, style:"pencil" }] },
+
+  /* --- Andalusia --- */
+  cordoba: { fountain:"open",
+    domes:[{ x:0.3, r:0.12, ribs:8, colour:"#d8b866", drum:0.07 }] },
+
+  /* --- Iran and Central Asia --- */
+  kalyan: { fountain:false, iwan:{ x:0, w:0.32, h:1.25 },
+    minarets:[{ x:-0.62, h:3.0, w:0.16, style:"brick" }] },
+  /* one shallow cream dome, no minaret, and NO COURTYARD — it is a
+     single domed room behind a bent corridor */
+  lotfollah: { fountain:false, yard:false },
+  shahisfahan: { fountain:"open" },
+  imamreza: { fountain:"open",
+    minarets:[{ x:-0.5, h:2.8, w:0.07, style:"pencil" }, { x:0.5, h:2.8, w:0.07, style:"pencil" }] },
+  /* it was missing its great dome altogether */
+  bibikhanym: { fountain:false,
+    domes:[{ x:0, r:0.2, colour:"#2f8fae", ribs:16, drum:0.16 },
+           { x:-0.36, r:0.12, colour:"#2f8fae", ribs:11, drum:0.09, back:true },
+           { x:0.36, r:0.12, colour:"#2f8fae", ribs:11, drum:0.09, back:true }],
+    minarets:[{ x:-0.62, h:2.4, w:0.11, style:"brick" }, { x:0.62, h:2.4, w:0.11, style:"brick" }],
+    extraMinarets:[{ x:-0.44, h:2.1, w:0.1, style:"brick" }, { x:0.44, h:2.1, w:0.1, style:"brick" }] },
+  sherdor: { fountain:false },
+
+  /* --- South Asia --- */
+  wazirkhan: { fountain:"open",
+    domes:[{ x:0, r:0.13, shape:"bulb", colour:"#e8dcc0", drum:0.08 },
+           { x:-0.26, r:0.1, shape:"bulb", colour:"#e8dcc0", drum:0.06 },
+           { x:0.26, r:0.1, shape:"bulb", colour:"#e8dcc0", drum:0.06 }],
+    minarets:[{ x:-0.62, h:2.1, w:0.11, style:"round" }, { x:0.62, h:2.1, w:0.11, style:"round" }],
+    extraMinarets:[{ x:-0.44, h:2.1, w:0.11, style:"round" }, { x:0.44, h:2.1, w:0.11, style:"round" }] },
+  /* cusped arches, not plain pointed — that is the Shahjahani signature */
+  jamadelhi: { arch:"multifoil", fountain:"open" },
+  badshahi: { fountain:"open",
+    extraMinarets:[{ x:-0.46, h:2.1, w:0.09, style:"round" }, { x:0.46, h:2.1, w:0.09, style:"round" }] },
+  faisal: { fountain:false },
+  /* horseshoe arches on the porticoes, and two minarets were added later */
+  baitul: { arch:"horseshoe", fountain:false,
+    minarets:[{ x:-0.62, h:2.2, w:0.08, style:"slim" }, { x:0.62, h:2.2, w:0.08, style:"slim" }] },
+
+  /* --- Southeast Asia --- */
+  putra: { fountain:false,
+    domes:[{ x:0, r:0.24, ribs:14, drum:0.13, colour:"#d99aa8" },
+           { x:-0.34, r:0.1, drum:0.06, colour:"#d99aa8" },
+           { x:0.34, r:0.1, drum:0.06, colour:"#d99aa8" }],
+    minarets:[{ x:0.62, h:3.2, w:0.085, style:"tiered" }] },
+  istiqlal: { fountain:"open" },
+  /* five minarets for the five pillars, and multifoil arches */
+  brunei: { arch:"multifoil", fountain:"open",
+    minarets:[{ x:0.6, h:3.0, w:0.1, style:"tiered" }, { x:-0.6, h:2.2, w:0.08, style:"tiered" }],
+    extraMinarets:[{ x:-0.42, h:2.0, w:0.075, style:"tiered" }, { x:0.42, h:2.0, w:0.075, style:"tiered" }] },
+  xian: { roof:"#3f8f7a", fountain:false },
+
+  /* --- West Africa --- */
+  djenne: { fountain:false },
+  bobo: { fountain:false },
+
+  /* --- around the world --- */
+  sarajevo: { fountain:"covered",
+    domes:[{ x:0, r:0.2, drum:0.11, colour:"#8d949c" },
+           { x:-0.3, r:0.09, shape:"saucer", colour:"#8d949c" },
+           { x:0.28, r:0.08, shape:"saucer", colour:"#8d949c", back:true }] },
+  /* not minarets — two little turrets. And ogee arches, which read
+     closest to a keel in this vocabulary. */
+  shahjahan: { arch:"keel", fountain:false,
+    minarets:[{ x:-0.56, h:1.2, w:0.09, style:"round" }, { x:0.56, h:1.2, w:0.09, style:"round" }] },
+  /* a converted warehouse in a terraced street: no dome */
+  capetown: { fountain:false, domes:[],
+    minarets:[{ x:-0.56, h:2.0, w:0.07, style:"slim" }] },
+  toronto: { fountain:false },
+  /* travertine, not marble-white */
+  rome: { fountain:"open",
+    domes:[{ x:0, r:0.21, shape:"saucer", colour:"#d8cfbc", ribs:12, drum:0.09 }] },
+  /* white marble, not turquoise */
+  astana: { fountain:"open", iwan:{ x:0, w:0.3, h:1.15 },
+    domes:[{ x:0, r:0.23, colour:"#eceae2", ribs:0, drum:0.14 },
+           { x:-0.32, r:0.1, colour:"#eceae2", drum:0.06 },
+           { x:0.32, r:0.1, colour:"#eceae2", drum:0.06 }],
+    minarets:[{ x:-0.62, h:2.8, w:0.08, style:"pencil" }, { x:0.62, h:2.8, w:0.08, style:"pencil" }],
+    extraMinarets:[{ x:-0.44, h:2.8, w:0.08, style:"pencil" }, { x:0.44, h:2.8, w:0.08, style:"pencil" }] },
+};
+
+/* fold the corrections into the live list. Whole fields are replaced,
+   not merged, so `domes: []` really does mean no domes. */
+MOSQUES.forEach(m => {
+  const fix = MQ_REAL[m.id];
+  if (!fix) { if (m.spec && m.spec.fountain === undefined) m.spec.fountain = false; return; }
+  Object.keys(fix).forEach(k => { m.spec[k] = fix[k]; });
+});
+
+/* and nothing at all keeps a pool */
+function mqHasPool() { return false; }
+</script>

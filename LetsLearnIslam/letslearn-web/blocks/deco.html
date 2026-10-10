@@ -1,0 +1,454 @@
+<!-- ============================================================
+     Things to buy that are only there to be beautiful
+     ------------------------------------------------------------
+     Six for the garden and six for indoors. Every one of them is
+     tiered like the rest of the catalogue, and every tier ADDS a
+     part rather than scaling the same part up — that is the rule
+     the tiered art follows and the reason upgrading feels like
+     something happened.
+
+     The tile panels are geometric strapwork only. No letter-like
+     shapes anywhere: a garbled pseudo-Arabic is worse than none.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* ---------- the catalogue ---------- */
+
+[
+  { id:"topiary",  em:"🌲", name:"Shaped tree",   cost:34, deco:1, note:"clipped into a cone" },
+  { id:"planter",  em:"🪴", name:"Tiled planter", cost:26, deco:1, note:"a pot with a pattern" },
+  { id:"birdbath", em:"🕊", name:"Bird bath",     cost:44, deco:1, note:"the birds come to it" },
+  { id:"pergola",  em:"🌿", name:"Vine walk",     cost:95, deco:1, note:"shade to walk under" },
+  { id:"starlamp", em:"✨", name:"Star lantern",  cost:58, deco:1, note:"pierced brass on a post" },
+  { id:"tilewall", em:"🔷", name:"Tile panel",    cost:70, deco:1, note:"a screen of glazed tile" },
+].forEach(d => { if (!GARDEN_ITEMS.some(x => x.id === d.id)) GARDEN_ITEMS.push(d); });
+
+[
+  { id:"chandelier", em:"🔆", name:"Chandelier",    cost:130, where:["masjid","house"] },
+  { id:"walltile",   em:"🔷", name:"Tile panel",    cost:60,  where:["masjid","school","house"] },
+  { id:"screen",     em:"🪟", name:"Carved screen", cost:75,  where:["masjid","house"] },
+  { id:"matstack",   em:"🧶", name:"Stack of mats", cost:30,  where:["masjid"] },
+  { id:"globe",      em:"🌍", name:"Globe",         cost:48,  where:["school","house"] },
+  { id:"notice",     em:"📌", name:"Notice board",  cost:38,  where:["school","masjid"] },
+].forEach(d => { if (!ROOM_ITEMS.some(x => x.id === d.id)) ROOM_ITEMS.push(d); });
+
+/* ---------- a geometric strapwork panel, drawn into a quad ----------
+   Eight-point stars on a grid, which is the commonest pattern in the
+   world it is borrowed from and, being pure geometry, carries no
+   accidental resemblance to writing. */
+function decoStar(c, x, y, r, col, ring) {
+  c.beginPath();
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2 - Math.PI / 2;
+    const rr = i % 2 ? r * 0.44 : r;
+    const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr * 0.55;
+    c[i ? "lineTo" : "moveTo"](px, py);
+  }
+  c.closePath();
+  c.fillStyle = col; c.fill();
+  if (ring) { c.strokeStyle = ring; c.lineWidth = 1; c.stroke(); }
+}
+
+/* ---------- the garden six ---------- */
+
+GI2.topiary = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const P = mqPal("sand", night);
+  const leaf = night ? "#25573b" : "#3f8d57";
+  const p = isoPt(u, v, W, H);
+  if (lvl >= 2) {                                   // a pot to stand in
+    isoBox(c, u - 0.17, v - 0.17, 0.34, 0.34, 0.26, W, H,
+      mqShade(P.wall, 1.02), mqShade(P.wall, .86), mqShade(P.wall, .7));
+  }
+  const foot = lvl >= 2 ? 0.26 : 0;
+  const base = p.y - isoH(foot);
+  const tiers = lvl >= 4 ? 3 : lvl >= 3 ? 2 : 1;    // clipped into more balls
+  if (tiers === 1) {
+    c.fillStyle = mqShade(leaf, .9);
+    c.beginPath(); c.moveTo(p.x, base - 46 * z);
+    c.lineTo(p.x + 15 * z, base - 4 * z); c.lineTo(p.x - 15 * z, base - 4 * z);
+    c.closePath(); c.fill();
+    c.fillStyle = mqShade(leaf, 1.1);
+    c.beginPath(); c.moveTo(p.x, base - 46 * z);
+    c.lineTo(p.x + 5 * z, base - 4 * z); c.lineTo(p.x - 15 * z, base - 4 * z);
+    c.closePath(); c.fill();
+  } else {
+    c.strokeStyle = night ? "#4a3a22" : "#6d5230";
+    c.lineWidth = 3 * z;
+    c.beginPath(); c.moveTo(p.x, base); c.lineTo(p.x, base - 46 * z); c.stroke();
+    for (let i = 0; i < tiers; i++) {
+      const rr = (15 - i * 3.4) * z, yy = base - (14 + i * 17) * z;
+      leafMass(c, p.x, yy, rr, rr * 0.82, night, mqShade(leaf, i % 2 ? 0.92 : 1.08));
+    }
+  }
+  if (lvl >= 4) {                                   // a ribbon of tile round the pot
+    MQ.band(c, p.x - 13 * z, p.x + 13 * z, base + 2 * z, Math.max(4, 6 * z), P, "star");
+  }
+};
+GI2.topiary.tiered = true;
+
+GI2.planter = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const P = mqPal(lvl >= 3 ? "azure" : "sand", night);
+  const w = 0.42 + lvl * 0.03;
+  isoBox(c, u - w / 2, v - w / 2, w, w, 0.34 + lvl * 0.03, W, H,
+    mqShade(P.wall, 1.04), mqShade(P.wall, .86), mqShade(P.wall, .7));
+  const p = isoPt(u, v, W, H);
+  const top = p.y - isoH(0.34 + lvl * 0.03);
+  if (lvl >= 2) {                                   // glazed band round the rim
+    MQ.band(c, p.x - 15 * z, p.x + 15 * z, top + 6 * z, Math.max(4, 7 * z), P, "star");
+  }
+  const cols = ["#e05a7a", "#f0c04a", "#c86ad0", "#f08a4a", "#e8748f"];
+  const n = 3 + lvl * 2;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const bx = p.x + Math.cos(a) * 10 * z, by = top + Math.sin(a) * 5 * z;
+    c.strokeStyle = night ? "#2c5c3c" : "#3f9e5e"; c.lineWidth = 1.7 * z;
+    const sway = Math.sin(t * 1.4 + i) * 1.3 * z;
+    c.beginPath(); c.moveTo(bx, by); c.lineTo(bx + sway, by - 12 * z); c.stroke();
+    if (lvl >= 2) bloom(c, bx + sway, by - 14 * z, 3.4 * z, cols[i % cols.length], night);
+    else { c.fillStyle = night ? "#2c5c3c" : "#4aa86a";
+           c.beginPath(); c.arc(bx + sway, by - 14 * z, 3.2 * z, 0, Math.PI * 2); c.fill(); }
+  }
+};
+GI2.planter.tiered = true;
+
+GI2.birdbath = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const P = mqPal("stone", night);
+  const p = isoPt(u, v, W, H);
+  if (lvl >= 3) isoBox(c, u - 0.2, v - 0.2, 0.4, 0.4, 0.12, W, H,
+    mqShade(P.wall, 1.0), mqShade(P.wall, .86), mqShade(P.wall, .72));
+  const foot = lvl >= 3 ? 0.12 : 0;
+  isoCyl(c, u, v, 0.07, 0.62 + foot, W, H, mqShade(P.wall, .98), foot);
+  const top = p.y - isoH(0.62 + foot * 2);
+  // the basin
+  c.fillStyle = mqShade(P.wall, 1.06);
+  c.beginPath(); c.ellipse(p.x, top, 17 * z, 8 * z, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = night ? "#22415a" : "#6fb8d8";
+  c.beginPath(); c.ellipse(p.x, top - 1 * z, 13 * z, 6 * z, 0, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = "rgba(255,255,255,.6)"; c.lineWidth = 1.2 * z;
+  const rr = 4 + 3 * (0.5 + 0.5 * Math.sin(t * 1.6));
+  c.beginPath(); c.ellipse(p.x, top - 1 * z, rr * z, rr * 0.46 * z, 0, 0, Math.PI * 2); c.stroke();
+  if (lvl >= 2) {                                   // a bird on the rim
+    const bob = Math.sin(t * 2.2) * 1.5 * z;
+    c.fillStyle = night ? "#c8c2b4" : "#f3efe4";
+    c.beginPath(); c.ellipse(p.x + 12 * z, top - 5 * z + bob, 4.4 * z, 3.4 * z, 0, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(p.x + 15 * z, top - 8 * z + bob, 2.4 * z, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#e8a13c";
+    c.beginPath(); c.moveTo(p.x + 17 * z, top - 8 * z + bob);
+    c.lineTo(p.x + 20 * z, top - 7 * z + bob); c.lineTo(p.x + 17 * z, top - 6 * z + bob);
+    c.closePath(); c.fill();
+  }
+  if (lvl >= 4) {                                   // a second bird, and a carved rim
+    c.strokeStyle = P.gold; c.lineWidth = 1.6 * z;
+    c.beginPath(); c.ellipse(p.x, top, 17 * z, 8 * z, 0, 0, Math.PI * 2); c.stroke();
+    const bob = Math.sin(t * 2.2 + 1.9) * 1.5 * z;
+    c.fillStyle = night ? "#b6ada0" : "#e2dccc";
+    c.beginPath(); c.ellipse(p.x - 13 * z, top - 4 * z + bob, 3.8 * z, 3 * z, 0, 0, Math.PI * 2); c.fill();
+  }
+};
+GI2.birdbath.tiered = true;
+
+GI2.pergola = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const wood = night ? "#5d4527" : "#8f6a3c";
+  const span = 0.5 + lvl * 0.09;
+  const h = 1.15 + lvl * 0.05;
+  [-span, span].forEach(d => {
+    isoCyl(c, u + d, v - span * 0.6, 0.05, h, W, H, wood);
+    isoCyl(c, u + d, v + span * 0.6, 0.05, h, W, H, wood);
+  });
+  const beam = (v0, v1) => {
+    const a = isoPt(u - span, v0, W, H), b = isoPt(u + span, v1, W, H);
+    c.strokeStyle = mqShade(wood, 1.1); c.lineWidth = 4 * z;
+    c.beginPath(); c.moveTo(a.x, a.y - isoH(h)); c.lineTo(b.x, b.y - isoH(h)); c.stroke();
+  };
+  beam(v - span * 0.6, v - span * 0.6);
+  beam(v + span * 0.6, v + span * 0.6);
+  const rafters = 3 + lvl;
+  for (let i = 0; i <= rafters; i++) {
+    const uu = u - span + (2 * span) * (i / rafters);
+    const a = isoPt(uu, v - span * 0.6, W, H), b = isoPt(uu, v + span * 0.6, W, H);
+    c.strokeStyle = mqShade(wood, .92); c.lineWidth = 2.4 * z;
+    c.beginPath(); c.moveTo(a.x, a.y - isoH(h)); c.lineTo(b.x, b.y - isoH(h)); c.stroke();
+  }
+  if (lvl >= 2) {                                   // the vine, thickening as it grows
+    const leaves = lvl * 9;
+    for (let i = 0; i < leaves; i++) {
+      const uu = u - span + (2 * span) * ((i * 0.37) % 1);
+      const vv = v + (i % 2 ? span : -span) * 0.6;
+      const q = isoPt(uu, vv, W, H);
+      const drop = ((i * 13) % 9) * z;
+      const vine = night ? "#2b5c3e" : "#49975d";
+      leafMass(c, q.x, q.y - isoH(h) + drop, 5.5 * z, 4 * z, night, mqShade(vine, i % 3 ? 1.04 : 0.86));
+    }
+  }
+  if (lvl >= 4) {                                   // grapes hanging through it
+    for (let i = 0; i < 7; i++) {
+      const uu = u - span * 0.8 + (1.6 * span) * (i / 6);
+      const q = isoPt(uu, v - span * 0.2, W, H);
+      c.fillStyle = night ? "#4a3560" : "#7a4f9e";
+      for (let k = 0; k < 4; k++)
+        { c.beginPath(); c.arc(q.x + ((k % 2) ? 2.4 : -2.4) * z, q.y - isoH(h) + (7 + k * 3.4) * z,
+            2.3 * z, 0, Math.PI * 2); c.fill(); }
+    }
+  }
+};
+GI2.pergola.tiered = true;
+
+GI2.starlamp = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const P = mqPal("sand", night);
+  const brass = night ? "#7a6330" : "#a8873f";
+  const postH = 1.0 + lvl * 0.1;
+  if (lvl >= 3) isoBox(c, u - 0.12, v - 0.12, 0.24, 0.24, 0.13, W, H,
+    P.wall, mqShade(P.wall, .88), mqShade(P.wall, .74));
+  isoCyl(c, u, v, 0.04, postH, W, H, brass, lvl >= 3 ? 0.13 : 0);
+  const p = isoPt(u, v, W, H);
+  const top = p.y - isoH(postH + (lvl >= 3 ? 0.13 : 0));
+  const heads = lvl >= 4 ? [-13, 0, 13] : lvl >= 2 ? [-9, 9] : [0];
+  if (heads.length > 1) {
+    c.strokeStyle = brass; c.lineWidth = 2.6 * z; c.lineCap = "round";
+    c.beginPath(); c.moveTo(p.x + heads[0] * z, top + 3 * z);
+    c.lineTo(p.x + heads[heads.length - 1] * z, top + 3 * z); c.stroke();
+    c.lineCap = "butt";
+  }
+  heads.forEach((ox, i) => {
+    const hx = p.x + ox * z, hy = top + (i === 1 && heads.length === 3 ? -7 : 5) * z;
+    const r = (lvl >= 3 ? 8 : 7) * z;
+    // the pierced brass body: an eight-point star, lit from inside
+    tGlow(c, hx, hy + r, 30 * z, night, night ? 0.85 : 0.45);
+    decoStar(c, hx, hy + r * 1.2, r,
+      night ? "rgba(255,214,140,.95)" : "rgba(255,246,214,.96)", brass);
+    c.strokeStyle = brass; c.lineWidth = 1.4 * z;
+    c.beginPath(); c.moveTo(hx, hy - 1 * z); c.lineTo(hx, hy + r * 0.5); c.stroke();
+  });
+};
+GI2.starlamp.tiered = true;
+
+GI2.tilewall = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const P = mqPal(lvl >= 3 ? "azure" : "sand", night);
+  const w = 0.9 + lvl * 0.1, h = 0.95 + lvl * 0.12;
+  // a low plinth, then the panel standing on it
+  isoBox(c, u - w / 2, v - 0.09, w, 0.18, 0.16, W, H,
+    mqShade(P.wall, 1.0), mqShade(P.wall, .84), mqShade(P.wall, .7));
+  const F = (k, hh) => {
+    const q = isoPt(u - w / 2 + k * w, v + 0.09, W, H);
+    return { x: q.x, y: q.y - isoH(hh + 0.16) };
+  };
+  const quad = [F(0, 0), F(1, 0), F(1, h), F(0, h)];
+  c.beginPath(); quad.forEach((q, i) => c[i ? "lineTo" : "moveTo"](q.x, q.y)); c.closePath();
+  c.fillStyle = mqShade(P.wall, night ? 0.92 : 1.06); c.fill();
+  c.save(); c.clip();
+  const rows = lvl >= 3 ? 3 : 2, cols = lvl >= 2 ? 4 : 3;
+  const starCol = [P.accent || "#2f7f6e", "#c8b06a", "#4a78b8", "#a85a72"];
+  for (let r = 0; r < rows; r++) {
+    for (let k = 0; k < cols; k++) {
+      const q = F((k + 0.5) / cols, h * (r + 0.5) / rows);
+      decoStar(c, q.x, q.y, (lvl >= 3 ? 11 : 9) * z,
+        starCol[(r + k) % starCol.length], "rgba(255,255,255,.35)");
+    }
+  }
+  c.restore();
+  c.strokeStyle = lvl >= 4 ? P.gold : P.trim;
+  c.lineWidth = (lvl >= 4 ? 2.6 : 1.8) * z;
+  c.beginPath(); quad.forEach((q, i) => c[i ? "lineTo" : "moveTo"](q.x, q.y)); c.closePath(); c.stroke();
+  if (lvl >= 4) {                                   // finials on the two corners
+    isoFinial(c, quad[3].x, quad[3].y, 2.8 * z, P.gold);
+    isoFinial(c, quad[2].x, quad[2].y, 2.8 * z, P.gold);
+  }
+};
+GI2.tilewall.tiered = true;
+
+/* ---------- the indoor six ---------- */
+
+GI2.chandelier = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const brass = night ? "#8a6d31" : "#b8963f";
+  const p = isoPt(u, v, W, H);
+  const hang = 1.75;                                 // it comes down from the ceiling
+  const top = p.y - isoH(hang);
+  c.strokeStyle = brass; c.lineWidth = 2 * z;
+  c.beginPath(); c.moveTo(p.x, top); c.lineTo(p.x, top + 20 * z); c.stroke();
+  const rings = lvl >= 3 ? 2 : 1;
+  for (let ring = 0; ring < rings; ring++) {
+    const rr = (20 - ring * 8) * z, yy = top + (22 + ring * 13) * z;
+    c.strokeStyle = brass; c.lineWidth = 2.2 * z;
+    c.beginPath(); c.ellipse(p.x, yy, rr, rr * 0.42, 0, 0, Math.PI * 2); c.stroke();
+    const n = lvl >= 4 ? 8 : lvl >= 2 ? 6 : 4;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const lx = p.x + Math.cos(a) * rr, ly = yy + Math.sin(a) * rr * 0.42;
+      tGlow(c, lx, ly + 5 * z, 20 * z, night, night ? 0.8 : 0.34);
+      c.fillStyle = night ? "rgba(255,216,148,.96)" : "rgba(255,248,220,.96)";
+      c.beginPath(); c.ellipse(lx, ly + 6 * z, 3.2 * z, 4.4 * z, 0, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = brass; c.lineWidth = 1.1 * z;
+      c.beginPath(); c.moveTo(lx, ly); c.lineTo(lx, ly + 2.5 * z); c.stroke();
+    }
+  }
+  if (lvl >= 4) {                                    // drops of glass round the rim
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
+      const lx = p.x + Math.cos(a) * 20 * z, ly = top + 22 * z + Math.sin(a) * 8.4 * z;
+      c.fillStyle = night ? "rgba(255,236,200,.6)" : "rgba(200,225,240,.75)";
+      c.beginPath(); c.moveTo(lx, ly + 3 * z);
+      c.lineTo(lx + 1.8 * z, ly + 8 * z); c.lineTo(lx - 1.8 * z, ly + 8 * z);
+      c.closePath(); c.fill();
+    }
+  }
+};
+GI2.chandelier.tiered = true;
+
+GI2.walltile = function (c, u, v, W, H, t, night, z, lvl) {
+  GI2.tilewall(c, u, v, W, H, t, night, z / TZ(lvl), lvl);
+};
+GI2.walltile.tiered = true;
+
+GI2.screen = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const wood = night ? "#5b4326" : "#8b6636";
+  const w = 0.95 + lvl * 0.08, h = 1.15 + lvl * 0.08;
+  const F = (k, hh) => {
+    const q = isoPt(u - w / 2 + k * w, v, W, H);
+    return { x: q.x, y: q.y - isoH(hh) };
+  };
+  const quad = [F(0, 0), F(1, 0), F(1, h), F(0, h)];
+  c.beginPath(); quad.forEach((q, i) => c[i ? "lineTo" : "moveTo"](q.x, q.y)); c.closePath();
+  c.fillStyle = night ? "rgba(24,26,30,.5)" : "rgba(250,246,236,.55)"; c.fill();
+  // the lattice: a diagonal grid, tighter the finer the screen
+  c.save(); c.clip();
+  const step = (16 - lvl * 2) * z;
+  c.strokeStyle = mqShade(wood, night ? 1.0 : 1.05);
+  c.lineWidth = Math.max(1, 1.6 * z);
+  const x0 = Math.min(quad[0].x, quad[3].x) - 40 * z, x1 = Math.max(quad[1].x, quad[2].x) + 40 * z;
+  const y0 = Math.min(quad[3].y, quad[2].y) - 10 * z, y1 = Math.max(quad[0].y, quad[1].y) + 10 * z;
+  for (let x = x0; x < x1 + (y1 - y0); x += step) {
+    c.beginPath(); c.moveTo(x, y0); c.lineTo(x - (y1 - y0), y1); c.stroke();
+    c.beginPath(); c.moveTo(x - (y1 - y0), y0); c.lineTo(x, y1); c.stroke();
+  }
+  if (lvl >= 3) {                                    // stars where the laths cross
+    for (let k = 0; k < 3; k++) {
+      const q = F((k + 0.5) / 3, h * 0.55);
+      decoStar(c, q.x, q.y, 8 * z, mqShade(wood, 1.14), null);
+    }
+  }
+  c.restore();
+  c.strokeStyle = mqShade(wood, .8); c.lineWidth = (lvl >= 4 ? 4 : 3) * z;
+  c.beginPath(); quad.forEach((q, i) => c[i ? "lineTo" : "moveTo"](q.x, q.y)); c.closePath(); c.stroke();
+  if (lvl >= 2) {                                    // an arched head on it
+    c.strokeStyle = mqShade(wood, .84); c.lineWidth = 3 * z;
+    const l = F(0.12, h * 0.72), r = F(0.88, h * 0.72), m = F(0.5, h * 0.99);
+    c.beginPath(); c.moveTo(l.x, l.y);
+    c.quadraticCurveTo(F(0.3, h * 0.98).x, F(0.3, h * 0.98).y, m.x, m.y);
+    c.quadraticCurveTo(F(0.7, h * 0.98).x, F(0.7, h * 0.98).y, r.x, r.y);
+    c.stroke();
+  }
+};
+GI2.screen.tiered = true;
+
+GI2.matstack = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const cols = night
+    ? ["#3f5c52", "#5c3a44", "#4a4f6a", "#5a5230"]
+    : ["#2f7f6e", "#8f3a4e", "#4a5f9e", "#8a7a34"];
+  const n = 2 + lvl;
+  if (lvl >= 3) {                                    // a rack to stand them in
+    isoBox(c, u - 0.32, v - 0.16, 0.64, 0.32, 0.1, W, H,
+      night ? "#5a4830" : "#8a6b41", night ? "#48381f" : "#6f5432", night ? "#3c2f1a" : "#5b4529");
+  }
+  const lift = lvl >= 3 ? 0.1 : 0;
+  for (let i = 0; i < n; i++) {
+    isoCyl(c, u - 0.26 + i * (0.52 / Math.max(1, n - 1)), v, 0.085, 0.78 + (i % 2) * 0.08,
+      W, H, cols[i % cols.length], lift);
+  }
+  if (lvl >= 4) {                                    // a folded one laid across the top
+    isoBox(c, u - 0.3, v - 0.1, 0.6, 0.2, 0.1, W, H,
+      cols[0], mqShade(cols[0], .84), mqShade(cols[0], .7));
+  }
+};
+GI2.matstack.tiered = true;
+
+GI2.globe = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const wood = night ? "#5b4326" : "#8b6636";
+  const p = isoPt(u, v, W, H);
+  const standH = lvl >= 3 ? 0.62 : 0.34;
+  if (lvl >= 3) {
+    isoBox(c, u - 0.17, v - 0.17, 0.34, 0.34, 0.1, W, H,
+      mqShade(wood, 1.06), mqShade(wood, .88), mqShade(wood, .72));
+    isoCyl(c, u, v, 0.045, standH, W, H, wood, 0.1);
+  } else {
+    isoCyl(c, u, v, 0.09, standH, W, H, wood);
+  }
+  const cy = p.y - isoH(standH + (lvl >= 3 ? 0.1 : 0)) - 11 * z;
+  const r = (11 + lvl) * z;
+  const spin = t * 0.35;
+  c.fillStyle = night ? "#1f4a6e" : "#3f86bd";
+  c.beginPath(); c.arc(p.x, cy, r, 0, Math.PI * 2); c.fill();
+  c.fillStyle = night ? "#2f6b45" : "#4fa268";
+  for (let i = 0; i < 4; i++) {
+    const a = spin + i * 1.6;
+    const ox = Math.sin(a) * r * 0.5, sq = Math.cos(a);
+    if (sq < 0) continue;
+    c.beginPath();
+    c.ellipse(p.x + ox, cy - r * 0.12 + (i % 2 ? r * 0.32 : -r * 0.24),
+      r * 0.3 * sq, r * 0.2, 0, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.strokeStyle = "rgba(255,255,255,.35)"; c.lineWidth = 1;
+  c.beginPath(); c.ellipse(p.x, cy, r, r * 0.34, 0, 0, Math.PI * 2); c.stroke();
+  if (lvl >= 2) {                                    // the brass meridian
+    c.strokeStyle = night ? "#8a6d31" : "#c0a04a"; c.lineWidth = 2 * z;
+    c.beginPath(); c.arc(p.x, cy, r + 2.5 * z, Math.PI * 0.15, Math.PI * 0.85); c.stroke();
+    c.beginPath(); c.arc(p.x, cy, r + 2.5 * z, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
+  }
+  if (lvl >= 4) {                                    // and a little lamp beside it
+    tGlow(c, p.x + r + 8 * z, cy + 4 * z, 20 * z, night, night ? 0.7 : 0.3);
+  }
+};
+GI2.globe.tiered = true;
+
+GI2.notice = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const wood = night ? "#5b4326" : "#8b6636";
+  const w = 0.85 + lvl * 0.07, h = 0.75 + lvl * 0.05;
+  const stand = 0.5;
+  [-w / 2 + 0.06, w / 2 - 0.06].forEach(d => isoCyl(c, u + d, v, 0.035, stand, W, H, wood));
+  const F = (k, hh) => {
+    const q = isoPt(u - w / 2 + k * w, v, W, H);
+    return { x: q.x, y: q.y - isoH(stand + hh) };
+  };
+  const quad = [F(0, 0), F(1, 0), F(1, h), F(0, h)];
+  c.beginPath(); quad.forEach((q, i) => c[i ? "lineTo" : "moveTo"](q.x, q.y)); c.closePath();
+  c.fillStyle = night ? "#3d4a3a" : "#5f7a54"; c.fill();
+  c.strokeStyle = mqShade(wood, .84); c.lineWidth = 3 * z; c.stroke();
+  // pinned notes, more of them the better the board
+  const notes = 2 + lvl;
+  const paper = ["#f6f1e2", "#fbe7a6", "#e8f0f6", "#f7dfe2"];
+  for (let i = 0; i < notes; i++) {
+    const k = 0.14 + (i % 3) * 0.3, row = Math.floor(i / 3);
+    const q = F(k, h * (0.62 - row * 0.34));
+    c.save();
+    c.translate(q.x, q.y);
+    c.rotate(((i * 37) % 9 - 4) * 0.012);
+    c.fillStyle = paper[i % paper.length];
+    c.fillRect(-7 * z, -9 * z, 14 * z, 17 * z);
+    c.strokeStyle = "rgba(0,0,0,.12)"; c.lineWidth = 1; c.strokeRect(-7 * z, -9 * z, 14 * z, 17 * z);
+    c.strokeStyle = "rgba(0,0,0,.22)"; c.lineWidth = 1;
+    for (let l = 0; l < 3; l++) {
+      c.beginPath(); c.moveTo(-4.5 * z, (-4 + l * 4) * z); c.lineTo(4.5 * z, (-4 + l * 4) * z); c.stroke();
+    }
+    if (lvl >= 2) { c.fillStyle = "#d34b4b"; c.beginPath(); c.arc(0, -7 * z, 1.8 * z, 0, Math.PI * 2); c.fill(); }
+    c.restore();
+  }
+  if (lvl >= 4) {                                    // a little roof to keep the rain off
+    const l = F(-0.05, h + 0.04), r = F(1.05, h + 0.04);
+    c.strokeStyle = mqShade(wood, 1.0); c.lineWidth = 5 * z; c.lineCap = "round";
+    c.beginPath(); c.moveTo(l.x, l.y); c.lineTo(r.x, r.y); c.stroke(); c.lineCap = "butt";
+  }
+};
+GI2.notice.tiered = true;
+</script>

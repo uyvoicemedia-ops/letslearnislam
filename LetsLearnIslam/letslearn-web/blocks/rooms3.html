@@ -1,0 +1,53 @@
+<!-- ============================================================
+     Nothing sticks out of its own room
+     ------------------------------------------------------------
+     Every fixture in the building is painted in one depth-sorted
+     pass AFTER all the walls, so a bookcase standing near a wall
+     paints straight over it and reads as sticking through into the
+     next room. That is what made the interior look mis-aligned: not
+     the coordinates, the paint order.
+
+     The honest fix is per-room clipping. Each fixture is drawn
+     inside the prism of the room it belongs to — floor rectangle,
+     inset by the wall thickness, swept up to head height. Anything
+     that would cross a wall is cut at the wall, which in a cut-away
+     isometric is exactly what the eye expects.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* the silhouette of a room's clear volume: an extruded rectangle is a
+   hexagon in this projection */
+function planRoomClip(c, r, W, H, WT, WH) {
+  const u0 = r.u + WT, v0 = r.v + WT, u1 = r.u + r.w, v1 = r.v + r.d;
+  const P = (uu, vv, hh) => {
+    const q = isoPt(uu, vv, W, H);
+    return { x: q.x, y: q.y - isoH(hh) };
+  };
+  const pts = [
+    P(u0, v0, WH), P(u1, v0, WH), P(u1, v1, WH),
+    P(u1, v1, 0), P(u0, v1, 0), P(u0, v0, 0),
+  ];
+  c.beginPath();
+  pts.forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y));
+  c.closePath();
+}
+
+const planFixturesClip = planFixtures;
+planFixtures = function (r, night) {
+  const out = planFixturesClip(r, night) || [];
+  return out.map(f => {
+    if (!f || typeof f.draw !== "function") return f;
+    const draw = f.draw;
+    return Object.assign({}, f, {
+      draw(c, W, H, t, n) {
+        c.save();
+        planRoomClip(c, r, W, H, 0.14, 1.15);
+        c.clip();
+        draw.call(this, c, W, H, t, n);
+        c.restore();
+      },
+    });
+  });
+};
+</script>

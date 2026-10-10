@@ -1,0 +1,618 @@
+<!-- ============================================================
+     Practising the ibadah, in the room where it happens
+     ------------------------------------------------------------
+     This is the point of the whole app: a child should be able to
+     walk into the washroom and actually practise wudu, step by
+     step, in the right order, and walk into the prayer hall and be
+     taken through a rak'ah.
+
+     Rules this follows, from DESIGN.md section 2:
+       - Only short, universally agreed Arabic is printed here, with
+         its source. Al-Fatiha and the tashahhud are NOT printed —
+         they are long, they are what the Qaida and the books are
+         for, and a half-remembered rendering of either would be
+         worse than none.
+       - The wudu order below is the one commonly taught. Schools
+         differ on a few details (how many times the head is wiped,
+         whether the ears are counted with it). Every practice card
+         carries the teacher-check line, and this one carries it
+         twice.
+       - Nothing here is gated by the energy system. Worship never
+         waits for a bar to refill.
+     ============================================================ -->
+<style>
+  .pr-card { max-width:560px; text-align:left; }
+  .pr-top { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .pr-em { font-size:26px; }
+  .pr-kind { font-size:12px; font-weight:800; letter-spacing:.05em; text-transform:uppercase;
+             color:var(--qaida-green); }
+  .pr-dots { display:flex; gap:4px; flex-wrap:wrap; margin:10px 0 12px; }
+  .pr-dots i { width:100%; max-width:26px; flex:1; height:5px; border-radius:5px;
+               background:#ded8cb; display:block; }
+  .pr-dots i.on { background:var(--qaida-green); }
+  .pr-dots i.now { background:#e0a53c; }
+  .pr-body { display:flex; gap:16px; align-items:flex-start; }
+  .pr-art { flex:0 0 128px; }
+  .pr-art canvas { width:128px; height:128px; display:block;
+                   background:linear-gradient(180deg,#f4f7f3,#e9efe8); border-radius:14px; }
+  .pr-what { flex:1 1 auto; min-width:0; }
+  .pr-title { font-size:17px; font-weight:800; margin:0 0 6px; }
+  .pr-text { font-size:14.5px; line-height:1.5; margin:0 0 10px; }
+  .pr-say { background:#f5f1e6; border-radius:12px; padding:10px 12px; margin:0 0 10px; }
+  .pr-say .ar { font-family:"Noto Naskh Arabic","Scheherazade New",serif; direction:rtl;
+                font-size:24px; line-height:1.9; }
+  .pr-say .tr { font-style:italic; color:var(--muted); font-size:13.5px; }
+  .pr-say .en { font-size:13.5px; font-weight:600; }
+  .pr-say .sr { font-size:11px; color:var(--muted); margin-top:4px; }
+  .pr-count { display:flex; align-items:center; gap:8px; margin:0 0 10px; }
+  .pr-count b { width:22px; height:22px; border-radius:50%; border:2px solid #cfc7b6; display:block; }
+  .pr-count b.on { background:var(--qaida-green); border-color:var(--qaida-green); }
+  .pr-note { font-size:11.5px; color:var(--muted); margin:12px 0 0; }
+  .pr-btns { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; margin-top:14px; }
+  @media (max-width:560px) {
+    .pr-body { flex-direction:column; align-items:center; }
+    .pr-what { width:100%; }
+  }
+</style>
+<script>
+"use strict";
+
+/* ---------- the drawings ---------- */
+
+/* A faceless child, seen from the front, with one part of the body lit
+   up. This is the whole of the wudu teaching aid: the words tell you
+   what to do, the picture tells you where. */
+function prWashFigure(c, S, part) {
+  const cx = S / 2, gy = S * 0.9;
+  const skin = "#e8c9a8", cloth = "#4f7bbf", clothD = "#3d629b";
+  const glow = (x, y, rx, ry) => {
+    const g = c.createRadialGradient(x, y, 1, x, y, Math.max(rx, ry) * 1.9);
+    g.addColorStop(0, "rgba(255,196,60,.55)"); g.addColorStop(1, "rgba(255,196,60,0)");
+    c.fillStyle = g;
+    c.beginPath(); c.ellipse(x, y, rx * 2.1, ry * 2.1, 0, 0, Math.PI * 2); c.fill();
+    /* a ring as well as a glow: on a small canvas a soft halo alone is
+       easy to miss, and the whole job of this picture is to say WHERE */
+    c.strokeStyle = "#e0a53c"; c.lineWidth = 2.4;
+    c.setLineDash([5, 4]);
+    c.beginPath(); c.ellipse(x, y, rx * 1.45, ry * 1.45, 0, 0, Math.PI * 2); c.stroke();
+    c.setLineDash([]);
+  };
+  c.clearRect(0, 0, S, S);
+  // legs
+  c.fillStyle = clothD;
+  c.fillRect(cx - 13, gy - 30, 10, 28);
+  c.fillRect(cx + 3, gy - 30, 10, 28);
+  // feet
+  c.fillStyle = skin;
+  c.beginPath(); c.ellipse(cx - 8, gy - 2, 8, 4, 0, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.ellipse(cx + 8, gy - 2, 8, 4, 0, 0, Math.PI * 2); c.fill();
+  // body
+  c.fillStyle = cloth;
+  c.beginPath();
+  c.moveTo(cx - 17, gy - 30); c.lineTo(cx - 14, gy - 74);
+  c.lineTo(cx + 14, gy - 74); c.lineTo(cx + 17, gy - 30);
+  c.closePath(); c.fill();
+  // arms
+  c.strokeStyle = cloth; c.lineWidth = 8; c.lineCap = "round";
+  c.beginPath(); c.moveTo(cx - 13, gy - 70); c.lineTo(cx - 24, gy - 44); c.stroke();
+  c.beginPath(); c.moveTo(cx + 13, gy - 70); c.lineTo(cx + 24, gy - 44); c.stroke();
+  c.lineCap = "butt";
+  // hands
+  c.fillStyle = skin;
+  c.beginPath(); c.arc(cx - 25, gy - 40, 5.5, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(cx + 25, gy - 40, 5.5, 0, Math.PI * 2); c.fill();
+  // head — faceless, with a cap
+  c.fillStyle = skin;
+  c.beginPath(); c.arc(cx, gy - 86, 13, 0, Math.PI * 2); c.fill();
+  c.fillStyle = "#f2f0e8";
+  c.beginPath(); c.arc(cx, gy - 92, 12, Math.PI, 0); c.fill();
+  c.fillRect(cx - 12, gy - 93, 24, 3);
+
+  /* Where each ring goes. The mouth and the nose are only five pixels
+     apart on a head this size, so they are drawn small and clearly
+     one above the other rather than as two similar blobs. */
+  const spots = {
+    hands: [[cx - 25, gy - 40, 8, 8], [cx + 25, gy - 40, 8, 8]],
+    mouth: [[cx, gy - 79, 7, 4]],
+    nose:  [[cx, gy - 88, 4.5, 4.5]],
+    face:  [[cx, gy - 85, 13, 14]],
+    arms:  [[cx - 20, gy - 56, 6, 17], [cx + 20, gy - 56, 6, 17]],
+    head:  [[cx, gy - 96, 14, 7]],
+    ears:  [[cx - 14, gy - 86, 4, 5.5], [cx + 14, gy - 86, 4, 5.5]],
+    feet:  [[cx - 8, gy - 4, 10, 5], [cx + 8, gy - 4, 10, 5]],
+    all:   [[cx, gy - 55, 27, 44]],
+  };
+  (spots[part] || []).forEach(([x, y, rx, ry]) => glow(x, y, rx, ry));
+}
+
+/* A faceless child seen from the side, in each position of the prayer.
+   Side-on because that is the only view in which ruku and sujud are
+   legible at this size. */
+function prPrayFigure(c, S, pose) {
+  const k = S / 128;
+  c.clearRect(0, 0, S, S);
+  c.save(); c.scale(k, k);
+  const cx = 64, gy = 112;
+  const skin = "#e8c9a8", cloth = "#3f7d6e", arm = "#4f9384", legc = "#2f6154";
+  const mat = () => {
+    c.fillStyle = "#8f3a4e";
+    c.beginPath();
+    c.moveTo(cx - 46, gy + 1); c.lineTo(cx + 46, gy + 1);
+    c.lineTo(cx + 38, gy + 9); c.lineTo(cx - 38, gy + 9);
+    c.closePath(); c.fill();
+    c.fillStyle = "rgba(255,255,255,.18)";
+    c.fillRect(cx - 40, gy + 3, 80, 1.5);
+  };
+  /* a faceless head with a cap, turned by `turn` (-1 left, 1 right) */
+  const head = (x, y, r, turn) => {
+    c.fillStyle = skin;
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#f4f2ea";
+    c.beginPath(); c.arc(x, y - r * 0.34, r * 1.0, Math.PI, 0); c.fill();
+    c.fillRect(x - r, y - r * 0.36, r * 2, r * 0.28);
+    if (turn) {                                    // an ear, so the turn reads
+      c.fillStyle = skin;
+      c.beginPath(); c.ellipse(x - turn * r * 0.85, y + r * 0.1, r * 0.22, r * 0.34, 0, 0, Math.PI * 2);
+      c.fill();
+    }
+  };
+  const bone = (x0, y0, x1, y1, w, col) => {
+    c.strokeStyle = col; c.lineWidth = w; c.lineCap = "round";
+    c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke(); c.lineCap = "butt";
+  };
+  const hand = (x, y, r) => { c.fillStyle = skin; c.beginPath(); c.arc(x, y, r || 4.6, 0, Math.PI * 2); c.fill(); };
+
+  mat();
+
+  if (pose === "stand" || pose === "takbir" || pose === "qiyam" || pose === "itidal") {
+    bone(cx - 6, gy, cx - 5, gy - 40, 12, legc);
+    bone(cx + 6, gy, cx + 5, gy - 40, 12, legc);
+    bone(cx, gy - 38, cx, gy - 76, 21, cloth);          // torso
+    head(cx, gy - 89, 13, 0);
+    if (pose === "takbir") {
+      bone(cx - 9, gy - 72, cx - 20, gy - 92, 8, arm);  // both hands up beside the ears
+      bone(cx + 9, gy - 72, cx + 20, gy - 92, 8, arm);
+      hand(cx - 21, gy - 94); hand(cx + 21, gy - 94);
+    } else if (pose === "qiyam") {
+      bone(cx - 10, gy - 72, cx - 4, gy - 56, 8, arm);  // folded on the chest
+      bone(cx + 10, gy - 72, cx + 4, gy - 54, 8, arm);
+      hand(cx - 2, gy - 55, 5.4); hand(cx + 3, gy - 54, 5.4);
+    } else {
+      bone(cx - 10, gy - 72, cx - 13, gy - 48, 8, arm); // at the sides
+      bone(cx + 10, gy - 72, cx + 13, gy - 48, 8, arm);
+      hand(cx - 14, gy - 46); hand(cx + 14, gy - 46);
+      if (pose === "itidal") {                          // a small "risen" mark
+        c.strokeStyle = "rgba(63,125,110,.5)"; c.lineWidth = 2.4;
+        c.beginPath(); c.moveTo(cx + 30, gy - 74); c.lineTo(cx + 30, gy - 88); c.stroke();
+        c.beginPath(); c.moveTo(cx + 25, gy - 83); c.lineTo(cx + 30, gy - 89);
+        c.lineTo(cx + 35, gy - 83); c.stroke();
+      }
+    }
+    c.restore(); return;
+  }
+
+  if (pose === "ruku") {
+    bone(cx - 12, gy, cx - 10, gy - 42, 12, legc);
+    bone(cx - 2, gy, cx + 0, gy - 42, 12, legc);
+    bone(cx - 6, gy - 44, cx + 30, gy - 48, 21, cloth); // back, level with the ground
+    head(cx + 43, gy - 49, 12, 1);
+    bone(cx + 8, gy - 44, cx + 4, gy - 12, 8, arm);     // straight arms to the knees
+    hand(cx + 3, gy - 9, 5);
+    c.strokeStyle = "rgba(0,0,0,.16)"; c.lineWidth = 1.5;
+    c.setLineDash([4, 4]);
+    c.beginPath(); c.moveTo(cx - 12, gy - 52); c.lineTo(cx + 40, gy - 56); c.stroke();
+    c.setLineDash([]);
+    c.restore(); return;
+  }
+
+  if (pose === "sujud") {
+    // shins flat, knees down, back sloping to the forehead on the mat
+    bone(cx - 30, gy - 4, cx - 6, gy - 4, 11, legc);
+    bone(cx - 8, gy - 6, cx - 2, gy - 26, 12, legc);
+    bone(cx - 2, gy - 26, cx + 26, gy - 12, 21, cloth);
+    head(cx + 38, gy - 11, 12, 1);
+    bone(cx + 14, gy - 22, cx + 26, gy - 5, 7, arm);
+    c.fillStyle = skin;
+    c.beginPath(); c.ellipse(cx + 29, gy - 3, 7, 3.4, 0, 0, Math.PI * 2); c.fill();
+    // the seven places, marked where they touch
+    c.fillStyle = "rgba(224,165,60,.9)";
+    [[cx + 45, gy - 1], [cx + 30, gy - 1], [cx - 5, gy - 1], [cx - 30, gy - 1]]
+      .forEach(([x, y]) => { c.beginPath(); c.arc(x, y, 2.6, 0, Math.PI * 2); c.fill(); });
+    c.restore(); return;
+  }
+
+  if (pose === "jalsa" || pose === "tashahhud") {
+    bone(cx - 16, gy - 5, cx + 16, gy - 5, 12, legc);   // sitting back on the heels
+    bone(cx + 1, gy - 10, cx, gy - 46, 21, cloth);
+    head(cx, gy - 59, 13, 0);
+    bone(cx - 11, gy - 42, cx - 14, gy - 16, 8, arm);
+    bone(cx + 11, gy - 42, cx + 15, gy - 16, 8, arm);
+    hand(cx - 15, gy - 13, 5); hand(cx + 16, gy - 13, 5);
+    if (pose === "tashahhud") {
+      c.strokeStyle = skin; c.lineWidth = 3.4; c.lineCap = "round";
+      c.beginPath(); c.moveTo(cx + 16, gy - 15); c.lineTo(cx + 18, gy - 27); c.stroke();
+      c.lineCap = "butt";
+      c.fillStyle = "rgba(224,165,60,.85)";
+      c.beginPath(); c.arc(cx + 18, gy - 30, 3, 0, Math.PI * 2); c.fill();
+    }
+    c.restore(); return;
+  }
+
+  if (pose === "salam") {
+    bone(cx - 16, gy - 5, cx + 16, gy - 5, 12, legc);
+    bone(cx + 1, gy - 10, cx, gy - 46, 21, cloth);
+    head(cx + 13, gy - 58, 13, 1);                      // clearly turned to the right
+    bone(cx - 11, gy - 42, cx - 14, gy - 16, 8, arm);
+    bone(cx + 11, gy - 42, cx + 15, gy - 16, 8, arm);
+    hand(cx - 15, gy - 13, 5); hand(cx + 16, gy - 13, 5);
+    c.strokeStyle = "rgba(63,125,110,.55)"; c.lineWidth = 2.4;
+    c.beginPath(); c.arc(cx, gy - 58, 30, -0.9, 0.15); c.stroke();
+    c.beginPath();
+    c.moveTo(cx + 29, gy - 60); c.lineTo(cx + 33, gy - 54); c.lineTo(cx + 26, gy - 52);
+    c.closePath(); c.fillStyle = "rgba(63,125,110,.55)"; c.fill();
+    c.restore(); return;
+  }
+
+  bone(cx, gy, cx, gy - 40, 12, legc);
+  bone(cx, gy - 38, cx, gy - 76, 21, cloth);
+  head(cx, gy - 89, 13, 0);
+  c.restore();
+}
+
+/* a toothbrush and a miswak stick, for the teeth steps */
+function prBrushFigure(c, S, which) {
+  const cx = S / 2, cy = S / 2;
+  c.clearRect(0, 0, S, S);
+  if (which === "miswak") {
+    c.save(); c.translate(cx, cy); c.rotate(-0.5);
+    c.fillStyle = "#a9814c";
+    c.beginPath();
+    (c.roundRect ? c.roundRect(-8, -46, 16, 92, 8) : c.rect(-8, -46, 16, 92));
+    c.fill();
+    c.fillStyle = "#8a6435";
+    for (let i = 0; i < 5; i++) c.fillRect(-8, -30 + i * 16, 16, 2);
+    c.strokeStyle = "#e6d7bd"; c.lineWidth = 2.4; c.lineCap = "round";
+    for (let i = 0; i < 7; i++) {
+      const x = -7 + i * 2.4;
+      c.beginPath(); c.moveTo(x, -44); c.lineTo(x + (i - 3) * 0.8, -56); c.stroke();
+    }
+    c.lineCap = "butt"; c.restore();
+    return;
+  }
+  c.save(); c.translate(cx, cy); c.rotate(-0.5);
+  c.fillStyle = "#3f7d6e";
+  c.beginPath();
+  (c.roundRect ? c.roundRect(-7, -20, 14, 74, 7) : c.rect(-7, -20, 14, 74));
+  c.fill();
+  c.fillStyle = "#f2f0e8";
+  c.beginPath();
+  (c.roundRect ? c.roundRect(-9, -48, 18, 30, 6) : c.rect(-9, -48, 18, 30));
+  c.fill();
+  c.strokeStyle = "#cfe0e4"; c.lineWidth = 2.6; c.lineCap = "round";
+  for (let r = 0; r < 3; r++) for (let k = 0; k < 3; k++) {
+    const x = -5 + k * 5, y = -44 + r * 9;
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - 5); c.stroke();
+  }
+  c.lineCap = "butt"; c.restore();
+}
+
+/* ---------- what there is to practise ---------- */
+
+const PR_TEACHER = "Teacher: please check the wording and the order against what you teach " +
+                   "before this is used in class.";
+
+const PRACTICE = {
+
+  wudu: {
+    em: "🚿", name: "Wudu", kind: "Practise",
+    room: { masjid: "wudu", school: "swudu", house: "toilet" },
+    coins: 10,
+    intro: "Do each step for real if you are at a tap, or with your hands in the air if you are not.",
+    note: "Schools differ a little on the head and the ears. " + PR_TEACHER,
+    steps: [
+      { t: "Begin", art: ["wash", "all"], count: 0,
+        b: "Make the intention in your heart — you do not say it out loud. Then say Bismillah.",
+        say: { ar: "بِسْمِ اللَّه", tr: "Bismillāh", en: "In the name of Allah.",
+               sr: "Sunan Abi Dawud" } },
+      { t: "Wash your hands", art: ["wash", "hands"], count: 3,
+        b: "Up to the wrists, right hand first, then the left. Between the fingers too." },
+      { t: "Rinse your mouth", art: ["wash", "mouth"], count: 3,
+        b: "Take water into your mouth with your right hand, swill it round, and spit it out." },
+      { t: "Clean your nose", art: ["wash", "nose"], count: 3,
+        b: "Sniff a little water up with your right hand and blow it out with your left." },
+      { t: "Wash your face", art: ["wash", "face"], count: 3,
+        b: "From where your hair starts down to under your chin, and from one ear to the other." },
+      { t: "Wash your arms", art: ["wash", "arms"], count: 3,
+        b: "Right arm to above the elbow three times, then the left arm three times." },
+      { t: "Wipe your head", art: ["wash", "head"], count: 1,
+        b: "Wet hands, wipe from the front of your head to the back, and back again. Once." },
+      { t: "Wipe your ears", art: ["wash", "ears"], count: 1,
+        b: "Index fingers inside, thumbs behind. Same water — you do not wet your hands again." },
+      { t: "Wash your feet", art: ["wash", "feet"], count: 3,
+        b: "Right foot to above the ankle three times, then the left. Between the toes too." },
+      { t: "Say the dua", art: ["wash", "all"], count: 0, dua: "wuduAfter",
+        b: "Wudu is finished. Say the dua that comes after it." },
+    ],
+  },
+
+  miswak: {
+    em: "🪥", name: "Clean your teeth", kind: "Practise",
+    room: { masjid: "wudu", school: "swudu", house: "toilet" },
+    coins: 6,
+    intro: "A miswak or a toothbrush — both count. The Prophet ﷺ used the miswak before every prayer.",
+    note: PR_TEACHER,
+    steps: [
+      { t: "Bismillah", art: ["brush", "miswak"], count: 0,
+        b: "Say Bismillah, and take the miswak or brush in your right hand.",
+        say: { ar: "بِسْمِ اللَّه", tr: "Bismillāh", en: "In the name of Allah.",
+               sr: "Sunan Abi Dawud" } },
+      { t: "The right side first", art: ["brush", "brush"], count: 3,
+        b: "Brush the top and bottom on the right side of your mouth, gently, up and down." },
+      { t: "Then the left", art: ["brush", "brush"], count: 3,
+        b: "The same on the left side. Small circles at the gums — never scrub hard." },
+      { t: "The gums and the tongue", art: ["brush", "brush"], count: 1,
+        b: "Along the gum line, then a light brush over your tongue." },
+      { t: "Rinse", art: ["wash", "mouth"], count: 1,
+        b: "Rinse your mouth out with clean water. Done — clean teeth, and a sunnah kept." },
+    ],
+  },
+
+  salah: {
+    em: "🕌", name: "How to pray", kind: "Learn and practise",
+    room: { masjid: "musalla", school: "class1", house: "prayer" },
+    coins: 14,
+    intro: "Two rak'ah, the way Fajr is prayed. Follow it through once — then do it for real.",
+    note: "Al-Fatihah, the opening supplication and the tashahhud are not printed here — " +
+          "they are long, and they belong in your Qaida and with your teacher. " + PR_TEACHER,
+    steps: [
+      { t: "Stand and face the qiblah", art: ["pray", "stand"], count: 0,
+        b: "Feet a little apart, eyes at the place where you will put your head. " +
+           "Make the intention in your heart for the prayer you are praying." },
+      { t: "Takbiratul-ihram", art: ["pray", "takbir"], count: 1,
+        b: "Raise your hands and say the takbir. From now until the salam you are in the prayer.",
+        say: { ar: "اللهُ أَكْبَر", tr: "Allāhu akbar", en: "Allah is the greatest.",
+               sr: "Sahih al-Bukhari" } },
+      { t: "Qiyam — standing", art: ["pray", "qiyam"], count: 0,
+        b: "Fold your hands. Say the opening supplication your teacher taught you, then " +
+           "recite Surat al-Fatihah, and after it a short surah." },
+      { t: "Ruku — bowing", art: ["pray", "ruku"], count: 3,
+        b: "Say Allahu akbar and bow, back flat, hands on your knees. Say this three times.",
+        say: { ar: "سُبْحَانَ رَبِّيَ الْعَظِيم", tr: "Subḥāna Rabbiyal-'Aẓīm",
+               en: "Glory to my Lord, the Most Great.", sr: "Sunan Abi Dawud" } },
+      { t: "Stand up again", art: ["pray", "itidal"], count: 1,
+        b: "Come up straight, and say:",
+        say: { ar: "سَمِعَ اللهُ لِمَنْ حَمِدَه · رَبَّنَا لَكَ الْحَمْد",
+               tr: "Sami'a-llāhu liman ḥamidah · Rabbanā laka-l-ḥamd",
+               en: "Allah hears the one who praises Him · Our Lord, all praise is Yours.",
+               sr: "Sahih al-Bukhari" } },
+      { t: "Sujud — prostration", art: ["pray", "sujud"], count: 3,
+        b: "Say Allahu akbar and go down. Seven parts touch the ground: forehead and nose, " +
+           "both hands, both knees, the toes of both feet. Say this three times.",
+        say: { ar: "سُبْحَانَ رَبِّيَ الأَعْلَى", tr: "Subḥāna Rabbiyal-A'lā",
+               en: "Glory to my Lord, the Most High.", sr: "Sunan Abi Dawud" } },
+      { t: "Sit up", art: ["pray", "jalsa"], count: 1,
+        b: "Say Allahu akbar and sit. Ask for forgiveness before you go down again.",
+        say: { ar: "رَبِّ اغْفِرْ لِي", tr: "Rabbighfir lī", en: "My Lord, forgive me.",
+               sr: "Sunan Ibn Majah" } },
+      { t: "Sujud a second time", art: ["pray", "sujud"], count: 3,
+        b: "Down again, the same as before. That is one rak'ah finished." },
+      { t: "Stand for the second rak'ah", art: ["pray", "qiyam"], count: 0,
+        b: "Say Allahu akbar and stand. Recite al-Fatihah and a surah, then ruku and " +
+           "the two sujud again, exactly as you have just done." },
+      { t: "Sit for at-tahiyyat", art: ["pray", "tashahhud"], count: 0,
+        b: "After the second sujud of the second rak'ah, stay sitting. Say at-tahiyyat, " +
+           "then the durud on the Prophet ﷺ, then a dua of your own." },
+      { t: "Salam", art: ["pray", "salam"], count: 2,
+        b: "Turn your head to the right and say it, then to the left and say it again. " +
+           "The prayer is finished.",
+        say: { ar: "السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ الله",
+               tr: "As-salāmu 'alaykum wa raḥmatullāh",
+               en: "Peace be upon you, and the mercy of Allah.", sr: "Sunan Abi Dawud" } },
+    ],
+  },
+};
+
+/* ---------- running one ---------- */
+
+let PR = null;
+
+function prRoomFor(id) {
+  const p = PRACTICE[id];
+  const kind = Garden.planKind || Garden.inside || "house";
+  return (p && p.room[kind]) || null;
+}
+
+function practiceOpen(id) {
+  const p = PRACTICE[id];
+  if (!p) return;
+  PR = { id, i: 0, done: 0 };
+  prRender();
+  Snd.page();
+}
+
+function prClose() {
+  PR = null;
+  document.querySelectorAll(".pr-veil").forEach(v => v.remove());
+  Snd.back();
+  render();
+}
+
+function prTap() {
+  if (!PR) return;
+  const st = PRACTICE[PR.id].steps[PR.i];
+  if (PR.done >= (st.count || 0)) return;
+  PR.done++;
+  Snd.pop();
+  prRender();
+}
+
+function prNext() {
+  if (!PR) return;
+  const p = PRACTICE[PR.id], st = p.steps[PR.i];
+  if (PR.done < (st.count || 0)) { Snd.wrong(); return; }
+  if (st.dua && typeof DUAS !== "undefined" && DUAS[st.dua]) {
+    const veil = document.querySelector(".pr-veil");
+    if (veil) veil.style.display = "none";
+    duaAsk(st.dua, () => { const v = document.querySelector(".pr-veil");
+                           if (v) v.style.display = ""; prFinish(); });
+    return;
+  }
+  if (PR.i >= p.steps.length - 1) { prFinish(); return; }
+  PR.i++; PR.done = 0;
+  Snd.soft();
+  prRender();
+}
+
+function prBack() {
+  if (!PR || PR.i === 0) return;
+  PR.i--; PR.done = 0; Snd.back(); prRender();
+}
+
+function prFinish() {
+  const p = PRACTICE[PR.id], id = PR.id;
+  const g = gState();
+  g.ibadah = g.ibadah || {};
+  const today = (typeof duaToday === "function") ? duaToday() : new Date().toDateString();
+  const rec = g.ibadah[id] || { count: 0, last: "" };
+  rec.count++;
+  const first = rec.last !== today;
+  rec.last = today;
+  g.ibadah[id] = rec;
+  if (id === "wudu") g.wuduOn = today;       // so the prayer hall can say "you have wudu"
+  const coins = first ? p.coins : Math.max(2, Math.round(p.coins / 3));
+  g.deeds += coins;
+  llSave();
+  PR = null;
+  document.querySelectorAll(".pr-veil").forEach(v => v.remove());
+  Snd.win(); confetti(18);
+  toast(p.name + " — well done. +" + coins + " coins" + (first ? " (first time today)" : ""));
+  render();
+}
+
+function prRender() {
+  if (!PR) return;
+  const p = PRACTICE[PR.id], st = p.steps[PR.i];
+  let el = document.querySelector(".pr-veil");
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "dua-veil pr-veil";
+    document.body.appendChild(el);
+  }
+  const need = st.count || 0;
+  const ready = PR.done >= need;
+  const last = PR.i >= p.steps.length - 1;
+  el.innerHTML = `<div class="dua-card pr-card" role="dialog" aria-modal="true">
+      <div class="pr-top">
+        <span class="pr-em">${p.em}</span>
+        <span><span class="pr-kind">${esc(p.kind)}</span><br>
+          <strong>${esc(p.name)}</strong></span>
+        <span style="margin-left:auto;font-size:12px;color:var(--muted)">
+          Step ${PR.i + 1} of ${p.steps.length}</span>
+      </div>
+      <div class="pr-dots">${p.steps.map((_, k) =>
+        `<i class="${k < PR.i ? "on" : k === PR.i ? "now" : ""}"></i>`).join("")}</div>
+      <div class="pr-body">
+        <div class="pr-art"><canvas id="prArt" width="128" height="128"></canvas></div>
+        <div class="pr-what">
+          <p class="pr-title">${esc(st.t)}</p>
+          <p class="pr-text">${esc(st.b)}</p>
+          ${st.say ? `<div class="pr-say">
+            <div class="ar">${esc(st.say.ar)}</div>
+            <div class="tr">${esc(st.say.tr)}</div>
+            <div class="en">${esc(st.say.en)}</div>
+            <div class="sr">${esc(st.say.sr)}</div></div>` : ""}
+          ${need ? `<div class="pr-count">
+            ${Array.from({ length: need }, (_, k) =>
+              `<b class="${k < PR.done ? "on" : ""}"></b>`).join("")}
+            <button class="btn${ready ? "" : " primary"}" onclick="prTap()"
+              ${ready ? "disabled" : ""}>${ready ? "Done ✓" : "I did it"}</button>
+            <span class="s" style="font-size:12px;color:var(--muted)">
+              ${need > 1 ? need + " times" : "once"}</span>
+          </div>` : ""}
+        </div>
+      </div>
+      <p class="pr-note">${esc(PR.i === 0 ? p.intro : p.note)}</p>
+      <div class="pr-btns">
+        <button class="btn" onclick="prClose()">Stop</button>
+        ${PR.i > 0 ? `<button class="btn" onclick="prBack()">Back</button>` : ""}
+        <button class="btn${ready ? " primary" : ""}" onclick="prNext()"
+          ${ready ? "" : "disabled"}>${last ? "Finish" : "Next"}</button>
+      </div>
+    </div>`;
+  const cv = el.querySelector("#prArt");
+  if (cv) {
+    const c = cv.getContext("2d");
+    const [kindArt, which] = st.art || ["wash", "all"];
+    if (kindArt === "pray") prPrayFigure(c, 128, which);
+    else if (kindArt === "brush") prBrushFigure(c, 128, which);
+    else prWashFigure(c, 128, which);
+  }
+}
+
+/* ---------- getting there ---------- */
+
+/* the three new verbs walk the child to the right room first, exactly
+   the way "study" and "wudu" already do */
+const planGoAndDoPractice = planGoAndDo;
+planGoAndDo = function (roomId, what) {
+  if (what === "learnwudu" || what === "learnbrush" || what === "learnpray") {
+    const id = what === "learnwudu" ? "wudu" : what === "learnbrush" ? "miswak" : "salah";
+    const g = gState(), r = planRoom(roomId);
+    if (!planHas(roomId)) {
+      toast("Build the " + r.name.toLowerCase() + " first — " + r.cost + " coins");
+      Snd.wrong(); return;
+    }
+    if (planRoomAt(g.child.pu, g.child.pv) === r) { practiceOpen(id); return; }
+    g.child.path = planRoute(g.child.pu, g.child.pv, r.u + r.w / 2, r.v + r.d / 2);
+    g.child.ptu = r.u + r.w / 2; g.child.ptv = r.v + r.d / 2;
+    Garden.planThen = { room: roomId, what };
+    Snd.step(); toast("Walking to the " + r.name.toLowerCase() + "…"); render();
+    return;
+  }
+  return planGoAndDoPractice.apply(this, arguments);
+};
+
+/* ---------- and offering it ---------- */
+
+const planDoCardPractice = planDoCard;
+planDoCard = function () {
+  let html = planDoCardPractice.apply(this, arguments);
+  const kind = Garden.planKind || Garden.inside;
+  const g = gState();
+  const today = (typeof duaToday === "function") ? duaToday() : new Date().toDateString();
+  const doneToday = (id) => ((g.ibadah || {})[id] || {}).last === today;
+
+  const row = (id, what) => {
+    const p = PRACTICE[id];
+    const roomId = prRoomFor(id);
+    if (!roomId || !planRoom(roomId)) return "";
+    const r = planRoom(roomId), have = planHas(roomId);
+    const did = doneToday(id);
+    return `<div class="room-buy${have ? " have" : ""}">
+      <span class="em">${p.em}</span>
+      <span class="t"><span class="n">${esc(p.name)}${did ? " ✓" : ""}</span>
+        <span class="s">${have
+          ? esc(did ? "done today — go again for a little" : "step by step, in the " +
+                r.name.toLowerCase())
+          : "needs the " + esc(r.name.toLowerCase()) + " — " + r.cost + " 🌱"}</span></span>
+      ${have ? `<button class="btn primary" onclick="planGoAndDo('${roomId}','${what}')">
+          ${did ? "Again" : "Start"}</button>`
+        : `<button class="btn" onclick="planBuy('${roomId}')">Build</button>`}
+    </div>`;
+  };
+
+  const card = `<div class="card" style="margin-bottom:12px">
+      <h3 class="card-title">Practise it properly</h3>
+      <p class="note" style="margin:-4px 0 10px">Walk to the room and go through it a step at a
+        time — the way you would really do it.</p>
+      ${row("wudu", "learnwudu")}
+      ${row("miswak", "learnbrush")}
+      ${row("salah", "learnpray")}
+    </div>`;
+
+  if (kind === "masjid" || kind === "school" || kind === "house") {
+    return card + html;
+  }
+  return html;
+};
+</script>

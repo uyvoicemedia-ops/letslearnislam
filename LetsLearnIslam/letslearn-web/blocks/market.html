@@ -1,0 +1,197 @@
+<!-- ============================================================
+     A market that actually trades
+     ------------------------------------------------------------
+     The stall and the shop were scenery you could buy and then walk
+     past forever. Now you stand next to one and it opens.
+
+     The temptation was to invent a second economy — crates of
+     apples, sacks of flour, a whole new set of goods with their own
+     prices. That would have been a lot of drawing for something
+     with nothing to spend the apples on. Instead the market trades
+     in what the garden already uses, and earns its place two ways:
+
+       * it STOCKS a handful of things each day at a discount, so
+         there is a reason to go and look;
+       * it BUYS BACK anything sitting in storage, which is the
+         first thing that has ever given storage a purpose.
+
+     Stock rotates on the date, seeded so everyone with the same
+     garden sees the same shelf all day rather than a new one every
+     time the panel repaints.
+     ============================================================ -->
+<style>
+  .mk-veil { position:fixed; inset:0; z-index:120; background:rgba(28,32,30,.45);
+             display:flex; align-items:center; justify-content:center; padding:20px;
+             animation:fadeIn .16s ease both; }
+  .mk-box { background:var(--card); border-radius:20px; width:min(520px,100%);
+            max-height:86vh; overflow:auto; padding:20px 22px 18px;
+            box-shadow:0 24px 70px rgba(0,0,0,.3); }
+  .mk-box h3 { margin:0 0 2px; font-size:17px; }
+  .mk-tabs { display:flex; gap:6px; margin:12px 0 14px; }
+  .mk-tabs button { flex:1; padding:9px; border-radius:11px; border:1.5px solid var(--line);
+                    background:var(--bg); font:inherit; font-size:13px; font-weight:800;
+                    cursor:pointer; color:inherit; }
+  .mk-tabs button[aria-pressed="true"] { background:var(--qaida-green); color:#fff;
+                                         border-color:var(--qaida-green); }
+  .mk-row { display:flex; align-items:center; gap:10px; padding:9px 0;
+            border-top:1px solid var(--line); }
+  .mk-row:first-of-type { border-top:0; }
+  .mk-row .em { font-size:20px; width:26px; text-align:center; flex:none; }
+  .mk-row .t { flex:1; min-width:0; }
+  .mk-row .n { font-size:13.5px; font-weight:800; display:block; }
+  .mk-row .s { font-size:11.5px; color:var(--muted); display:block; }
+  .mk-row .was { text-decoration:line-through; opacity:.6; margin-right:5px; }
+  .mk-empty { font-size:12.5px; color:var(--muted); padding:14px 0; }
+</style>
+<script>
+"use strict";
+
+const MARKET_KINDS = { stall: "Market stall", shop: "The little shop" };
+const MARKET_REACH = 1.05;
+const MK = { tab: "buy", at: null };
+
+/* Stable per-day shuffle: the same shelf all day, a different one
+   tomorrow. Nothing random per repaint, or the prices would dance
+   about while you were reading them. */
+function mkStock() {
+  const day = Math.floor(Date.now() / 86400000);
+  const pool = GARDEN_ITEMS.concat(TOYS).filter(x => x.cost > 0);
+  const picked = [];
+  const seen = {};
+  for (let i = 0; picked.length < 6 && i < 60; i++) {
+    const h = Math.sin((day + i * 7.13) * 12.9898) * 43758.5453;
+    const k = Math.floor((h - Math.floor(h)) * pool.length);
+    const it = pool[k];
+    if (!it || seen[it.id]) continue;
+    seen[it.id] = 1;
+    // a fifth off, rounded to something that looks like a price
+    picked.push({ def: it, price: Math.max(4, Math.round(it.cost * 0.8 / 2) * 2) });
+  }
+  return picked;
+}
+
+function marketNear() {
+  const g = gState(), ch = g.child;
+  if (Garden.inside || role !== "student" || !Number.isFinite(ch.u)) return null;
+  let best = null, bestD = MARKET_REACH;
+  (g.items || []).forEach((it, i) => {
+    if (!MARKET_KINDS[it.type]) return;
+    const d = Math.hypot(it.u - ch.u, it.v - ch.v);
+    if (d < bestD) { bestD = d; best = { i, it }; }
+  });
+  return best;
+}
+
+function marketOpen() {
+  const near = marketNear();
+  if (!near) { toast("Stand next to the market first"); return; }
+  MK.at = near.it.type; MK.tab = "buy";
+  Snd.page();
+  marketPaint();
+}
+
+function marketClose() { document.querySelectorAll(".mk-veil").forEach(v => v.remove()); }
+
+function marketPaint() {
+  marketClose();
+  const el = document.createElement("div");
+  el.className = "mk-veil";
+  el.onclick = (e) => { if (e.target === el) marketClose(); };
+  el.innerHTML = '<div class="mk-box">' + marketBody() + "</div>";
+  document.body.appendChild(el);
+}
+
+function marketBody() {
+  const g = gState();
+  const title = MARKET_KINDS[MK.at] || "The market";
+  const head = `<h3>${esc(title)}</h3>
+    <p class="note" style="margin:0">${g.deeds} coins in your pocket</p>
+    <div class="mk-tabs">
+      <button aria-pressed="${MK.tab === "buy"}" onclick="MK.tab='buy';marketPaint()">Buy</button>
+      <button aria-pressed="${MK.tab === "sell"}" onclick="MK.tab='sell';marketPaint()">Sell</button>
+    </div>`;
+
+  if (MK.tab === "buy") {
+    const stock = mkStock();
+    return head + stock.map(s => `<div class="mk-row">
+        <span class="em">${s.def.em || "📦"}</span>
+        <span class="t"><span class="n">${esc(s.def.name)}</span>
+          <span class="s">today's price</span></span>
+        <button class="btn ${g.deeds >= s.price ? "primary" : ""}"
+          ${g.deeds >= s.price ? "" : "disabled"}
+          onclick="marketBuy('${s.def.id}',${s.price})">
+          <span class="was">${s.def.cost}</span>${s.price} 🌱</button>
+      </div>`).join("")
+      + `<p class="note" style="margin:12px 0 0">A fifth off what the build list charges, and it
+         changes every day. What you buy goes straight into your storage.</p>`;
+  }
+
+  const store = storeList();
+  if (!store.length) return head + '<p class="mk-empty">Your storage is empty. Put something '
+    + 'away from the garden and the market will buy it.</p>';
+
+  return head + store.map((s, i) => {
+    const def = tierDefOf(s.type);
+    const lvl = Math.max(1, s.lvl || 1);
+    const worth = Math.max(1, Math.round(tierPaid(def, lvl) * 0.6));
+    return `<div class="mk-row">
+        <span class="em">${def.em || "📦"}</span>
+        <span class="t"><span class="n">${esc(def.name)}</span>
+          <span class="s">${esc(itemTierName(lvl))}</span></span>
+        <button class="btn" onclick="marketSell(${i})">Sell for ${worth} 🌱</button>
+      </div>`;
+  }).join("")
+    + `<p class="note" style="margin:12px 0 0">The market pays more than scrapping something in
+       the garden — sixty per cent of everything that went into it, against a half.</p>`;
+}
+
+function marketBuy(id, price) {
+  const g = gState();
+  if (g.deeds < price) { toast("Not enough coins"); Snd.wrong(); return; }
+  g.deeds -= price;
+  storeList().push({ type: id, lvl: 1 });
+  llSave(); Snd.coin();
+  toast(tierDefOf(id).name + " — it is in your storage");
+  marketPaint(); render();
+}
+
+function marketSell(i) {
+  const g = gState(), store = storeList();
+  const s = store[i];
+  if (!s) return;
+  const def = tierDefOf(s.type), lvl = Math.max(1, s.lvl || 1);
+  const worth = Math.max(1, Math.round(tierPaid(def, lvl) * 0.6));
+  store.splice(i, 1);
+  g.deeds += worth;
+  llSave(); Snd.coin();
+  toast("Sold " + def.name.toLowerCase() + " for " + worth);
+  marketPaint(); render();
+}
+
+/* ---------- the button, same shape as playing on a toy ---------- */
+
+const pageGardenMarket = pageGarden;
+pageGarden = function () {
+  let html = pageGardenMarket();
+  if (role !== "student" || Garden.inside || Garden.ride) return html;
+  const near = marketNear();
+  if (!near) return html;
+  return html.replace('<canvas id="gCanvas"></canvas>',
+    `<canvas id="gCanvas"></canvas>
+     <button class="play-btn" onclick="marketOpen()">
+       Go into ${esc(MARKET_KINDS[near.it.type].toLowerCase())}</button>`);
+};
+PAGES.garden = pageGarden;
+
+/* nudge the panel when the market comes into or goes out of reach */
+const isoFrameMarket = isoFrame;
+isoFrame = function (c, W, H, t) {
+  isoFrameMarket(c, W, H, t);
+  if (role !== "student" || Garden.inside) return;
+  const near = marketNear();
+  const key = near ? "mk" + near.i : "";
+  if (key !== Garden._mkKey) { Garden._mkKey = key; setTimeout(render, 0); }
+};
+
+render();
+</script>

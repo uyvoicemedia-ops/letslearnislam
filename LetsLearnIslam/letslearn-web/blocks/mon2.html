@@ -1,0 +1,272 @@
+<!-- ============================================================
+     MON2 — more creatures, and more ways to be one
+     ------------------------------------------------------------
+     Twelve was thin for a class of twenty-five: in a big room several
+     children ended up as the same creature, which is exactly the thing
+     the monsters were meant to fix.
+
+     Thirty now, and the new ones are not recolours. The drawing gained
+     four traits — a body SHAPE, four more head pieces, three more
+     markings, a tooth and a tail — so two creatures of the same colour
+     still read as different animals from across a classroom.
+
+     APPEND ONLY. A child's choice is stored as an INDEX, in
+     localStorage and in profiles.avatar.monster, so inserting or
+     reordering anything above id 11 would silently turn somebody
+     else's creature into a stranger's.
+
+     The first twelve are untouched and must stay that way: every
+     default below reproduces the original drawing exactly.
+     ============================================================ -->
+<style>
+/* thirty of them will not fit in a dialog without this */
+.qz-mongrid, .lla-mongrid { max-height: 232px; overflow-y: auto; padding: 2px; }
+</style>
+<script>
+"use strict";
+
+MONSTERS.push(
+  { id:12, name:"Ember",  c:"#e2664a", horn:"antenna", eyes:2, spot:"patch",  arms:2, shape:"tall" },
+  { id:13, name:"Nabeel", c:"#4f8fd0", horn:"ears",    eyes:2, spot:"none",   arms:2, shape:"wide", tooth:true },
+  { id:14, name:"Zest",   c:"#f2b63c", horn:"tuft",    eyes:2, spot:"star",   arms:1, shape:"egg" },
+  { id:15, name:"Moss",   c:"#5f9e6b", horn:"curl",    eyes:2, spot:"swirl",  arms:2, shape:"wide" },
+  { id:16, name:"Pearl",  c:"#d9a7c8", horn:"antenna", eyes:3, spot:"dots",   arms:1, shape:"egg" },
+  { id:17, name:"Bolt",   c:"#f0d24a", horn:"spike",   eyes:1, spot:"stripe", arms:2, shape:"tall", tail:true },
+  { id:18, name:"Coco",   c:"#a9744f", horn:"ears",    eyes:2, spot:"patch",  arms:1, shape:"blob" },
+  { id:19, name:"Sana",   c:"#66c9b5", horn:"tuft",    eyes:2, spot:"none",   arms:2, shape:"tall" },
+  { id:20, name:"Rumi",   c:"#8b7ee0", horn:"curl",    eyes:2, spot:"star",   arms:1, shape:"blob", tooth:true },
+  { id:21, name:"Fig",    c:"#c05a86", horn:"none",    eyes:3, spot:"swirl",  arms:2, shape:"wide" },
+  { id:22, name:"Wisp",   c:"#9fd3ea", horn:"antenna", eyes:1, spot:"none",   arms:1, shape:"tall", tail:true },
+  { id:23, name:"Doda",   c:"#e79a5e", horn:"round",   eyes:2, spot:"swirl",  arms:2, shape:"egg" },
+  { id:24, name:"Kip",    c:"#7bbf4a", horn:"ears",    eyes:3, spot:"stripe", arms:1, shape:"blob", tooth:true },
+  { id:25, name:"Luma",   c:"#b8b0e8", horn:"tuft",    eyes:2, spot:"dots",   arms:2, shape:"egg" },
+  { id:26, name:"Tariq",  c:"#3f9e8f", horn:"curl",    eyes:2, spot:"patch",  arms:2, shape:"tall" },
+  { id:27, name:"Pom",    c:"#f4a0a8", horn:"round",   eyes:2, spot:"star",   arms:1, shape:"wide", tail:true },
+  { id:28, name:"Basil",  c:"#87a94f", horn:"leaf",    eyes:2, spot:"swirl",  arms:2, shape:"egg" },
+  { id:29, name:"Nur",    c:"#f7cf6a", horn:"antenna", eyes:2, spot:"star",   arms:2, shape:"blob", tooth:true },
+);
+
+/* Body shapes. "blob" is the original 30×30 and every monster from the
+   first twelve falls through to it, so their drawing does not move by
+   a pixel. */
+const MON_SHAPE = {
+  blob: { rx:30, ry:30, foot:13, eye:-6, mouth:11 },
+  tall: { rx:25, ry:35, foot:11, eye:-9, mouth:9  },
+  wide: { rx:34, ry:25, foot:16, eye:-3, mouth:13 },
+  egg:  { rx:27, ry:33, foot:12, eye:-7, mouth:10 },
+};
+
+function monShape(m) { return MON_SHAPE[m.shape] || MON_SHAPE.blob; }
+
+qzDrawMonster = function (c, S, idx, mood) {
+  const m = monOf(idx);
+  const sh = monShape(m);
+  const k = S / 100;
+  c.save(); c.scale(k, k);
+  const body = m.c;
+  const dark = mqShade(body, 0.78), light = mqShade(body, 1.14);
+  const cx = 50, cy = 56, rx = sh.rx, ry = sh.ry;
+  /* Two different tops, and they are four pixels apart on purpose: the
+     body's own apex, and where the head pieces sit. Collapsing them
+     into one moved every horn on the first twelve monsters. */
+  const apex = cy - ry - 6;
+  const top  = cy - ry - 10;
+
+  c.fillStyle = "rgba(30,40,35,.12)";
+  c.beginPath(); c.ellipse(cx, 90, rx * 0.8, 6, 0, 0, Math.PI * 2); c.fill();
+
+  // a tail, behind everything
+  if (m.tail) {
+    c.strokeStyle = dark; c.lineWidth = 5; c.lineCap = "round";
+    c.beginPath();
+    c.moveTo(cx + rx - 5, cy + 14);
+    c.quadraticCurveTo(cx + rx + 13, cy + 20, cx + rx + 9, cy + 33);
+    c.stroke();
+    c.fillStyle = dark;
+    c.beginPath(); c.arc(cx + rx + 9, cy + 34, 4.5, 0, Math.PI * 2); c.fill();
+    c.lineCap = "butt";
+  }
+
+  c.fillStyle = dark;
+  [-sh.foot, sh.foot].forEach(o => {
+    c.beginPath(); c.ellipse(cx + o, 85, 9, 6, 0, 0, Math.PI * 2); c.fill();
+  });
+
+  /* ---------- what is on top ---------- */
+  if (m.horn === "round") {
+    c.fillStyle = dark;
+    [-17, 17].forEach(o => { c.beginPath(); c.arc(cx + o, top + 10, 7, 0, Math.PI * 2); c.fill(); });
+  } else if (m.horn === "spike") {
+    c.fillStyle = dark;
+    [-15, 15].forEach(o => {
+      c.beginPath();
+      c.moveTo(cx + o - 7, top + 18); c.lineTo(cx + o, top - 4); c.lineTo(cx + o + 7, top + 18);
+      c.closePath(); c.fill();
+    });
+  } else if (m.horn === "leaf") {
+    c.fillStyle = "#5aa864";
+    c.beginPath(); c.ellipse(cx + 8, top + 6, 12, 6, -0.5, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = "#3f7d52"; c.lineWidth = 2.4;
+    c.beginPath(); c.moveTo(cx, top + 18); c.lineTo(cx + 4, top + 8); c.stroke();
+  } else if (m.horn === "antenna") {
+    c.strokeStyle = dark; c.lineWidth = 3; c.lineCap = "round";
+    [[-9, -13], [9, 13]].forEach(([bx, tx]) => {
+      c.beginPath();
+      c.moveTo(cx + bx, top + 16);
+      c.quadraticCurveTo(cx + tx, top + 6, cx + tx, top - 4);
+      c.stroke();
+    });
+    c.lineCap = "butt";
+    c.fillStyle = light;
+    [-13, 13].forEach(o => { c.beginPath(); c.arc(cx + o, top - 6, 5, 0, Math.PI * 2); c.fill(); });
+  } else if (m.horn === "ears") {
+    // big round ears at the sides, with a warmer inner
+    [-1, 1].forEach(s => {
+      c.fillStyle = dark;
+      c.beginPath(); c.ellipse(cx + s * (rx - 2), cy - 14, 11, 13, s * 0.3, 0, Math.PI * 2); c.fill();
+      c.fillStyle = mqShade(body, 1.2);
+      c.beginPath(); c.ellipse(cx + s * (rx - 2), cy - 14, 5.5, 7, s * 0.3, 0, Math.PI * 2); c.fill();
+    });
+  } else if (m.horn === "tuft") {
+    c.strokeStyle = dark; c.lineWidth = 4; c.lineCap = "round";
+    [[-8, -12], [0, 0], [8, 12]].forEach(([bx, tx]) => {
+      c.beginPath();
+      c.moveTo(cx + bx, top + 14);
+      c.quadraticCurveTo(cx + tx, top + 2, cx + tx * 1.3, top - 5);
+      c.stroke();
+    });
+    c.lineCap = "butt";
+  } else if (m.horn === "curl") {
+    c.strokeStyle = dark; c.lineWidth = 5; c.lineCap = "round";
+    [-1, 1].forEach(s => {
+      c.beginPath();
+      c.moveTo(cx + s * 12, top + 16);
+      c.bezierCurveTo(cx + s * 26, top + 12, cx + s * 26, top - 4, cx + s * 12, top - 2);
+      c.stroke();
+    });
+    c.lineCap = "butt";
+  }
+
+  /* ---------- the body ---------- */
+  const g = c.createLinearGradient(cx - rx, cy - ry, cx + rx, cy + ry);
+  g.addColorStop(0, light); g.addColorStop(1, body);
+  c.fillStyle = g;
+  c.beginPath();
+  c.moveTo(cx - rx, cy + 8);
+  c.bezierCurveTo(cx - rx - 3, cy - 24, cx - rx * 0.6, apex, cx, apex);
+  c.bezierCurveTo(cx + rx * 0.6, apex, cx + rx + 3, cy - 24, cx + rx, cy + 8);
+  c.bezierCurveTo(cx + rx, cy + 30, cx + rx * 0.53, cy + 34, cx, cy + 34);
+  c.bezierCurveTo(cx - rx * 0.53, cy + 34, cx - rx, cy + 30, cx - rx, cy + 8);
+  c.closePath(); c.fill();
+
+  /* ---------- markings ---------- */
+  c.save();
+  c.beginPath();
+  c.ellipse(cx, cy + 2, rx - 1, ry + 2, 0, 0, Math.PI * 2);
+  c.clip();
+  const mark = mqShade(body, 0.86);
+  if (m.spot === "dots") {
+    c.fillStyle = mark;
+    [[-16, 18, 5], [12, 24, 6], [20, 6, 4], [-8, 30, 4]].forEach(([ox, oy, r]) => {
+      c.beginPath(); c.arc(cx + ox, cy + oy - 10, r, 0, Math.PI * 2); c.fill();
+    });
+  } else if (m.spot === "stripe") {
+    c.fillStyle = mark;
+    [22, 32].forEach(oy => c.fillRect(cx - rx, cy + oy - 12, rx * 2, 5));
+  } else if (m.spot === "star") {
+    c.fillStyle = mark;
+    [[-15, 22, 6], [14, 26, 5], [2, 34, 4]].forEach(([ox, oy, r]) => {
+      c.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+        const rr = i % 2 ? r * 0.45 : r;
+        c[i ? "lineTo" : "moveTo"](cx + ox + Math.cos(a) * rr, cy + oy - 10 + Math.sin(a) * rr);
+      }
+      c.closePath(); c.fill();
+    });
+  } else if (m.spot === "swirl") {
+    c.strokeStyle = mark; c.lineWidth = 3.5; c.lineCap = "round";
+    [[-14, 20], [13, 26]].forEach(([ox, oy]) => {
+      c.beginPath();
+      for (let i = 0; i <= 22; i++) {
+        const a = i * 0.42, r = 1.2 + i * 0.42;
+        const x = cx + ox + Math.cos(a) * r, y = cy + oy - 10 + Math.sin(a) * r;
+        c[i ? "lineTo" : "moveTo"](x, y);
+      }
+      c.stroke();
+    });
+    c.lineCap = "butt";
+  }
+  c.fillStyle = "rgba(255,255,255,.4)";
+  c.beginPath(); c.ellipse(cx, cy + 20, rx * 0.57, 13, 0, 0, Math.PI * 2); c.fill();
+  if (m.spot === "patch") {
+    /* one bold blotch over an eye, and it goes on AFTER the pale belly.
+       Painted with the others it came out a smudge. */
+    c.fillStyle = mqShade(body, 0.72);
+    c.beginPath();
+    c.ellipse(cx - 13, cy + sh.eye - 1, 15, 14, -0.25, 0, Math.PI * 2); c.fill();
+  }
+  c.restore();
+
+  /* ---------- arms ---------- */
+  c.strokeStyle = dark; c.lineWidth = 6; c.lineCap = "round";
+  if (m.arms >= 1) { c.beginPath(); c.moveTo(cx - rx + 2, cy + 4); c.lineTo(cx - rx - 8, cy - 4); c.stroke(); }
+  if (m.arms >= 2) { c.beginPath(); c.moveTo(cx + rx - 2, cy + 4); c.lineTo(cx + rx + 8, cy - 4); c.stroke(); }
+  c.lineCap = "butt";
+
+  /* Eyes and a mouth. These are imaginary creatures, not people — the
+     faceless rule is about depicting human beings. */
+  const eyeY = cy + sh.eye;
+  const spread = m.eyes === 1 ? [0] : m.eyes === 2 ? [-11, 11] : [-15, 0, 15];
+  const shut = mood === "sad";
+  spread.forEach(ox => {
+    c.fillStyle = "#fdfbf6";
+    c.beginPath(); c.ellipse(cx + ox, eyeY, m.eyes === 3 ? 6.5 : 8.5, 9, 0, 0, Math.PI * 2); c.fill();
+    if (shut) {
+      c.strokeStyle = "#3a3733"; c.lineWidth = 2.4; c.lineCap = "round";
+      c.beginPath(); c.arc(cx + ox, eyeY + 3, 6, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
+      c.lineCap = "butt";
+      return;
+    }
+    const look = mood === "win" ? -2.5 : 0;
+    c.fillStyle = "#3a3733";
+    c.beginPath(); c.arc(cx + ox + 1, eyeY + look, m.eyes === 3 ? 3 : 4, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "rgba(255,255,255,.9)";
+    c.beginPath(); c.arc(cx + ox + 2.5, eyeY + look - 2, 1.5, 0, Math.PI * 2); c.fill();
+  });
+
+  const mY = cy + sh.mouth;
+  c.strokeStyle = "#3a3733"; c.lineWidth = 2.6; c.lineCap = "round";
+  c.beginPath();
+  if (mood === "sad") c.arc(cx, mY + 9, 7, Math.PI * 1.15, Math.PI * 1.85);
+  else if (mood === "win") c.arc(cx, mY - 1, 9, 0.15, Math.PI - 0.15);
+  else c.arc(cx, mY, 7, 0.25, Math.PI - 0.25);
+  c.stroke();
+  c.lineCap = "butt";
+
+  if (m.tooth && mood !== "sad") {          // one little tooth, top left of the smile
+    c.fillStyle = "#fdfbf6";
+    const ty = mood === "win" ? mY + 7 : mY + 5;
+    c.beginPath();
+    c.moveTo(cx - 5, ty - 1); c.lineTo(cx - 1, ty - 1); c.lineTo(cx - 3, ty + 4);
+    c.closePath(); c.fill();
+  }
+
+  if (mood === "win") {
+    c.fillStyle = "#f6d64a";
+    [[18, -22, 4], [-22, -14, 3], [26, 4, 2.5]].forEach(([ox, oy, r]) => {
+      c.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+        const rr = i % 2 ? r * 0.4 : r;
+        c[i ? "lineTo" : "moveTo"](cx + ox + Math.cos(a) * rr, cy + oy + Math.sin(a) * rr);
+      }
+      c.closePath(); c.fill();
+    });
+  }
+  c.restore();
+};
+
+/* the old drawings are cached by index — throw them away */
+if (typeof MON_CACHE !== "undefined" && MON_CACHE.clear) MON_CACHE.clear();
+</script>

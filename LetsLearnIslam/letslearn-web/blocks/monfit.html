@@ -1,0 +1,90 @@
+<!-- ============================================================
+     No hands, and the whole head in the frame
+     ------------------------------------------------------------
+     Two things Yusuf asked for, and neither is a redraw:
+
+     1. NO ARMS. Every version of the monster gates its arms on
+        `m.arms >= 1`, so setting `arms` to 0 on the catalogue
+        takes them off whichever drawing function happens to be
+        last. The stickers he sent are heads — so these are heads.
+
+     2. NOTHING CLIPPED. Horns, ears, antennae and tufts are drawn
+        above the body at fixed offsets, and on the taller shapes
+        the tips ran past the top of the 100x100 box and came out
+        with a slice missing. Rather than nudging thirty sets of
+        coordinates — and having the next horn shape break it
+        again — the creature is MEASURED and then fitted.
+
+        Each monster is drawn once into an oversized canvas, all
+        three moods on top of each other, and the pixels are read
+        back to find what it actually covers. That box is then
+        scaled and centred into the real one with a little air
+        round it. Any horn added later fits automatically.
+
+        The faint ground shadow is ignored when measuring — it is
+        wider than the creature and would shrink the head for
+        nothing — hence the alpha threshold rather than "any pixel".
+     ============================================================ -->
+<script>
+"use strict";
+
+/* 1. no hands */
+if (typeof MONSTERS !== "undefined") MONSTERS.forEach(m => { m.arms = 0; });
+
+/* 2. fit the whole creature in the frame */
+const monFitRaw = qzDrawMonster;
+const MON_FIT = new Map();
+const MON_FIT_PAD = 44;        // room for anything that overflows while measuring
+const MON_FIT_AIR = 3;         // and a little air inside the finished box
+
+function monFitBox(idx) {
+  if (MON_FIT.has(idx)) return MON_FIT.get(idx);
+  let box = null;
+  try {
+    const N = 100 + MON_FIT_PAD * 2;
+    const cv = document.createElement("canvas");
+    cv.width = N; cv.height = N;
+    const c = cv.getContext("2d");
+    /* all three moods at once: win adds sparkles, sad closes the eyes,
+       and the box has to hold whichever one is asked for later */
+    ["idle", "win", "sad"].forEach(mood => {
+      c.save(); c.translate(MON_FIT_PAD, MON_FIT_PAD);
+      monFitRaw(c, 100, idx, mood);
+      c.restore();
+    });
+    const d = c.getImageData(0, 0, N, N).data;
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        if (d[(y * N + x) * 4 + 3] > 60) {       // solid ink, not the shadow
+          if (x < x0) x0 = x; if (x > x1) x1 = x;
+          if (y < y0) y0 = y; if (y > y1) y1 = y;
+        }
+      }
+    }
+    if (x1 > x0 && y1 > y0)
+      box = { x0: x0 - MON_FIT_PAD, y0: y0 - MON_FIT_PAD,
+              x1: x1 - MON_FIT_PAD, y1: y1 - MON_FIT_PAD };
+  } catch (e) { box = null; }     // a canvas we cannot read: draw as before
+  MON_FIT.set(idx, box);
+  return box;
+}
+
+qzDrawMonster = function (c, S, idx, mood) {
+  const b = monFitBox(idx);
+  if (!b) return monFitRaw(c, S, idx, mood);
+  const w = b.x1 - b.x0, h = b.y1 - b.y0;
+  const room = 100 - MON_FIT_AIR * 2;
+  const s = Math.min(room / w, room / h, 1.35);
+  const k = S / 100;
+  c.save();
+  c.scale(k, k);
+  c.translate(50 - ((b.x0 + b.x1) / 2) * s, 50 - ((b.y0 + b.y1) / 2) * s);
+  c.scale(s, s);
+  monFitRaw(c, 100, idx, mood);
+  c.restore();
+};
+
+/* every cached picture was drawn with arms and a clipped horn */
+if (typeof MON_CACHE !== "undefined" && MON_CACHE.clear) MON_CACHE.clear();
+</script>

@@ -1,0 +1,380 @@
+<!-- ============================================================
+     QZAUTHOR — teachers write their own, and the school can see
+     ------------------------------------------------------------
+     Two things that belong together because they share one store.
+
+     A teacher builds a set on screen — title, then a card per
+     question with four answers and a tick on the right one. It is
+     saved and from then on it sits in the picker beside the
+     built-in sets and plays identically.
+
+     Every finished game writes one line to a log: which set, who
+     hosted it, when, how many played, and what they scored. The
+     admin report reads that log — sets by author, times played,
+     and who has actually been playing.
+
+     Both live in localStorage for now (ll.qz.mine.v1 and
+     ll.qz.log.v1) and both are shaped like the `quiz_sets` and
+     `quiz_rooms` tables in 0001, so moving them to the project is
+     a straight lift rather than a rewrite.
+     ============================================================ -->
+<style>
+.qa-veil { position:fixed; inset:0; z-index:890; background:rgba(30,25,15,.42);
+  display:flex; align-items:flex-start; justify-content:center; padding:18px; overflow:auto; }
+.qa-box { background:var(--card); border-radius:20px; padding:18px 20px 22px;
+  width:min(820px,100%); box-shadow:0 22px 56px rgba(30,20,5,.28); }
+.qa-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+.qa-head h2 { margin:0; font-size:22px; flex:1; }
+.qa-q { border:1px solid var(--line); border-radius:16px; padding:14px; margin-bottom:12px; }
+.qa-q .qa-n { font-size:12.5px; font-weight:800; color:var(--muted); letter-spacing:.08em; }
+.qa-ans { display:grid; grid-template-columns:32px 1fr; gap:8px; align-items:center;
+  margin-top:8px; }
+.qa-ans input[type=text] { width:100%; padding:10px 12px; border-radius:10px;
+  border:1px solid var(--line); font:inherit; font-size:15px; }
+.qa-ans .tick { display:grid; place-items:center; }
+.qa-field { display:block; margin:10px 0; }
+.qa-field span { display:block; font-size:13px; font-weight:700; color:var(--muted);
+  margin-bottom:4px; }
+.qa-field input, .qa-field select { width:100%; padding:11px 13px; border-radius:11px;
+  border:1px solid var(--line); font:inherit; font-size:16px; }
+.qa-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+.qa-rep td, .qa-rep th { padding:9px 8px; text-align:left; font-size:14px; }
+.qa-rep th { color:var(--muted); font-size:12px; letter-spacing:.06em; text-transform:uppercase; }
+.qa-rep tr + tr td { border-top:1px solid var(--line); }
+@media (max-width:820px){ .qa-box{ padding:14px 12px 18px; } }
+</style>
+<script>
+"use strict";
+
+const QA_KEY = "ll.qz.mine.v1";
+const QA_LOG = "ll.qz.log.v1";
+
+function qaRead(key, fallback) {
+  try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : fallback; }
+  catch (e) { return fallback; }
+}
+function qaWrite(key, v) {
+  try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {}
+}
+
+function qaMine() { return qaRead(QA_KEY, []); }
+function qaLog()  { return qaRead(QA_LOG, []); }
+
+/* Teacher-written sets join the same array the built-in ones live in,
+   so the picker, the host screen and the scoring need no changes. */
+function qaLoadIntoPicker() {
+  const mine = qaMine();
+  /* drop any previously loaded copies first — this runs again after a save */
+  for (let i = QUIZ_SETS.length - 1; i >= 0; i--) {
+    if (QUIZ_SETS[i].mine) QUIZ_SETS.splice(i, 1);
+  }
+  mine.forEach(s => QUIZ_SETS.push({
+    id: s.id, title: s.title, group: "Made here", mine: true,
+    by: s.by, at: s.at, note: s.note || "", qs: s.qs,
+  }));
+}
+qaLoadIntoPicker();
+
+/* ============================================================
+   The editor
+   ============================================================ */
+
+const QA = { open: false, draft: null, err: "" };
+
+function qaBlank() {
+  return {
+    id: "own-" + Date.now().toString(36),
+    title: "",
+    by: (typeof WHO !== "undefined" && WHO[role] ? WHO[role].name : "A teacher"),
+    at: new Date().toISOString(),
+    qs: [qaBlankQ()],
+  };
+}
+function qaBlankQ() { return { p: "", a: ["", "", "", ""], k: 0, s: 20 }; }
+
+function qaNew()  { QA.draft = qaBlank(); QA.err = ""; qaPaint(); }
+function qaEdit(id) {
+  const s = qaMine().find(x => x.id === id);
+  if (!s) return;
+  QA.draft = JSON.parse(JSON.stringify(s));
+  QA.err = "";
+  qaPaint();
+}
+function qaClose() {
+  QA.draft = null;
+  document.querySelectorAll(".qa-veil").forEach(v => v.remove());
+  render();
+}
+
+function qaAddQ()  { QA.draft.qs.push(qaBlankQ()); qaPaint(); }
+function qaDelQ(i) { if (QA.draft.qs.length > 1) { QA.draft.qs.splice(i, 1); qaPaint(); } }
+function qaSet(i, what, v) {
+  const q = QA.draft.qs[i];
+  if (what === "p") q.p = v;
+  else if (what === "s") q.s = Math.max(5, Math.min(90, parseInt(v, 10) || 20));
+  else if (what === "k") q.k = v | 0;
+  else q.a[what | 0] = v;
+}
+
+function qaPaint() {
+  document.querySelectorAll(".qa-veil").forEach(v => v.remove());
+  if (!QA.draft) return;
+  const d = QA.draft;
+
+  const qs = d.qs.map((q, i) => `
+    <div class="qa-q">
+      <div class="qa-n">Question ${i + 1}${d.qs.length > 1
+        ? ` · <button class="chip" style="font-size:11px;padding:2px 8px"
+              onclick="qaDelQ(${i})">remove</button>` : ""}</div>
+      <label class="qa-field"><span>What do you ask?</span>
+        <input type="text" value="${esc(q.p)}" placeholder="Which letter is this? ب"
+               oninput="qaSet(${i},'p',this.value)"></label>
+      ${[0, 1, 2, 3].map(n => `
+        <div class="qa-ans">
+          <span class="tick"><input type="radio" name="k${i}" ${q.k === n ? "checked" : ""}
+            title="the right answer" onchange="qaSet(${i},'k',${n})"></span>
+          <input type="text" value="${esc(q.a[n])}"
+            placeholder="${["Answer 1 — tick the right one", "Answer 2", "Answer 3", "Answer 4"][n]}"
+            oninput="qaSet(${i},${n},this.value)">
+        </div>`).join("")}
+      <label class="qa-field" style="max-width:180px"><span>Seconds to answer</span>
+        <input type="number" min="5" max="90" value="${q.s}"
+               oninput="qaSet(${i},'s',this.value)"></label>
+    </div>`).join("");
+
+  const veil = document.createElement("div");
+  veil.className = "qa-veil";
+  veil.onclick = (e) => { if (e.target === veil) qaClose(); };
+  veil.innerHTML = `<div class="qa-box">
+    <div class="qa-head">
+      <h2>${d.saved ? "Edit your quiz" : "Make a quiz"}</h2>
+      <button class="btn" onclick="qaClose()">Close</button>
+    </div>
+    <label class="qa-field"><span>What is it called?</span>
+      <input id="qaTitle" type="text" value="${esc(d.title)}"
+             placeholder="Qaida 1 — the first ten letters"
+             oninput="QA.draft.title=this.value"></label>
+    ${QA.err ? '<p class="qz-note-bad">' + esc(QA.err) + "</p>" : ""}
+    ${qs}
+    <div class="qa-row">
+      <button class="btn" onclick="qaAddQ()">Add another question</button>
+      <span style="flex:1"></span>
+      <button class="btn primary" onclick="qaSave()">Save this quiz</button>
+    </div>
+    <p class="note" style="margin-top:10px">Tick the circle next to the right answer.
+      Once it is saved it appears in the list of sets like any other, and your class
+      joins it exactly the same way.</p>
+  </div>`;
+  document.body.appendChild(veil);
+}
+
+function qaSave() {
+  const d = QA.draft;
+  d.title = String(d.title || "").trim();
+  if (!d.title) { QA.err = "Give the quiz a name."; return qaPaint(); }
+
+  for (let i = 0; i < d.qs.length; i++) {
+    const q = d.qs[i];
+    if (!String(q.p || "").trim()) {
+      QA.err = "Question " + (i + 1) + " has nothing to ask."; return qaPaint();
+    }
+    const filled = q.a.filter(a => String(a || "").trim()).length;
+    if (filled < 2) {
+      QA.err = "Question " + (i + 1) + " needs at least two answers."; return qaPaint();
+    }
+    if (!String(q.a[q.k] || "").trim()) {
+      QA.err = "Question " + (i + 1) + ": the ticked answer is empty."; return qaPaint();
+    }
+    /* an empty box would render as a blank tile a child could tap */
+    q.a = q.a.map(a => String(a || "").trim());
+    const keep = q.a[q.k];
+    q.a = q.a.filter(a => a);
+    q.k = q.a.indexOf(keep);
+    while (q.a.length < 4) q.a.push("—");
+  }
+
+  const mine = qaMine();
+  const at = mine.findIndex(x => x.id === d.id);
+  d.saved = true;
+  if (at > -1) mine[at] = d; else mine.push(d);
+  qaWrite(QA_KEY, mine);
+  qaLoadIntoPicker();
+  QZ.setId = d.id;
+  QA.draft = null;
+  document.querySelectorAll(".qa-veil").forEach(v => v.remove());
+  toast("Saved — it is in the list now");
+  render();
+}
+
+function qaDelete(id) {
+  qaWrite(QA_KEY, qaMine().filter(x => x.id !== id));
+  qaLoadIntoPicker();
+  render();
+}
+
+/* ============================================================
+   The log, written when a game ends
+   ============================================================ */
+
+const quizFinishLog = quizFinish;
+quizFinish = function () {
+  const out = quizFinishLog.apply(this, arguments);
+  try {
+    if (QZ.mode === "host") {
+      const set = quizSet() || {};
+      const board = (QZ.board || []).slice(0, 30);
+      const log = qaLog();
+      log.push({
+        at: new Date().toISOString(),
+        setId: set.id, title: set.title,
+        author: set.mine ? (set.by || "a teacher") : "LetsLearn",
+        host: (typeof WHO !== "undefined" && WHO[role] ? WHO[role].name : role),
+        players: board.length,
+        scores: board.map(b => ({ nick: b.nick, score: b.score })),
+      });
+      qaWrite(QA_LOG, log.slice(-300));
+    }
+  } catch (e) { /* a report is never worth losing the game over */ }
+  return out;
+};
+
+/* ============================================================
+   The report
+   ============================================================ */
+
+function qaReport() {
+  const log = qaLog();
+  const mine = qaMine();
+
+  const bySet = {};
+  QUIZ_SETS.forEach(s => {
+    bySet[s.id] = { title: s.title, author: s.mine ? (s.by || "a teacher") : "LetsLearn",
+                    questions: s.qs.length, played: 0, players: 0, last: null };
+  });
+  log.forEach(r => {
+    const row = bySet[r.setId] || (bySet[r.setId] =
+      { title: r.title || r.setId, author: r.author || "—", questions: 0,
+        played: 0, players: 0, last: null });
+    row.played++;
+    row.players += r.players | 0;
+    if (!row.last || r.at > row.last) row.last = r.at;
+  });
+
+  const byChild = {};
+  log.forEach(r => (r.scores || []).forEach(s => {
+    const c = byChild[s.nick] || (byChild[s.nick] = { games: 0, best: 0, total: 0 });
+    c.games++; c.total += s.score | 0; c.best = Math.max(c.best, s.score | 0);
+  }));
+
+  const authors = {};
+  Object.values(bySet).forEach(r => {
+    const a = authors[r.author] || (authors[r.author] = { sets: 0, played: 0 });
+    a.sets++; a.played += r.played;
+  });
+
+  return { bySet, byChild, authors, games: log.length, mineCount: mine.length };
+}
+
+function qaDate(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleDateString("en-GB"); } catch (e) { return "—"; }
+}
+
+function qaReportHtml() {
+  const r = qaReport();
+  const sets = Object.entries(r.bySet)
+    .sort((a, b) => b[1].played - a[1].played || a[1].title.localeCompare(b[1].title));
+  const kids = Object.entries(r.byChild).sort((a, b) => b[1].total - a[1].total);
+
+  return `<h2 class="section">Quizzes</h2>
+    <div class="grid g4" style="margin-bottom:14px">
+      ${stat(QUIZ_SETS.length, "Sets available")}
+      ${stat(r.mineCount, "Written here")}
+      ${stat(r.games, "Games played")}
+      ${stat(Object.keys(r.byChild).length, "Children who played")}
+    </div>
+
+    <div class="card">
+      <h3 class="card-title">Who wrote what</h3>
+      ${Object.keys(r.authors).length ? `<table class="qa-rep"><tr>
+        <th>Author</th><th>Sets</th><th>Games played</th></tr>
+        ${Object.entries(r.authors).sort((a, b) => b[1].sets - a[1].sets)
+          .map(([name, a]) => `<tr><td><strong>${esc(name)}</strong></td>
+            <td>${a.sets}</td><td>${a.played}</td></tr>`).join("")}
+      </table>` : '<p class="note">Nothing yet.</p>'}
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h3 class="card-title">Every set</h3>
+      <table class="qa-rep"><tr>
+        <th>Set</th><th>Author</th><th>Questions</th><th>Played</th><th>Last played</th></tr>
+        ${sets.map(([id, s]) => `<tr>
+          <td><strong>${esc(s.title)}</strong></td>
+          <td>${esc(s.author)}</td>
+          <td>${s.questions || "—"}</td>
+          <td>${s.played || "—"}</td>
+          <td>${qaDate(s.last)}</td></tr>`).join("")}
+      </table>
+    </div>
+`;
+  /* "Who has been playing" used to live here, with a best score and a
+     running total per child. Scores are deliberately out of the reports
+     now — see "What a report is for" in DESIGN.md — and who played, for
+     how long, and how much they got right is in the sittings report
+     instead. `kids` is still worked out above because the headline count
+     of children who have played is read off it. */
+}
+
+/* ============================================================
+   Wiring it into the screens
+   ============================================================ */
+
+/* teachers and admins get a "Make a quiz" button and their own list */
+const quizStartPageQa = quizStartPage;
+quizStartPage = function () {
+  let html = quizStartPageQa.apply(this, arguments);
+  if (role !== "teacher" && role !== "admin") return html;
+
+  const mine = qaMine();
+  const list = mine.length ? `<div class="card" style="margin-top:12px">
+      <h3 class="card-title">Quizzes made here</h3>
+      ${mine.map(s => `<div class="creq">
+        <span class="who">${esc(s.title)}</span>
+        <span class="when">${s.qs.length} questions · ${esc(s.by)}</span>
+        <span class="sp"></span>
+        <button class="btn" onclick="qaEdit('${esc(s.id)}')">Edit</button>
+        <button class="btn" onclick="qaDelete('${esc(s.id)}')">Delete</button>
+      </div>`).join("")}
+    </div>` : "";
+
+  const make = `<div class="llc-row" style="margin-top:10px">
+      <button class="btn" style="width:100%" onclick="qaNew()">✏️ Make a quiz of your own</button>
+    </div>`;
+
+  /* after the "Open a room" button, before the join card */
+  const anchor = html.indexOf("</div>", html.indexOf("Open a room"));
+  if (anchor > -1) html = html.slice(0, anchor + 6) + make + list + html.slice(anchor + 6);
+  else html += make + list;
+
+  if (role === "admin") html += qaReportHtml();
+  return html;
+};
+
+/* and the headline numbers on the admin dashboard */
+const pageDashQa = pageDash;
+pageDash = function () {
+  const html = pageDashQa.apply(this, arguments);
+  if (role !== "admin") return html;
+  const r = qaReport();
+  return html + `<h2 class="section">Quizzes</h2>
+    <div class="grid g4">
+      ${stat(QUIZ_SETS.length, "Sets available")}
+      ${stat(r.mineCount, "Written by your teachers")}
+      ${stat(r.games, "Games played")}
+      ${stat(Object.keys(r.byChild).length, "Children who played")}
+    </div>
+    <p class="note" style="margin-top:8px">The full breakdown — who wrote what, and who has
+      been playing — is on the Quiz screen.</p>`;
+};
+if (typeof PAGES !== "undefined" && PAGES.dash) PAGES.dash = pageDash;
+</script>

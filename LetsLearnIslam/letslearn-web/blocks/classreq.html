@@ -1,0 +1,160 @@
+<!-- ============================================================
+     CLASSREQ — a parent asks, the madrasah answers
+     ------------------------------------------------------------
+     The backend half of this is in 0005: family_request_class() raises
+     a hand, class_request_decide() is the only thing that writes an
+     enrolment for a home child. Without the two screens below neither
+     is reachable from the app, and a child added at the kitchen table
+     could never join a class.
+
+     Both screens only appear when a real project is connected. With no
+     keys there are no schools to ask.
+     ============================================================ -->
+<style>
+.creq { display:flex; align-items:center; gap:12px; padding:11px 0;
+        border-bottom:1px solid var(--line); }
+.creq:last-child { border-bottom:0; }
+.creq .who { font-weight:750; }
+.creq .when { color:var(--muted); font-size:12.5px; }
+.creq .sp { flex:1; }
+</style>
+<script>
+"use strict";
+
+/* ---------- the parent's side, on the picker ---------- */
+
+const llaBodyReq = llaBody;
+llaBody = function () {
+  if (LLA.stage === "joinclass") {
+    const kids = LLA.people.filter(p => p.role === "student");
+    if (!kids.length) return `
+      <h1>No children yet</h1>
+      <p class="lla-sub">Add a child first, then you can ask for a class place.</p>
+      <div class="lla-row"><button class="lla-small"
+        onclick="llaShow('picker')">Back</button></div>`;
+    return `
+      <p class="lla-brand">LetsLearn</p>
+      <h1>Join a class</h1>
+      <p class="lla-sub">Type the code the madrasah gave you. A teacher has to
+        say yes before your child appears on their register.</p>
+      <label class="lla-field"><span>Which child</span></label>
+      <div class="lla-people">
+        ${kids.map(p => `<button class="lla-person"
+            style="${LLA.reqKid === p.id ? "background:#f1f7f3;outline:2px solid var(--qaida-green)" : ""}"
+            onclick="LLA.reqKid='${esc(p.id)}';llaPaint()">
+            ${llaFace(p, 72)}
+            <div class="lla-name">${esc(p.name)}</div></button>`).join("")}
+      </div>
+      <label class="lla-field"><span>Class code</span>
+        <input id="llaJoinCode" placeholder="QAIDA1" autocapitalize="characters"
+               style="text-transform:uppercase;letter-spacing:.16em;font-weight:800"></label>
+      ${llaMsg()}
+      <button class="lla-btn primary" onclick="llaAskClass()">Ask the madrasah</button>
+      <div class="lla-row"><button class="lla-small"
+        onclick="llaShow('picker')">Back</button></div>`;
+  }
+
+  let html = llaBodyReq.apply(this, arguments);
+
+  /* one extra line on the picker, for a parent with a project connected */
+  if (LLA.stage === "picker" && llaCloud() && LLC.profile
+      && LLC.profile.role === "parent") {
+    html = html.replace('<button class="lla-small" onclick="llaShow(\'signin\')">',
+      '<button class="lla-small" onclick="llaShow(\'joinclass\')">Join a class at the madrasah</button>'
+      + '<button class="lla-small" onclick="llaShow(\'signin\')">');
+  }
+  return html;
+};
+
+async function llaAskClass() {
+  const code = ((document.getElementById("llaJoinCode") || {}).value || "").trim();
+  LLA.err = ""; LLA.ok = "";
+  if (!LLA.reqKid) { LLA.err = "Pick which child first."; return llaPaint(); }
+  if (!code) { LLA.err = "Type the class code."; return llaPaint(); }
+
+  const { data, error } = await LLC.sb.rpc("family_request_class",
+                                           { p_pupil: LLA.reqKid, p_code: code });
+  if (error) { LLA.err = error.message; return llaPaint(); }
+  if (!data || !data.ok) {
+    LLA.err = ({
+      no_such_class: "No class has that code. Check it with the madrasah.",
+      not_your_child: "That is not one of your children.",
+      already_in_it: "They are already in that class.",
+    })[data && data.error] || "Could not ask.";
+    return llaPaint();
+  }
+  LLA.ok = data.already_asked
+    ? "You have already asked. The madrasah has it."
+    : "Asked. A teacher will say yes or no — nothing changes until they do.";
+  llaPaint();
+}
+
+/* ---------- the teacher's side, on their dashboard ---------- */
+
+const CREQ = { rows: [], loaded: false, busy: null };
+
+async function creqLoad() {
+  if (!llaCloud() || !LLC.profile) return;
+  if (!(LLC.profile.role === "teacher" || LLC.profile.role === "admin")) return;
+  try {
+    const { data } = await LLC.sb
+      .from("class_requests")
+      .select("id, created_at, pupil_id, class_id")
+      .eq("state", "pending")
+      .order("created_at", { ascending: true });
+    const rows = data || [];
+    /* the names come separately: a teacher may read a child offered to
+       their class, but only through the narrow window in 0005 */
+    if (rows.length) {
+      const ids = rows.map(r => r.pupil_id);
+      const { data: who } = await LLC.sb.from("profiles")
+        .select("id, full_name").in("id", ids);
+      const byId = {};
+      (who || []).forEach(p => { byId[p.id] = p.full_name; });
+      rows.forEach(r => { r.name = byId[r.pupil_id] || "A child"; });
+    }
+    CREQ.rows = rows;
+  } catch (e) { CREQ.rows = []; }
+  CREQ.loaded = true;
+  if (typeof render === "function"
+      && (role === "teacher" || role === "admin")) render();
+}
+
+async function creqDecide(id, yes) {
+  CREQ.busy = id; render();
+  try {
+    await LLC.sb.rpc("class_request_decide", { p_request: id, p_approve: !!yes });
+  } catch (e) {}
+  CREQ.busy = null;
+  await creqLoad();
+}
+
+function creqCard() {
+  if (!CREQ.rows.length) return "";
+  return `<h2 class="section">Waiting for you</h2>
+    <div class="card">
+      <p class="note" style="margin:0 0 6px">Parents asking for a place in one of
+        your classes. Nothing is on your register until you say yes.</p>
+      ${CREQ.rows.map(r => `<div class="creq">
+        <span class="who">${esc(r.name)}</span>
+        <span class="when">${esc(new Date(r.created_at).toLocaleDateString("en-GB"))}</span>
+        <span class="sp"></span>
+        ${CREQ.busy === r.id
+          ? '<span class="note">…</span>'
+          : `<button class="btn" onclick="creqDecide('${esc(r.id)}',false)">No</button>
+             <button class="btn primary" onclick="creqDecide('${esc(r.id)}',true)">Add them</button>`}
+      </div>`).join("")}
+    </div>`;
+}
+
+const pageDashCreq = pageDash;
+pageDash = function () {
+  const html = pageDashCreq.apply(this, arguments);
+  if (role !== "teacher" && role !== "admin") return html;
+  const extra = creqCard();
+  return extra ? html + extra : html;
+};
+if (typeof PAGES !== "undefined" && PAGES.dash) PAGES.dash = pageDash;
+
+window.addEventListener("load", () => { setTimeout(creqLoad, 1400); });
+</script>

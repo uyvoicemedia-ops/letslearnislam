@@ -1,0 +1,380 @@
+<!-- ============================================================
+     One row per quiz, not one row per set
+     ------------------------------------------------------------
+     The report so far answered "which sets get used". What a
+     teacher and a parent actually want is the SITTING: on Tuesday
+     at 4:20 Mauluda ran "Wudu" with Qaida 1, it took nine minutes,
+     five children played, and here is what each of them scored.
+
+     The finish handler already had all of that in QZ — it was
+     being thrown away in the roll-up. So a session record is
+     written alongside the old log rather than replacing it: the
+     existing "Who wrote what / Every set" report keeps working,
+     and nothing already saved is disturbed.
+
+     WHAT A REPORT IS FOR. Not scores. A quiz score is 500 a
+     right answer plus up to 500 for being fast, so it measures
+     reflexes as much as knowing the answer, and printing it
+     ranks children by something that is half reaction time. What
+     a teacher and a parent actually need is: did they turn up,
+     how long did it take, and did they know the answers. So the
+     reports carry TIME SPENT, QUIZZES PLAYED and RIGHT OUT OF
+     ASKED — and no points anywhere.
+
+     Placing stays, because it is the one comparison a parent
+     actually asks for and it names nobody else, and because the
+     garden pays coins on it.
+
+     Three readers, three views:
+       teacher  — my sittings, newest first, each opening up to
+                  who played and how they got on; plus time spent
+                  per child and per teacher
+       admin    — the same for the whole madrasah
+       parent   — their own child only. No other child is named.
+
+     "Print this report" opens a plain page of its own rather than
+     printing the app around it. It is a report, not one of the
+     books — the no-printing rule is about the Qaida PDFs.
+     ============================================================ -->
+<style>
+  .qs-tbl { width:100%; border-collapse:collapse; font-size:13.5px; }
+  .qs-tbl th { text-align:left; font-size:11.5px; letter-spacing:.06em;
+               text-transform:uppercase; color:var(--muted); font-weight:800;
+               padding:0 8px 6px 0; }
+  .qs-tbl td { padding:7px 8px 7px 0; border-top:1px solid var(--line);
+               vertical-align:top; }
+  .qs-tbl td.n, .qs-tbl th.n { text-align:right; padding-right:0; }
+  .qs-sit { border:1px solid var(--line); border-radius:14px; margin-bottom:8px;
+            overflow:hidden; }
+  .qs-sit > summary { cursor:pointer; padding:11px 13px; font-size:13.5px;
+                      display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }
+  .qs-sit > summary::-webkit-details-marker { display:none; }
+  .qs-sit > summary .when { font-weight:800; }
+  .qs-sit > summary .who  { color:var(--muted); }
+  .qs-sit > summary .cnt  { margin-left:auto; color:var(--muted); font-size:12.5px; }
+  .qs-sit[open] > summary { border-bottom:1px solid var(--line); background:rgba(0,0,0,.02); }
+  .qs-body { padding:10px 13px 13px; }
+  .qs-place { display:inline-block; min-width:24px; font-weight:800; }
+  .qs-guest { color:var(--muted); font-style:italic; }
+</style>
+<script>
+"use strict";
+
+const QS_KEY = "ll.qz.sessions.v1";
+
+function qsRead() {
+  try { const v = JSON.parse(localStorage.getItem(QS_KEY) || "[]"); return Array.isArray(v) ? v : []; }
+  catch (e) { return []; }
+}
+function qsWrite(list) {
+  try { localStorage.setItem(QS_KEY, JSON.stringify(list.slice(-400))); } catch (e) {}
+}
+
+/* ---------- written when the teacher reaches the last question ---------- */
+const quizFinishSess = quizFinish;
+quizFinish = function () {
+  const out = quizFinishSess.apply(this, arguments);
+  try {
+    if (QZ.mode === "host") {
+      const set = quizSet() || {};
+      const names = Object.keys(QZ.players || {});
+      const players = names.map(n => {
+        const p = QZ.players[n];
+        return { pid: p.pid || null, cls: p.cls || null, nick: n,
+                 score: p.score | 0, right: p.right | 0, answers: p.answers | 0 };
+      }).sort((a, b) => b.score - a.score);
+
+      /* the class is whatever the children who played are in — one class
+         if they all agree, "Mixed" if not, blank if nobody was on the register */
+      const seen = {};
+      players.forEach(p => { if (p.cls) seen[p.cls] = (seen[p.cls] | 0) + 1; });
+      const ids = Object.keys(seen);
+      const clsId = ids.length === 1 ? ids[0] : "";
+      const clsName = ids.length === 1
+        ? ((typeof cls === "function" ? cls(clsId).name : clsId) || "")
+        : ids.length > 1 ? "Mixed" : "";
+
+      const list = qsRead();
+      list.push({
+        id: "qs-" + Date.now().toString(36),
+        startedAt: QZ.startedAt || new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        setId: set.id, title: set.title || set.id,
+        questions: (set.qs || []).length,
+        teacher: (typeof WHO !== "undefined" && WHO[role] ? WHO[role].name : role),
+        clsId, clsName,
+        players,
+      });
+      qsWrite(list);
+    }
+  } catch (e) { /* a report is never worth losing the game over */ }
+  return out;
+};
+
+/* ---------- reading it back ---------- */
+function qsWhen(iso) {
+  try {
+    const d = new Date(iso);
+    return { date: d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }),
+             time: d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) };
+  } catch (e) { return { date: "—", time: "" }; }
+}
+function qsMins(s) {
+  const a = Date.parse(s.startedAt), b = Date.parse(s.endedAt);
+  if (!a || !b || b <= a) return null;
+  const m = Math.round((b - a) / 60000);
+  return m < 1 ? "under a minute" : m + " min";
+}
+const qsNewestFirst = (a, b) => String(b.endedAt).localeCompare(String(a.endedAt));
+
+/* 1st, 2nd, 3rd, 4th — and 11th/12th/13th, which is where the naive
+   version goes wrong */
+function qsOrd(n) {
+  n = n | 0;
+  const t = n % 100;
+  if (t >= 11 && t <= 13) return n + "th";
+  return n + (["th", "st", "nd", "rd"][n % 10] || "th");
+}
+
+/* every sitting, newest first — a teacher sees their own */
+function qsFor(who) {
+  const all = qsRead().slice().sort(qsNewestFirst);
+  return who ? all.filter(s => s.teacher === who) : all;
+}
+
+/* ---------- time ----------
+   A sitting is timed from the first question to the last, on the host's
+   clock. A child who was in the room was there for all of it, so their
+   time is the sitting's time; the teacher's is the same figure, summed
+   over the sittings they ran. It is honest about what it measures: time
+   in the room, not time with a finger on the screen. */
+function qsSecs(s) {
+  const a = Date.parse(s.startedAt), b = Date.parse(s.endedAt);
+  if (!a || !b || b <= a) return 0;
+  return Math.round((b - a) / 1000);
+}
+function qsDur(secs) {
+  secs = Math.round(secs || 0);
+  if (secs <= 0) return "—";
+  if (secs < 60) return "under a minute";
+  const m = Math.round(secs / 60);
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? h + " h " + r + " min" : h + " h";
+}
+
+/* ---------- the teacher's and the admin's view ---------- */
+function qsSittingHtml(s) {
+  const w = qsWhen(s.endedAt);
+  const rows = (s.players || []).map((p, i) => `<tr>
+      <td><span class="qs-place">${qsOrd(i + 1)}</span>
+        ${p.pid ? esc(p.nick) : '<span class="qs-guest">' + esc(p.nick) + " (guest)</span>"}</td>
+      <td class="n">${p.answers ? p.right + " of " + p.answers : "—"}</td>
+    </tr>`).join("");
+
+  return `<details class="qs-sit">
+    <summary>
+      <span class="when">${esc(w.date)} · ${esc(w.time)}</span>
+      <span class="who">${esc(s.title)}${s.clsName ? " · " + esc(s.clsName) : ""}
+        · ${esc(s.teacher)}</span>
+      <span class="cnt">${(s.players || []).length} played · ${esc(qsDur(qsSecs(s)))}</span>
+    </summary>
+    <div class="qs-body">
+      ${rows ? `<table class="qs-tbl">
+        <tr><th>Who played</th><th class="n">Right</th></tr>
+        ${rows}</table>`
+       : '<p class="note">Nobody joined this one.</p>'}
+    </div>
+  </details>`;
+}
+
+function qsSessionsHtml() {
+  const mine = role === "teacher" ? qsFor(WHO[role] && WHO[role].name) : qsFor(null);
+  const heading = role === "teacher" ? "Your quiz sittings" : "Every quiz sitting";
+  if (!mine.length) return `<h2 class="section">${heading}</h2>
+    <div class="card"><p class="note">Nothing yet. A sitting is recorded when a quiz is
+      played all the way to the last question — stopping a room early records nothing.</p></div>`;
+
+  /* per child: how many, how long, how much they knew */
+  const kids = {};
+  mine.forEach(s => {
+    const secs = qsSecs(s);
+    (s.players || []).forEach(p => {
+      const key = p.pid || ("guest:" + p.nick);
+      const k = kids[key] || (kids[key] = { name: p.nick, guest: !p.pid,
+                                            games: 0, secs: 0, right: 0, answers: 0 });
+      k.games++; k.secs += secs; k.right += p.right | 0; k.answers += p.answers | 0;
+    });
+  });
+  const kidRows = Object.values(kids)
+    .sort((a, b) => b.secs - a.secs || a.name.localeCompare(b.name))
+    .map(k => `<tr>
+      <td>${k.guest ? '<span class="qs-guest">' + esc(k.name) + " (guest)</span>" : esc(k.name)}</td>
+      <td class="n">${k.games}</td>
+      <td class="n">${esc(qsDur(k.secs))}</td>
+      <td class="n">${k.answers ? k.right + " of " + k.answers : "—"}</td>
+      <td class="n">${k.answers ? Math.round(k.right / k.answers * 100) + "%" : "—"}</td>
+    </tr>`).join("");
+
+  /* per teacher: how many they ran, and how long they spent running them */
+  const staff = {};
+  mine.forEach(s => {
+    const t = staff[s.teacher] || (staff[s.teacher] = { games: 0, secs: 0, kids: {} });
+    t.games++; t.secs += qsSecs(s);
+    (s.players || []).forEach(p => { t.kids[p.pid || p.nick] = true; });
+  });
+  const staffRows = Object.entries(staff)
+    .sort((a, b) => b[1].secs - a[1].secs)
+    .map(([name, t]) => `<tr>
+      <td>${esc(name)}</td>
+      <td class="n">${t.games}</td>
+      <td class="n">${esc(qsDur(t.secs))}</td>
+      <td class="n">${Object.keys(t.kids).length}</td>
+    </tr>`).join("");
+
+  const totalSecs = mine.reduce((n, s) => n + qsSecs(s), 0);
+
+  return `<h2 class="section">${heading}</h2>
+    <div class="grid g4" style="margin-bottom:14px">
+      ${stat(mine.length, "Quizzes played")}
+      ${stat(qsDur(totalSecs), "Time spent altogether")}
+      ${stat(Object.keys(kids).length, "Children who played")}
+      ${stat(qsWhen(mine[0].endedAt).date, "Most recent")}
+    </div>
+    <div class="card">
+      <h3 class="card-title">Each sitting — tap one to see who played</h3>
+      ${mine.map(qsSittingHtml).join("")}
+      <button class="btn" style="margin-top:6px" onclick="qsPrint('sessions')">
+        🖨 Print this report</button>
+    </div>
+    <div class="card">
+      <h3 class="card-title">Each child</h3>
+      <table class="qs-tbl">
+        <tr><th>Child</th><th class="n">Quizzes</th><th class="n">Time spent</th>
+            <th class="n">Right</th><th class="n">&nbsp;</th></tr>
+        ${kidRows}
+      </table>
+      <p class="note" style="margin-top:8px">Time spent is time in the room, first
+        question to last — not time with a finger on the screen.</p>
+    </div>
+    <div class="card">
+      <h3 class="card-title">${role === "teacher" ? "You" : "Each teacher"}</h3>
+      <table class="qs-tbl">
+        <tr><th>Teacher</th><th class="n">Quizzes run</th><th class="n">Time spent</th>
+            <th class="n">Children</th></tr>
+        ${staffRows}
+      </table>
+    </div>`;
+}
+
+/* ---------- the parent's view: their own child, and nobody else ---------- */
+function qsMyChildren() {
+  const me = (typeof WHO !== "undefined" && WHO.parent && WHO.parent.name) || "";
+  const all = (typeof DB !== "undefined" && DB.students) ? DB.students : [];
+  return all.filter(s => s.guardian === me);
+}
+
+function qsChildHtml(kid) {
+  const sits = qsRead().slice().sort(qsNewestFirst)
+    .map(s => {
+      const list = s.players || [];
+      const at = list.findIndex(p => p.pid === kid.id);
+      if (at < 0) return null;
+      return { s, me: list[at], place: at + 1, of: list.length, secs: qsSecs(s) };
+    })
+    .filter(Boolean);
+
+  const first = kid.name.split(" ")[0];
+  if (!sits.length) return `<div class="card">
+    <h3 class="card-title">${esc(kid.name)} — quizzes</h3>
+    <p class="note">${esc(first)} has not played a quiz yet. This fills in
+      as the class plays them.</p></div>`;
+
+  const secs = sits.reduce((n, r) => n + r.secs, 0);
+  const right = sits.reduce((n, r) => n + (r.me.right | 0), 0);
+  const asked = sits.reduce((n, r) => n + (r.me.answers | 0), 0);
+
+  const rows = sits.map(r => {
+    const w = qsWhen(r.s.endedAt);
+    return `<tr>
+      <td>${esc(w.date)} <span class="note">${esc(w.time)}</span></td>
+      <td>${esc(r.s.title)}</td>
+      <td class="n">${esc(qsDur(r.secs))}</td>
+      <td class="n">${r.me.answers ? r.me.right + " of " + r.me.answers : "—"}</td>
+      <td class="n">${qsOrd(r.place)} of ${r.of}</td>
+    </tr>`;
+  }).join("");
+
+  return `<div class="card">
+    <h3 class="card-title">${esc(kid.name)} — quizzes</h3>
+    <div class="grid g4" style="margin:4px 0 12px">
+      ${stat(sits.length, "Quizzes played")}
+      ${stat(qsDur(secs), "Time spent")}
+      ${stat(asked ? right + " of " + asked : "—", "Answers right")}
+      ${stat(asked ? Math.round(right / asked * 100) + "%" : "—", "Right first time")}
+    </div>
+    <table class="qs-tbl">
+      <tr><th>When</th><th>Quiz</th><th class="n">How long</th>
+          <th class="n">Right</th><th class="n">Place</th></tr>
+      ${rows}
+    </table>
+    <p class="note" style="margin-top:10px">"Place" is where ${esc(first)} came in that
+      quiz. Other children's names are not shown, and neither are anyone's points.</p>
+    <button class="btn" style="margin-top:8px" onclick="qsPrint('child:${esc(kid.id)}')">
+      🖨 Print this report</button>
+  </div>`;
+}
+
+/* ---------- a plain page to print ----------
+   Its own window, so what comes out is the report and not the app
+   around it. (The no-printing rule is about the Qaida books.) */
+function qsPrint(what) {
+  let body = "", title = "Quiz report";
+  if (what === "sessions") { body = qsSessionsHtml(); title = "Quiz report — " + ((WHO[role] && WHO[role].name) || ""); }
+  else if (String(what).indexOf("child:") === 0) {
+    const kid = (DB.students || []).find(s => s.id === String(what).slice(6));
+    if (!kid) return;
+    body = qsChildHtml(kid); title = "Quiz report — " + kid.name;
+  }
+  const w = window.open("", "_blank");
+  if (!w) { toast("Allow pop-ups to print the report"); return; }
+  w.document.write('<!doctype html><meta charset="utf-8"><title>' + title + "</title>" +
+    "<style>body{font:14px/1.5 system-ui,sans-serif;margin:28px;color:#222}" +
+    "h1{font-size:20px;margin:0 0 2px}h2,h3{font-size:15px;margin:18px 0 6px}" +
+    "table{width:100%;border-collapse:collapse;font-size:13px}" +
+    "th{text-align:left;font-size:11px;text-transform:uppercase;color:#777;padding:0 8px 5px 0}" +
+    "td{padding:6px 8px 6px 0;border-top:1px solid #ddd}" +
+    ".n{text-align:right}.note{color:#777;font-size:12px}.card{margin:0 0 14px}" +
+    "details{display:block;margin:0 0 6px}details>summary{list-style:none;font-weight:600;margin-bottom:4px}" +
+    ".grid,.btn,.stat{display:none}</style>" +
+    "<h1>" + title + "</h1><p class=note>" +
+    (typeof DB !== "undefined" ? DB.school + " · " + DB.term : "") + " · printed " +
+    new Date().toLocaleDateString("en-GB") + "</p>" + body);
+  /* everything open on paper — a closed <details> prints blank */
+  w.document.querySelectorAll("details").forEach(d => d.setAttribute("open", ""));
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 250);
+}
+
+/* ---------- hang them on the right screens ---------- */
+const quizStartPageSess = quizStartPage;
+quizStartPage = function () {
+  let html = quizStartPageSess.apply(this, arguments);
+  if (role === "teacher" || role === "admin") html += qsSessionsHtml();
+  return html;
+};
+
+/* a parent has no Quiz screen — this belongs on Progress, which is
+   where they go to ask how their child is getting on */
+if (typeof PAGES === "object" && typeof PAGES.progress === "function") {
+  const pageProgressSess = PAGES.progress;
+  PAGES.progress = function () {
+    const html = pageProgressSess.apply(this, arguments);
+    if (role !== "parent") return html;
+    const kids = qsMyChildren();
+    if (!kids.length) return html;
+    return html + '<h2 class="section">Quizzes</h2>' + kids.map(qsChildHtml).join("");
+  };
+}
+</script>

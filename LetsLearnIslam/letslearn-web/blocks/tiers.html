@@ -1,0 +1,584 @@
+<!-- ============================================================
+     Decorations you can actually improve
+     ------------------------------------------------------------
+     "Make it bigger" was the whole upgrade system: one step, from
+     level 1 to level 2, and all it did was multiply the sprite by
+     1.28. A bigger bench is not a better bench, so there was no
+     reason to spend the coins.
+
+     Four tiers now, and each one ADDS something you can point at —
+     a back on the bench, glass in the lantern, a second lamp on the
+     post, a sign over the shop. Scale barely moves; detail does.
+     That is the difference between an upgrade and a zoom.
+
+     The grass got the same treatment. It was two greens in a
+     checkerboard, which reads as lino. Now it has tufts, clover and
+     worn patches, seeded off the tile coordinates so it is stable
+     between frames rather than crawling.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* ---------- what a tier is worth ---------- */
+
+const ITEM_TIERS = [
+  null,
+  { name: "plain",     note: "as it came" },
+  { name: "better",    note: "a bit more to it" },
+  { name: "fine",      note: "someone has taken care of this" },
+  { name: "beautiful", note: "as good as it gets" },
+];
+const ITEM_MAX_TIER = 4;
+
+const itemTier = (it) => Math.max(1, Math.min(ITEM_MAX_TIER, (it && it.lvl) || 1));
+const itemTierName = (lvl) => (ITEM_TIERS[Math.max(1, Math.min(ITEM_MAX_TIER, lvl))] || {}).name || "plain";
+
+/* Each step costs more than the last, and more than the thing did new,
+   so improving one bench you like is a real choice against buying a
+   second one. */
+function tierCost(def, fromLvl) {
+  const base = (def && def.cost) || 20;
+  return Math.round(base * (0.6 + fromLvl * 0.45));
+}
+
+/* what has gone into it altogether, for a fair refund */
+function tierPaid(def, lvl) {
+  let paid = (def && def.cost) || 0;
+  for (let l = 1; l < lvl; l++) paid += tierCost(def, l);
+  return paid;
+}
+
+function tierDefOf(type) {
+  return (typeof storeDef === "function" ? storeDef(type) : null)
+      || ROOM_ITEMS.concat(GARDEN_ITEMS, TOYS).find(x => x.id === type)
+      || { cost: 20, name: type };
+}
+
+/* ---------- improving one ---------- */
+
+gardenUpgradeItem = function () {
+  const g = gState();
+  const sel = Garden.selected;
+  if (typeof sel !== "number") return;
+  const list = Garden.inside ? (g.interiors[Garden.inside] || g.planFurn || []) : g.items;
+  const it = list[sel];
+  if (!it) return;
+
+  const lvl = itemTier(it);
+  const def = tierDefOf(it.type);
+  if (lvl >= ITEM_MAX_TIER) { toast(def.name + " is as good as it gets"); return; }
+
+  const cost = tierCost(def, lvl);
+  if (g.deeds < cost) {
+    toast("You need " + (cost - g.deeds) + " more coins"); Snd.wrong(); return;
+  }
+  g.deeds -= cost;
+  it.lvl = lvl + 1;
+  llSave(); Snd.cheer(); confetti(14);
+  toast(def.name + " — " + itemTierName(it.lvl));
+  render();
+};
+
+/* Selling gives back half of everything that went into it, not half of
+   the sticker price — otherwise improving something and then changing
+   your mind is a punishment. */
+gardenRemove = function () {
+  const g = gState();
+  const sel = Garden.selected;
+  if (sel == null) return;
+  if (sel === "house") { toast("The house stays — you can move it, not sell it"); return; }
+
+  if (typeof sel === "string" && sel[0] === "b") {
+    const i = +sel.slice(1), b = g.buildings[i];
+    if (!b) return;
+    const def = (b.kind === "masjid" ? MOSQUES : SCHOOLS).find(x => x.id === b.id) || { cost: 0 };
+    g.buildings.splice(i, 1);
+    g.deeds += Math.floor(def.cost / 2);
+    Garden.selected = null; llSave(); Snd.back(); render();
+    return;
+  }
+
+  const list = Garden.inside ? g.interiors[Garden.inside] : g.items;
+  const it = list && list[sel];
+  if (!it) return;
+  const def = tierDefOf(it.type);
+  list.splice(sel, 1);
+  g.deeds += Math.floor(tierPaid(def, itemTier(it)) / 2);
+  Garden.selected = null;
+  llSave(); Snd.back(); render();
+};
+
+/* ---------- the control ---------- */
+
+const pageGardenTier = pageGarden;
+pageGarden = function () {
+  let html = pageGardenTier();
+  if (role !== "student") return html;
+  const g = gState();
+  const sel = Garden.selected;
+  if (typeof sel !== "number") return html;
+
+  const list = Garden.inside ? (g.interiors[Garden.inside] || []) : g.items;
+  const it = list && list[sel];
+  if (!it) return html;
+
+  // take out the old one-step button wherever it landed
+  html = html.replace(/<button class="btn primary" onclick="gardenUpgradeItem\(\)">[\s\S]*?<\/button>/, "");
+
+  const lvl = itemTier(it), def = tierDefOf(it.type);
+  const pips = Array.from({ length: ITEM_MAX_TIER }, (_, i) =>
+    `<span style="width:7px;height:7px;border-radius:50%;display:inline-block;
+       background:${i < lvl ? "var(--qaida-green)" : "var(--line)"}"></span>`).join(" ");
+
+  const control = lvl >= ITEM_MAX_TIER
+    ? `<p class="note" style="margin:6px 0 0">${pips} &nbsp;${esc(def.name)} is
+         <strong>${esc(itemTierName(lvl))}</strong> — as good as it gets.</p>`
+    : `<p class="note" style="margin:6px 0 2px">${pips} &nbsp;${esc(def.name)} ·
+         ${esc(itemTierName(lvl))}</p>
+       <button class="btn primary" style="width:100%" onclick="gardenUpgradeItem()">
+         Improve to ${esc(itemTierName(lvl + 1))} — ${tierCost(def, lvl)} coins</button>`;
+
+  return html.replace('<span class="note">Drag it to move it.</span>',
+    '<span class="note">Drag it to move it.</span>' + control);
+};
+/* the router holds its own reference, so reassigning pageGarden alone
+   changes nothing — this is the line that actually swaps the page */
+PAGES.garden = pageGarden;
+
+/* ---------- let the art see which tier it is ---------- */
+
+const IBitemTier = IB.item;
+IB.item = function (c, type, u, v, W, H, t, night, lvl) {
+  const fn = GI2 && GI2[type];
+  if (!fn || !fn.tiered) { IBitemTier(c, type, u, v, W, H, t, night, lvl); return; }
+  // tiered art sizes itself; the old blanket 1.28 bump would fight it
+  const z = isoScale();
+  if (type !== "road" && type !== "carpet" && type !== "pond" && type !== "sandpit")
+    isoShadowRound(c, u, v, 0.34, 0.9, W, H);
+  fn(c, u, v, W, H, t, night, z, Math.max(1, Math.min(ITEM_MAX_TIER, lvl || 1)));
+};
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Tiered art
+   ------------------------------------------------------------
+   Every one of these takes (c, u, v, W, H, t, night, z, lvl) and is
+   marked .tiered so the wrapper above knows to pass the level through.
+   The rule each follows: level 1 is a plain, honest version of the
+   thing, and every level after adds a part — not a bigger version of
+   the same part.
+   ============================================================ */
+
+const TZ = (lvl) => 1 + (lvl - 1) * 0.05;      // barely any growth on purpose
+
+/* a small warm glow, used by everything that holds a light */
+function tGlow(c, x, y, r, night, strength) {
+  if (!night) return;
+  c.save();
+  c.globalCompositeOperation = "lighter";
+  const gl = c.createRadialGradient(x, y, 1, x, y, r);
+  gl.addColorStop(0, "rgba(255,208,124," + (0.5 * (strength || 1)) + ")");
+  gl.addColorStop(1, "rgba(255,208,124,0)");
+  c.fillStyle = gl;
+  c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+
+/* ---------- benches, which is what "chairs" means outdoors ---------- */
+GI2.bench = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const wood = lvl >= 3 ? (night ? "#7a5330" : "#b9823f") : (night ? "#6a4c2c" : "#a8763f");
+  const stone = night ? "#7a7a70" : "#c9c4b4";
+  const seatH = 0.4;
+
+  // legs: stone blocks at 1–2, turned wooden legs from 3
+  if (lvl <= 2) {
+    isoBox(c, u - 0.34, v - 0.1, 0.14, 0.2, seatH, W, H,
+      stone, mqShade(stone, .84), mqShade(stone, .7));
+    isoBox(c, u + 0.2, v - 0.1, 0.14, 0.2, seatH, W, H,
+      stone, mqShade(stone, .84), mqShade(stone, .7));
+  } else {
+    [-0.34, 0.2].forEach(o => {
+      isoCyl(c, u + o + 0.07, v - 0.02, 0.05, seatH, W, H, mqShade(wood, .8));
+      isoCyl(c, u + o + 0.07, v + 0.14, 0.05, seatH, W, H, mqShade(wood, .88));
+    });
+  }
+
+  // the seat
+  isoBoxAt(c, u - 0.4, v - 0.13, 0.8, 0.26, 0.1, seatH, W, H,
+    wood, mqShade(wood, .84), mqShade(wood, .68));
+  const p = isoPt(u, v, W, H);
+  c.strokeStyle = mqShade(wood, .7); c.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const q = isoPt(u - 0.4 + i * 0.2, v - 0.13, W, H),
+          q2 = isoPt(u - 0.4 + i * 0.2, v + 0.13, W, H);
+    c.beginPath(); c.moveTo(q.x, q.y - isoH(seatH + 0.1));
+    c.lineTo(q2.x, q2.y - isoH(seatH + 0.1)); c.stroke();
+  }
+
+  // a back, from level 2
+  if (lvl >= 2) {
+    const a = isoPt(u - 0.4, v - 0.13, W, H), b = isoPt(u + 0.4, v - 0.13, W, H);
+    const top = seatH + 0.55, foot = seatH + 0.1;
+    c.strokeStyle = mqShade(wood, .74); c.lineWidth = 3.5 * z;
+    [[-0.4], [0.4]].forEach(([o]) => {
+      const q = isoPt(u + o, v - 0.13, W, H);
+      c.beginPath(); c.moveTo(q.x, q.y - isoH(foot)); c.lineTo(q.x, q.y - isoH(top)); c.stroke();
+    });
+    const slats = lvl >= 3 ? 3 : 2;
+    for (let i = 0; i < slats; i++) {
+      const hgt = foot + 0.16 + i * ((top - foot - 0.16) / Math.max(1, slats - 1 || 1));
+      c.strokeStyle = i % 2 ? mqShade(wood, .9) : wood;
+      c.lineWidth = 4.5 * z;
+      c.beginPath(); c.moveTo(a.x, a.y - isoH(hgt)); c.lineTo(b.x, b.y - isoH(hgt)); c.stroke();
+    }
+  }
+
+  // arms, from level 3
+  if (lvl >= 3) {
+    c.strokeStyle = mqShade(wood, .78); c.lineWidth = 4 * z; c.lineCap = "round";
+    [-0.4, 0.4].forEach(o => {
+      const q = isoPt(u + o, v - 0.13, W, H), q2 = isoPt(u + o, v + 0.13, W, H);
+      c.beginPath();
+      c.moveTo(q.x, q.y - isoH(seatH + 0.42));
+      c.lineTo(q2.x, q2.y - isoH(seatH + 0.34)); c.stroke();
+    });
+    c.lineCap = "butt";
+  }
+
+  // a cushion and a little side table with a lamp, at the top tier
+  if (lvl >= 4) {
+    const cush = night ? "#5c4a68" : "#c08ab0";
+    isoBoxAt(c, u - 0.32, v - 0.1, 0.64, 0.2, 0.07, seatH + 0.1, W, H,
+      cush, mqShade(cush, .86), mqShade(cush, .72));
+    isoCyl(c, u + 0.62, v + 0.05, 0.1, 0.42, W, H, mqShade(wood, .82));
+    const s = isoPt(u + 0.62, v + 0.05, W, H);
+    c.fillStyle = mqShade(wood, 1.1);
+    c.beginPath(); c.ellipse(s.x, s.y - isoH(0.42), 11 * z, 5.5 * z, 0, 0, Math.PI * 2); c.fill();
+    MQ.lamp(c, s.x, s.y - isoH(0.58), 6 * z, mqPal("sand", night));
+    tGlow(c, s.x, s.y - isoH(0.58), 30 * z, night, 0.8);
+  }
+};
+GI2.bench.tiered = true;
+
+/* ---------- a lantern on a post ---------- */
+GI2.lantern = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const P = mqPal("sand", night);
+  const metal = night ? "#4a4740" : "#6b6459";
+  const postH = 0.9 + lvl * 0.12;
+
+  // a stone foot from level 3
+  if (lvl >= 3) {
+    isoBox(c, u - 0.13, v - 0.13, 0.26, 0.26, 0.14, W, H,
+      P.wall, mqShade(P.wall, .88), mqShade(P.wall, .74));
+  }
+  isoCyl(c, u, v, lvl >= 3 ? 0.055 : 0.045, postH, W, H, metal);
+  const p = isoPt(u, v, W, H);
+  const top = p.y - isoH(postH);
+
+  const heads = lvl >= 4 ? [[-11, -2], [11, -2], [0, -9]] : [[0, 0]];
+  if (lvl >= 4) {                                   // a cross-arm to carry three
+    c.strokeStyle = metal; c.lineWidth = 3 * z; c.lineCap = "round";
+    c.beginPath(); c.moveTo(p.x - 12 * z, top + 2 * z); c.lineTo(p.x + 12 * z, top + 2 * z);
+    c.stroke(); c.lineCap = "butt";
+  }
+
+  heads.forEach(([ox, oy]) => {
+    const hx = p.x + ox * z, hy = top + oy * z;
+    if (lvl === 1) {
+      MQ.lamp(c, hx, hy - 6 * z, 7 * z, P);
+      tGlow(c, hx, hy - 6 * z, 34 * z, night, 0.7);
+      return;
+    }
+    // a glazed box from level 2: frame, glass, cap
+    const w = 7 * z, h = 11 * z;
+    c.fillStyle = night ? "rgba(255,214,140,.92)" : "rgba(255,246,214,.95)";
+    c.beginPath();
+    c.moveTo(hx - w, hy - 4 * z); c.lineTo(hx + w, hy - 4 * z);
+    c.lineTo(hx + w * 0.8, hy - 4 * z - h); c.lineTo(hx - w * 0.8, hy - 4 * z - h);
+    c.closePath(); c.fill();
+    c.strokeStyle = metal; c.lineWidth = 1.6 * z; c.stroke();
+    c.beginPath();                                   // glazing bar
+    c.moveTo(hx, hy - 4 * z); c.lineTo(hx, hy - 4 * z - h); c.stroke();
+    c.fillStyle = metal;                             // cap
+    c.beginPath();
+    c.moveTo(hx - w * 1.15, hy - 4 * z - h);
+    c.lineTo(hx + w * 1.15, hy - 4 * z - h);
+    c.lineTo(hx, hy - 4 * z - h - 6 * z);
+    c.closePath(); c.fill();
+    if (lvl >= 3) isoFinial(c, hx, hy - 4 * z - h - 6 * z, 3.2 * z, "#e8c05a");
+    tGlow(c, hx, hy - 9 * z, (36 + lvl * 6) * z, night, 0.9);
+  });
+};
+GI2.lantern.tiered = true;
+
+/* ---------- the street lamp ---------- */
+GI2.lamppost = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const metal = night ? "#26262c" : "#3a3a42";
+  const postH = 1.7 + lvl * 0.1;
+  const p = isoPt(u, v, W, H);
+
+  if (lvl >= 2) isoCyl(c, u, v, 0.1, 0.12, W, H, mqShade(metal, 1.3));   // base collar
+  isoCyl(c, u, v, 0.05, postH, W, H, metal);
+  const top = p.y - isoH(postH);
+
+  const arm = (dir) => {
+    c.strokeStyle = metal; c.lineWidth = 3.4 * z; c.lineCap = "round";
+    c.beginPath();
+    c.moveTo(p.x, top + 4 * z);
+    c.quadraticCurveTo(p.x + dir * 6 * z, top - 7 * z, p.x + dir * 15 * z, top - 4 * z);
+    c.stroke(); c.lineCap = "butt";
+    const hx = p.x + dir * 15 * z, hy = top - 4 * z;
+    c.fillStyle = night ? "rgba(255,226,164,.95)" : "#f2efe4";
+    c.beginPath();
+    c.moveTo(hx - 6 * z, hy); c.lineTo(hx + 6 * z, hy);
+    c.lineTo(hx + 4 * z, hy + 7 * z); c.lineTo(hx - 4 * z, hy + 7 * z);
+    c.closePath(); c.fill();
+    c.strokeStyle = metal; c.lineWidth = 1.4 * z; c.stroke();
+    tGlow(c, hx, hy + 6 * z, 42 * z, night, 1);
+  };
+
+  arm(1);
+  if (lvl >= 4) arm(-1);
+
+  if (lvl >= 3) {
+    isoFinial(c, p.x, top - 2 * z, 3.6 * z, "#c9a86a");
+    // a hanging basket, because a street with flowers on the lamps is
+    // the cheapest way to make a town look cared for
+    const bx = p.x - 9 * z, by = top + 22 * z;
+    c.strokeStyle = metal; c.lineWidth = 1.4 * z;
+    c.beginPath(); c.moveTo(p.x, top + 14 * z); c.lineTo(bx, by - 4 * z); c.stroke();
+    c.fillStyle = night ? "#4a3a28" : "#7a5a3c";
+    c.beginPath(); c.ellipse(bx, by, 6 * z, 3.4 * z, 0, 0, Math.PI * 2); c.fill();
+    ["#e0587a", "#f2b93c", "#b96ad0"].forEach((col, i) => {
+      c.fillStyle = night ? mqShade(col, .6) : col;
+      c.beginPath();
+      c.arc(bx + (i - 1) * 4 * z, by - 3 * z, 2.4 * z, 0, Math.PI * 2); c.fill();
+    });
+  }
+};
+GI2.lamppost.tiered = true;
+</script>
+
+<script>
+"use strict";
+
+/* ---------- the market stall ---------- */
+GI2.stall = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const wood = night ? "#6a4c2c" : "#a8763f";
+  const cloth = night ? "#7a3a3a" : "#c94a4a";
+  const wide = lvl >= 3 ? 0.55 : 0.42;
+  const p = isoPt(u, v, W, H);
+
+  // counter
+  isoBox(c, u - wide, v - 0.3, wide * 2, 0.6, 0.62, W, H,
+    wood, mqShade(wood, .84), mqShade(wood, .66));
+  isoBoxAt(c, u - wide - 0.04, v - 0.34, wide * 2 + 0.08, 0.68, 0.07, 0.62, W, H,
+    mqShade(wood, 1.12), mqShade(wood, .92), mqShade(wood, .76));
+
+  // goods on the counter, more of them as it grows
+  const goods = [["#e2513c", 0], ["#f0972f", 1], ["#4aa86a", 2], ["#c9a83e", 3],
+                 ["#d06a8a", 4], ["#5f9ee0", 5]].slice(0, 2 + lvl);
+  goods.forEach(([col, i]) => {
+    const gx = p.x + (i - goods.length / 2 + 0.5) * 11 * z;
+    const gy = p.y - isoH(0.69) - 2 * z;
+    c.fillStyle = night ? "#3a2a1c" : "#8a6a45";
+    c.beginPath(); c.ellipse(gx, gy + 2 * z, 6 * z, 3 * z, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = night ? mqShade(col, .6) : col;
+    [[-2, -1], [2, -1], [0, -4]].forEach(([ox, oy]) => {
+      c.beginPath(); c.arc(gx + ox * z, gy + oy * z, 2.6 * z, 0, Math.PI * 2); c.fill();
+    });
+  });
+
+  // posts and awning
+  const postH = 1.5;
+  [[-wide, -0.3], [wide, -0.3], [-wide, 0.3], [wide, 0.3]].forEach(([du, dv]) =>
+    isoCyl(c, u + du, v + dv, 0.045, postH, W, H, mqShade(wood, .8)));
+
+  const a = isoPt(u - wide - 0.1, v - 0.4, W, H), b = isoPt(u + wide + 0.1, v - 0.4, W, H),
+        e = isoPt(u + wide + 0.1, v + 0.4, W, H), f = isoPt(u - wide - 0.1, v + 0.4, W, H);
+  const lift = isoH(postH + 0.18), sag = isoH(postH);
+  const stripes = lvl >= 2 ? 7 : 5;
+  for (let i = 0; i < stripes; i++) {
+    const t0 = i / stripes, t1 = (i + 1) / stripes;
+    const pt = (q1, q2, k) => ({ x: q1.x + (q2.x - q1.x) * k, y: q1.y + (q2.y - q1.y) * k });
+    const n0 = pt(f, e, t0), n1 = pt(f, e, t1), r0 = pt(a, b, t0), r1 = pt(a, b, t1);
+    c.fillStyle = i % 2 ? (night ? "#d8cfc0" : "#f4efe2") : (night ? mqShade(cloth, .6) : cloth);
+    c.beginPath();
+    c.moveTo(r0.x, r0.y - lift); c.lineTo(r1.x, r1.y - lift);
+    c.lineTo(n1.x, n1.y - sag); c.lineTo(n0.x, n0.y - sag);
+    c.closePath(); c.fill();
+  }
+  // scalloped edge from level 2
+  if (lvl >= 2) {
+    c.fillStyle = night ? mqShade(cloth, .5) : mqShade(cloth, .88);
+    for (let i = 0; i <= 10; i++) {
+      const k = i / 10;
+      const q = { x: f.x + (e.x - f.x) * k, y: f.y + (e.y - f.y) * k };
+      c.beginPath(); c.arc(q.x, q.y - sag, 3.2 * z, 0, Math.PI); c.fill();
+    }
+  }
+
+  // a hanging sign and scales from level 3
+  if (lvl >= 3) {
+    const sx = p.x, sy = p.y - isoH(postH + 0.02);
+    c.fillStyle = night ? "#5a4326" : "#8a6a3a";
+    c.fillRect(sx - 17 * z, sy + 4 * z, 34 * z, 11 * z);
+    c.strokeStyle = "#e8c05a"; c.lineWidth = 1.6 * z;
+    c.strokeRect(sx - 17 * z, sy + 4 * z, 34 * z, 11 * z);
+    c.fillStyle = "#f4e6bc";
+    for (let i = 0; i < 3; i++) c.fillRect(sx - 11 * z + i * 8 * z, sy + 8 * z, 5 * z, 3 * z);
+  }
+  // crates stacked beside it at the top tier
+  if (lvl >= 4) {
+    [[0.75, 0.2, 0], [0.75, -0.2, 0], [0.75, 0.0, 0.35]].forEach(([du, dv, hh]) => {
+      isoBoxAt(c, u + du, v + dv - 0.16, 0.32, 0.32, 0.32, hh, W, H,
+        mqShade(wood, 1.05), mqShade(wood, .86), mqShade(wood, .7));
+    });
+  }
+};
+GI2.stall.tiered = true;
+
+/* ---------- the shop ----------
+   Everything on the front is placed by walking along the front face in
+   WORLD coordinates and lifting by isoH, not by nudging pixels from the
+   centre point. Pixel offsets drift as soon as the face is not where
+   you assumed, which is how the signboard ended up hovering beside the
+   building instead of on it. */
+GI2.shop = function (c, u, v, W, H, t, night, z, lvl) {
+  z *= TZ(lvl);
+  const wall  = night ? "#8a8478" : "#d8d2c4";
+  const roofc = night ? "#3f5a6a" : "#5f87a8";
+  const wood  = night ? "#5a4326" : "#8a6a3a";
+  const w = 0.95, d = 0.8;
+  const storeys = lvl >= 4 ? 1.62 : 1.12;
+
+  // a point on the front face: k runs 0..1 left to right, h is height
+  const F = (k, h) => {
+    const q = isoPt(u - w / 2 + k * w, v + d / 2, W, H);
+    return { x: q.x, y: q.y - isoH(h) };
+  };
+  const quad = (k0, k1, h0, h1, fill, stroke) => {
+    const a = F(k0, h1), b = F(k1, h1), e = F(k1, h0), f = F(k0, h0);
+    c.beginPath();
+    [a, b, e, f].forEach((q, i) => c[i ? "lineTo" : "moveTo"](q.x, q.y));
+    c.closePath();
+    if (fill) { c.fillStyle = fill; c.fill(); }
+    if (stroke) { c.strokeStyle = stroke; c.lineWidth = 1.8 * z; c.stroke(); }
+  };
+
+  isoShadow(c, u - w / 2, v - d / 2, w, d, 0.5, W, H);
+  isoBox(c, u - w / 2, v - d / 2, w, d, storeys, W, H,
+    mqShade(wall, 1.04), mqShade(wall, .9), mqShade(wall, .78));
+
+  quad(0.58, 0.86, 0.02, 0.72, wood, mqShade(wood, .7));            // door
+  const kn = F(0.83, 0.36);
+  c.fillStyle = "#e8c05a";
+  c.beginPath(); c.arc(kn.x, kn.y, 1.8 * z, 0, Math.PI * 2); c.fill();
+
+  if (lvl >= 2) {                                                    // window
+    quad(0.12, 0.5, 0.34, 0.8, night ? "rgba(255,214,140,.85)" : "#bcd9e4", wood);
+    const mid = F(0.31, 0.57);
+    tGlow(c, mid.x, mid.y, 34 * z, night, 0.7);
+    // awning above it
+    const stripes = 5;
+    for (let i = 0; i < stripes; i++) {
+      const k0 = 0.09 + (i / stripes) * 0.45, k1 = 0.09 + ((i + 1) / stripes) * 0.45;
+      const a = F(k0, 0.92), b = F(k1, 0.92);
+      c.fillStyle = i % 2 ? "#f4efe2" : (night ? "#7a3a3a" : "#c94a4a");
+      c.beginPath();
+      c.moveTo(a.x, a.y); c.lineTo(b.x, b.y);
+      c.lineTo(b.x + 3 * z, b.y + 11 * z); c.lineTo(a.x + 3 * z, a.y + 11 * z);
+      c.closePath(); c.fill();
+    }
+  }
+
+  if (lvl >= 3) {                                                    // signboard
+    quad(0.06, 0.94, 0.96, 1.1, night ? "#4a3a24" : "#6b5231", "#e8c05a");
+    for (let i = 0; i < 4; i++) {                                    // lettering
+      const k = 0.16 + i * 0.18;
+      quad(k, k + (i === 3 ? 0.12 : 0.08), 1.005, 1.055, "#f4e6bc", null);
+    }
+    [[-0.34, 0.16], [0.34, 0.16]].forEach(([du, dv]) => {             // planters
+      isoCyl(c, u + du, v + d / 2 + dv, 0.11, 0.22, W, H, night ? "#6a4c2c" : "#a8763f");
+      const q = isoPt(u + du, v + d / 2 + dv, W, H);
+      c.fillStyle = night ? "#2c5c3c" : "#4aa86a";
+      [[0, -7, 7], [-5, -3, 5], [5, -4, 5]].forEach(([ox, oy, rr]) => {
+        c.beginPath();
+        c.arc(q.x + ox * z, q.y - isoH(0.22) + oy * z, rr * z, 0, Math.PI * 2); c.fill();
+      });
+    });
+  }
+
+  if (lvl >= 4) {                                                    // upper floor
+    [[0.12, 0.38], [0.58, 0.84]].forEach(([k0, k1]) =>
+      quad(k0, k1, 1.2, 1.5, night ? "rgba(255,214,140,.75)" : "#cfe0e6", wood));
+  }
+
+  isoRoof(c, u - w / 2 - 0.07, v - d / 2 - 0.07, w + 0.14, d + 0.14,
+          0.42, storeys, W, H, roofc);
+  if (lvl >= 3) {
+    const top = isoPt(u, v, W, H);
+    isoFinial(c, top.x, top.y - isoH(storeys + 0.46), 4 * z, "#e8c05a");
+  }
+};
+GI2.shop.tiered = true;
+
+/* ---------- the grass ----------
+   Two greens in a checkerboard read as lino. Tufts, clover and worn
+   patches fix that, and they are seeded off the tile coordinates so
+   they sit still between frames instead of crawling about. */
+const isoGroundFlat = isoGround;
+isoGround = function (c, W, H, night) {
+  isoGroundFlat(c, W, H, night);
+  const { cols, rows } = landSize(gLand());
+  const z = isoScale();
+  if (z < 0.55) return;                      // too far out to be worth it
+
+  const blade = night ? "rgba(150,200,160,.30)" : "rgba(58,120,70,.34)";
+  const clover = night ? "rgba(120,180,140,.22)" : "rgba(120,190,120,.30)";
+  const worn = night ? "rgba(90,80,60,.16)" : "rgba(176,158,110,.20)";
+
+  for (let uu = 0; uu < cols; uu++) {
+    for (let vv = 0; vv < rows; vv++) {
+      // one stable pseudo-random number per tile
+      const h = Math.sin(uu * 12.9898 + vv * 78.233) * 43758.5453;
+      const r = h - Math.floor(h);
+      const p = isoPt(uu + 0.5, vv + 0.5, W, H);
+      if (p.x < -60 || p.x > W + 60 || p.y < -60 || p.y > H + 60) continue;
+
+      if (r < 0.06) {                        // a worn patch of earth
+        c.fillStyle = worn;
+        c.beginPath();
+        c.ellipse(p.x, p.y, 15 * z, 7.5 * z, 0, 0, Math.PI * 2); c.fill();
+      } else if (r < 0.30) {                 // a tuft
+        c.strokeStyle = blade; c.lineWidth = 1.3 * z; c.lineCap = "round";
+        for (let k = 0; k < 3; k++) {
+          const ox = ((r * (k + 3) * 37) % 16 - 8) * z;
+          const oy = ((r * (k + 5) * 23) % 8 - 4) * z;
+          c.beginPath();
+          c.moveTo(p.x + ox, p.y + oy);
+          c.lineTo(p.x + ox + (k - 1) * 1.6 * z, p.y + oy - (4 + k) * z);
+          c.stroke();
+        }
+        c.lineCap = "butt";
+      } else if (r < 0.42) {                 // clover
+        c.fillStyle = clover;
+        for (let k = 0; k < 4; k++) {
+          const a = (k / 4) * Math.PI * 2 + r * 6;
+          c.beginPath();
+          c.ellipse(p.x + Math.cos(a) * 5 * z, p.y + Math.sin(a) * 2.6 * z,
+                    2.4 * z, 1.5 * z, a, 0, Math.PI * 2);
+          c.fill();
+        }
+      }
+    }
+  }
+};
+</script>

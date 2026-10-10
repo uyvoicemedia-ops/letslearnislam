@@ -1,0 +1,154 @@
+<!-- ============================================================
+     What an upgrade actually buys
+     ------------------------------------------------------------
+     Levels used to add jewellery: a gold line here, a merlon there.
+     A mosque you have finished should have PLACES in it that were
+     not there before — a shaded arcade to walk under, corner
+     kiosks, a paved sahn with a canopied fountain in the middle.
+
+     Everything here is a courtyard element, so it is arranged by
+     where it has to be painted rather than by what it is: the two
+     far runs and the paving go in behind the prayer hall, the near
+     ones go over it. All of it is gated on mqFeat, because a riwaq
+     is Arab, Persian, Ottoman and Mughal — Djenne has no arcade of
+     arches, and Xi'an has a garden where the sahn would be.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* a walker along any wall line: k runs 0..1 from (u0,v0) to (u1,v1),
+   hh is height above the ground at that point */
+function mqWalk(u0, v0, u1, v1, W, H) {
+  return (k, hh) => {
+    const q = isoPt(u0 + (u1 - u0) * k, v0 + (v1 - v0) * k, W, H);
+    return { x: q.x, y: q.y - isoH(hh) };
+  };
+}
+
+/* one arch outline as a subpath, springing at `spring`, apex at `top` */
+function mqArchPath(c, F, a0, a1, spring, top, style) {
+  const mid = (a0 + a1) / 2;
+  const p = (k, h) => F(k, h);
+  const l0 = p(a0, 0), l1 = p(a0, spring), r1 = p(a1, spring), r0 = p(a1, 0);
+  c.moveTo(l0.x, l0.y);
+  if (style === "horseshoe") {
+    // the arch widens above the springing before it closes
+    const lw = p(a0 - (a1 - a0) * 0.1, spring * 1.25);
+    const rw = p(a1 + (a1 - a0) * 0.1, spring * 1.25);
+    c.lineTo(l1.x, l1.y);
+    c.quadraticCurveTo(lw.x, lw.y, p(mid, top).x, p(mid, top).y);
+    c.quadraticCurveTo(rw.x, rw.y, r1.x, r1.y);
+  } else if (style === "round") {
+    c.lineTo(l1.x, l1.y);
+    c.quadraticCurveTo(p(a0, top).x, p(a0, top).y, p(mid, top).x, p(mid, top).y);
+    c.quadraticCurveTo(p(a1, top).x, p(a1, top).y, r1.x, r1.y);
+  } else {                                   // pointed / keel
+    c.lineTo(l1.x, l1.y);
+    c.quadraticCurveTo(p(a0 + (mid - a0) * 0.55, top * 0.92).x,
+                       p(a0 + (mid - a0) * 0.55, top * 0.92).y,
+                       p(mid, top).x, p(mid, top).y);
+    c.quadraticCurveTo(p(a1 - (a1 - mid) * 0.55, top * 0.92).x,
+                       p(a1 - (a1 - mid) * 0.55, top * 0.92).y,
+                       r1.x, r1.y);
+  }
+  c.lineTo(r0.x, r0.y);
+  c.closePath();
+}
+
+/* A riwaq: the arcade that runs round the inside of a courtyard.
+   Drawn as three layers — the shaded depth behind it, the piers that
+   hold it up, and the arcaded screen in front with the arches cut
+   out of it, so you are looking through the arches at the shade. */
+function mqRiwaq(c, u0, v0, u1, v1, h, depth, W, H, P, n, style, night, z) {
+  // the direction "into the courtyard" is whichever axis the wall is not
+  const inU = (v1 === v0) ? 0 : depth, inV = (v1 === v0) ? depth : 0;
+  const B = mqWalk(u0, v0, u1, v1, W, H);                       // back plane
+  const F = mqWalk(u0 + inU, v0 + inV, u1 + inU, v1 + inV, W, H); // front plane
+
+  // 1. the shade inside
+  c.beginPath();
+  [B(0, 0), B(1, 0), B(1, h), B(0, h)].forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y));
+  c.closePath();
+  c.fillStyle = mqShade(P.wall, night ? 0.3 : 0.42); c.fill();
+
+  // 2. the floor of it, catching a little light
+  c.beginPath();
+  [B(0, 0), B(1, 0), F(1, 0), F(0, 0)].forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y));
+  c.closePath();
+  c.fillStyle = mqShade(P.wall, night ? 0.52 : 0.86); c.fill();
+
+  // 3. the screen, with the arches taken out of it
+  const m = 0.5 / n * 0.34;                       // half the width of a pier
+  const spring = h * 0.5, top = h * 0.86;
+  c.beginPath();
+  [F(0, 0), F(1, 0), F(1, h), F(0, h)].forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y));
+  c.closePath();
+  for (let i = 0; i < n; i++) mqArchPath(c, F, i / n + m, (i + 1) / n - m, spring, top, style);
+  c.fillStyle = mqShade(P.wall, night ? 0.82 : 1.02);
+  c.fill("evenodd");
+
+  // 4. the arch rings and a cornice along the top
+  c.strokeStyle = P.trim; c.lineWidth = Math.max(1, 1.4 * z);
+  for (let i = 0; i < n; i++) {
+    c.beginPath();
+    mqArchPath(c, F, i / n + m, (i + 1) / n - m, spring, top, style);
+    c.stroke();
+  }
+  c.beginPath();
+  [F(0, h), F(1, h), F(1, h - 0.1), F(0, h - 0.1)].forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y));
+  c.closePath();
+  c.fillStyle = P.trim; c.globalAlpha = 0.85; c.fill(); c.globalAlpha = 1;
+}
+
+/* A corner kiosk — a chhatri in India, a kosk in Istanbul: four
+   little columns and a dome, standing where two arcades meet. */
+function mqKiosk(c, u, v, W, H, P, night, z, lift) {
+  const r = 0.17;
+  [[-r, -r], [r, -r], [-r, r], [r, r]].forEach(([du, dv]) =>
+    isoCyl(c, u + du, v + dv, 0.045, 0.72, W, H, mqShade(P.wall, 1.04), lift || 0));
+  isoBox(c, u - r - 0.06, v - r - 0.06, (r + 0.06) * 2, (r + 0.06) * 2, 0.12, W, H,
+    mqShade(P.wall, 1.0), mqShade(P.wall, .84), mqShade(P.wall, .7));
+  isoDome(c, u, v, r * 2.1, 0.34, W, H, P.dome || P.wall, 0, "saucer", (lift || 0) + 0.84);
+  const p = isoPt(u, v, W, H);
+  isoFinial(c, p.x, p.y - isoH((lift || 0) + 1.2), Math.max(2, 2.8 * z), P.gold);
+}
+
+/* The sahn is a floor people stand on, not a blank slab: paving
+   joints, and a border a stone darker round the edge. */
+function mqPave(c, t0, s0, t1, s1, W, H, P, night, z) {
+  const Q = (u, v) => isoPt(u, v, W, H);
+  c.save();
+  c.beginPath();
+  [Q(t0, s0), Q(t1, s0), Q(t1, s1), Q(t0, s1)].forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y));
+  c.closePath(); c.clip();
+  c.strokeStyle = night ? "rgba(255,255,255,.05)" : "rgba(0,0,0,.06)";
+  c.lineWidth = 1;
+  for (let u = Math.ceil(t0 * 2) / 2; u < t1; u += 0.5) {
+    const a = Q(u, s0), b = Q(u, s1);
+    c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+  }
+  for (let v = Math.ceil(s0 * 2) / 2; v < s1; v += 0.5) {
+    const a = Q(t0, v), b = Q(t1, v);
+    c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+  }
+  c.restore();
+  c.strokeStyle = night ? "rgba(255,255,255,.10)" : "rgba(0,0,0,.10)";
+  c.lineWidth = Math.max(1, 2 * z);
+  c.beginPath();
+  [Q(t0 + 0.22, s0 + 0.22), Q(t1 - 0.22, s0 + 0.22), Q(t1 - 0.22, s1 - 0.22), Q(t0 + 0.22, s1 - 0.22)]
+    .forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y));
+  c.closePath(); c.stroke();
+}
+
+/* The canopy over an ablution fountain. Once a mosque is finished,
+   the basin in the sahn has a little roof over it, which is what a
+   sadirvan actually looks like. */
+function mqCanopy(c, u, v, W, H, P, night, z) {
+  const r = 0.3;
+  [[-r, -r], [r, -r], [-r, r], [r, r]].forEach(([du, dv]) =>
+    isoCyl(c, u + du, v + dv, 0.04, 0.95, W, H, P.trim));
+  isoDome(c, u, v, r * 2.3, 0.4, W, H, mqShade(P.wall, 1.02), 0, "cone", 0.95);
+  const p = isoPt(u, v, W, H);
+  isoFinial(c, p.x, p.y - isoH(1.4), Math.max(2, 3 * z), P.gold);
+}
+</script>

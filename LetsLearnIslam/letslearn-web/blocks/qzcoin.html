@@ -1,0 +1,134 @@
+<!-- ============================================================
+     Winning waters the garden
+     ------------------------------------------------------------
+     The quiz score and the garden had nothing to do with each
+     other: a child could win every round and go back to the same
+     empty patch of grass. Coming top now pays coins.
+
+     WHAT IT PAYS, and why it is small. The garden runs on a scale
+     where a dua is 2 coins, a day's practice about 12, and the
+     next piece of land 150 and rising:
+
+         first                       15 coins
+         second                      10
+         third                        6
+         played and answered          3
+
+     Winning is worth about a day's practice — worth chasing, not
+     a shortcut past the whole game. Everyone who took part leaves
+     with something, so the child who never comes first still has
+     a reason to play.
+
+     THE RULES ROUND THE EDGES, which are where this sort of thing
+     goes wrong:
+       * you must have answered at least one question — sitting in
+         the room pays nothing;
+       * on your own in a room you are not "first", you are taking
+         part: 3 coins. Otherwise a child learns to open a room
+         alone and farm it;
+       * a tie shares the better place, counted as "how many
+         scored more than me", not by position in a sorted list.
+
+     WHERE IT RUNS. On the child's own device, when the host says
+     the game is over — the teacher's machine must not be paying
+     coins into somebody else's garden. Nothing is taken on trust
+     from the network: the count of answers comes from the
+     `judged` messages addressed to this player, which the host
+     alone decides.
+
+     Paid once per room, so a re-render, a reconnect or a repeated
+     "done" cannot pay twice.
+     ============================================================ -->
+<style>
+  .qzc-won { display:block; margin:8px auto 2px; font-size:15px; font-weight:800;
+             color:var(--qaida-green); }
+  .qzc-won .c { font-size:19px; }
+  .qzc-note { font-size:12.5px; color:var(--muted); }
+</style>
+<script>
+"use strict";
+
+/* what this player has done in the room they are in now */
+const QZC = { code: "", right: 0, asked: 0, paid: "", lastCoins: 0, lastWhy: "" };
+
+const QZC_PRIZE = [15, 10, 6];      // first, second, third
+const QZC_TOOK_PART = 3;
+
+/* `place` counts how many scored MORE, so a tie shares the better one.
+   `others` is how many other children were in the room. */
+function qzcWorkOutCoins(place, others) {
+  if (!QZC.asked) return { coins: 0, why: "" };          // never answered: nothing
+  if (others < 1)                                        // alone in the room
+    return { coins: QZC_TOOK_PART, why: "for playing" };
+  const prize = QZC_PRIZE[place - 1];
+  if (prize) return { coins: prize, why: qsOrd(place) + " place" };
+  return { coins: QZC_TOOK_PART, why: "for playing" };
+}
+
+/* Pay into the garden the same way everything else does, and mind test
+   mode: while it is on, `g.deeds` is a made-up 999999 and the real
+   balance is parked in `g.deedsReal`. Paying the visible one would be
+   thrown away the moment the switch goes off. */
+function qzcPay(coins) {
+  if (!(coins > 0)) return 0;
+  const g = gState();
+  if (g.noLimits && typeof g.deedsReal === "number") g.deedsReal += coins;
+  else g.deeds = (g.deeds | 0) + coins;
+  g.quizCoins = (g.quizCoins | 0) + coins;        // so Progress can show the total
+  llSave();
+  return coins;
+}
+
+/* ---------- watch this player's own game ---------- */
+const quizPlayerHeardCoin = quizPlayerHeard;
+quizPlayerHeard = function (m) {
+  /* a new room: start counting again */
+  if (m && m.t === "state" && QZ.code && QZC.code !== QZ.code) {
+    QZC.code = QZ.code; QZC.right = 0; QZC.asked = 0;
+    QZC.paid = ""; QZC.lastCoins = 0; QZC.lastWhy = "";
+  }
+
+  /* the host is the only one who decides whether an answer was right */
+  if (m && m.t === "judged" && m.nick === QZ.me && QZ.mode === "player") {
+    QZC.asked += 1;
+    if (m.right) QZC.right += 1;
+  }
+
+  const out = quizPlayerHeardCoin.apply(this, arguments);
+
+  if (QZ.mode === "player" && QZ.stage === "done" && QZC.paid !== QZ.code) {
+    QZC.paid = QZ.code;                            // once per room, whatever arrives after
+    const board = QZ.board || [];
+    const mine = (board.find(b => b.nick === QZ.me) || { score: QZ.myScore | 0 }).score | 0;
+    const place = 1 + board.filter(b => (b.score | 0) > mine).length;
+    const got = qzcWorkOutCoins(place, Math.max(0, board.length - 1));
+    QZC.lastCoins = got.coins; QZC.lastWhy = got.why;
+    if (got.coins > 0) {
+      qzcPay(got.coins);
+      if (typeof Snd === "object" && Snd.coin) Snd.coin();
+      toast("+" + got.coins + " coins for your garden");
+      render();
+    }
+  }
+  return out;
+};
+
+/* ---------- say so on the finished screen ---------- */
+const quizPlayerPageCoin = quizPlayerPage;
+quizPlayerPage = function () {
+  const html = quizPlayerPageCoin.apply(this, arguments);
+  if (QZ.stage !== "done" || !QZC.lastCoins) return html;
+  const line = `<span class="qzc-won"><span class="c">🪙 +${QZC.lastCoins} coins</span>
+      for your garden</span>
+    <span class="qzc-note">${esc(QZC.lastWhy)}</span>`;
+  /* Under the child's own score and above the podium. The QZPOD block
+     rebuilt this screen, so the old "You scored" paragraph is not there
+     any more on a finished game — anchor on the podium, and fall back
+     through the older shapes rather than assuming any one of them. */
+  const pod = html.indexOf('<div class="qz-podium">');
+  if (pod > -1) return html.slice(0, pod) + line + html.slice(pod);
+  const scored = html.indexOf("You scored");
+  const at = scored > -1 ? html.indexOf("</p>", scored) : -1;
+  return at > -1 ? html.slice(0, at + 4) + line + html.slice(at + 4) : html + line;
+};
+</script>

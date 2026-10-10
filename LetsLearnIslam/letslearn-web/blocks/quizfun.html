@@ -1,0 +1,575 @@
+<!-- ============================================================
+     The quiz: faster, with a podium, and with monsters
+     ------------------------------------------------------------
+     PERFORMANCE. Every message called render(), which rebuilds the
+     whole page. Twenty-five children answering in the same two
+     seconds meant twenty-five full page rebuilds on the teacher's
+     laptop, and the answer grid being thrown away and remade under
+     the child's finger. Three fixes:
+
+       1. quizPaint() coalesces renders to at most one per animation
+          frame, so a burst of answers costs one repaint.
+       2. An answer no longer repaints the host at all — it writes
+          the "12 of 25 have answered" counter straight into the DOM.
+       3. Ten children joining at once used to send ten full state
+          broadcasts. quizTellSoon() debounces them into one.
+
+     The countdown bar also stopped running its timer forever in the
+     background; it now only ticks while a question is live.
+
+     MONSTERS. Drawn on a canvas and cached as data URLs, so the same
+     monster at the same size is rasterised once and then costs
+     nothing. They are imaginary creatures, deliberately built out of
+     blobs, horns and spots rather than anything human — see the note
+     in DESIGN.md section 2 about faceless characters.
+
+     PODIUM. Second, first, third, rising into place with medals, a
+     crown, and confetti — and every child sees where they came.
+     ============================================================ -->
+<style>
+  .qz-mon { display:block; image-rendering:auto; }
+  .qz-monbtn { border:2.5px solid transparent; background:#f3f0e6; border-radius:16px;
+               padding:6px; cursor:pointer; line-height:0; transition:transform .12s ease,
+               border-color .12s ease, background .12s ease; }
+  .qz-monbtn:hover { transform:translateY(-2px); }
+  .qz-monbtn[aria-pressed="true"] { border-color:var(--qaida-green); background:#e6f0e9; }
+  .qz-mongrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(64px,1fr));
+                gap:8px; margin:6px 0 4px; }
+  .qz-place .av { width:28px; height:28px; flex:0 0 auto; }
+  .qz-chip { display:inline-flex; align-items:center; gap:6px; }
+  .qz-chip .av { width:26px; height:26px; }
+
+  /* The blocks must sit on one line whatever the monsters above them
+     do, so each column is its own flex box pushed to the bottom and
+     the row is only as tall as the tallest column needs. */
+  .qz-podium { display:flex; align-items:flex-end; justify-content:center; gap:10px;
+               margin:6px 0 16px; }
+  .qz-podium .pod { flex:1 1 0; max-width:150px; text-align:center;
+                    display:flex; flex-direction:column; justify-content:flex-end; }
+  .qz-podium .who { animation:podPop .5s cubic-bezier(.2,1.4,.4,1) both; }
+  .qz-podium .who img { margin:0 auto 4px; }
+  .qz-podium .nm { font-weight:800; font-size:13.5px; white-space:nowrap;
+                   overflow:hidden; text-overflow:ellipsis; }
+  .qz-podium .sc { font-size:12px; color:var(--muted); }
+  .qz-podium .blk { border-radius:12px 12px 0 0; margin-top:6px; display:grid;
+                    place-items:center; font-size:30px; font-weight:800; color:#fff;
+                    flex:0 0 auto;
+                    transform-origin:bottom; animation:podRise .55s cubic-bezier(.2,1.2,.4,1) both; }
+  .qz-podium .p1 .blk { height:104px; background:linear-gradient(180deg,#e8b93c,#c99a22); }
+  .qz-podium .p2 .blk { height:76px;  background:linear-gradient(180deg,#b9c0c8,#949ca6); }
+  .qz-podium .p3 .blk { height:56px;  background:linear-gradient(180deg,#cd9264,#a9744b); }
+  .qz-podium .p1 .blk { animation-delay:.30s } .qz-podium .p1 .who { animation-delay:.62s }
+  .qz-podium .p2 .blk { animation-delay:.05s } .qz-podium .p2 .who { animation-delay:.34s }
+  .qz-podium .p3 .blk { animation-delay:.16s } .qz-podium .p3 .who { animation-delay:.46s }
+  @keyframes podRise { from { transform:scaleY(.04); opacity:.4 } to { transform:scaleY(1); opacity:1 } }
+  @keyframes podPop  { from { transform:translateY(14px) scale(.7); opacity:0 }
+                       to   { transform:none; opacity:1 } }
+  .qz-crown { font-size:22px; line-height:1; animation:crownBob 1.6s ease-in-out infinite; }
+  @keyframes crownBob { 50% { transform:translateY(-4px) rotate(-6deg) } }
+  .qz-mine { display:flex; align-items:center; gap:12px; justify-content:center;
+             background:#f3f0e6; border-radius:16px; padding:12px; margin:0 0 12px; }
+  .qz-mine .big { font-size:19px; font-weight:800; }
+  @media (prefers-reduced-motion: reduce) {
+    .qz-podium .blk, .qz-podium .who, .qz-crown { animation:none !important; }
+  }
+</style>
+<script>
+"use strict";
+
+/* ============================================================
+   Monsters
+   ============================================================ */
+
+const MONSTERS = [
+  { id:0,  name:"Pip",    c:"#5fb3d9", horn:"round",  eyes:2, spot:"dots",   arms:1 },
+  { id:1,  name:"Zuzu",   c:"#e0728f", horn:"spike",  eyes:1, spot:"none",   arms:1 },
+  { id:2,  name:"Bramble",c:"#6fbf7a", horn:"leaf",   eyes:2, spot:"stripe", arms:2 },
+  { id:3,  name:"Nooj",   c:"#f0a94a", horn:"none",   eyes:3, spot:"dots",   arms:1 },
+  { id:4,  name:"Mimi",   c:"#a684d4", horn:"round",  eyes:2, spot:"none",   arms:2 },
+  { id:5,  name:"Tuk",    c:"#4fb8a8", horn:"spike",  eyes:2, spot:"stripe", arms:1 },
+  { id:6,  name:"Wobble", c:"#e8c04a", horn:"none",   eyes:2, spot:"dots",   arms:2 },
+  { id:7,  name:"Snug",   c:"#e2846a", horn:"leaf",   eyes:1, spot:"none",   arms:1 },
+  { id:8,  name:"Ollo",   c:"#7d9ee0", horn:"round",  eyes:3, spot:"stripe", arms:2 },
+  { id:9,  name:"Fenn",   c:"#8fc45f", horn:"spike",  eyes:2, spot:"dots",   arms:1 },
+  { id:10, name:"Puddle", c:"#63c2d4", horn:"none",   eyes:2, spot:"none",   arms:2 },
+  { id:11, name:"Blip",   c:"#d78ac2", horn:"leaf",   eyes:2, spot:"stripe", arms:1 },
+];
+
+const monOf = (i) => MONSTERS[((i | 0) % MONSTERS.length + MONSTERS.length) % MONSTERS.length];
+
+/* Rasterised once per (monster, size, mood) and kept — a leaderboard
+   redrawing twelve of these every frame should cost nothing. */
+const MON_CACHE = new Map();
+
+function qzMonsterUrl(idx, size, mood) {
+  const key = idx + "|" + size + "|" + (mood || "idle");
+  const hit = MON_CACHE.get(key);
+  if (hit) return hit;
+  const cv = document.createElement("canvas");
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = size * dpr; cv.height = size * dpr;
+  const c = cv.getContext("2d");
+  c.scale(dpr, dpr);
+  qzDrawMonster(c, size, idx, mood || "idle");
+  const url = cv.toDataURL();
+  MON_CACHE.set(key, url);
+  return url;
+}
+
+const qzMonImg = (idx, size, mood, cls) =>
+  `<img class="qz-mon ${cls || ""}" width="${size}" height="${size}" alt=""
+     src="${qzMonsterUrl(idx, size, mood)}">`;
+
+function qzDrawMonster(c, S, idx, mood) {
+  const m = monOf(idx);
+  const k = S / 100;                       // everything below is drawn at 100
+  c.save(); c.scale(k, k);
+  const body = m.c;
+  const dark = mqShade(body, 0.78), light = mqShade(body, 1.14);
+  const cx = 50, cy = 56, rx = 30, ry = 30;
+
+  // a soft shadow so it sits on something
+  c.fillStyle = "rgba(30,40,35,.12)";
+  c.beginPath(); c.ellipse(cx, 90, 24, 6, 0, 0, Math.PI * 2); c.fill();
+
+  // feet
+  c.fillStyle = dark;
+  [-13, 13].forEach(o => {
+    c.beginPath(); c.ellipse(cx + o, 85, 9, 6, 0, 0, Math.PI * 2); c.fill();
+  });
+
+  // horns, behind the body
+  if (m.horn === "round") {
+    c.fillStyle = dark;
+    [-17, 17].forEach(o => { c.beginPath(); c.arc(cx + o, 26, 7, 0, Math.PI * 2); c.fill(); });
+  } else if (m.horn === "spike") {
+    c.fillStyle = dark;
+    [-15, 15].forEach(o => {
+      c.beginPath();
+      c.moveTo(cx + o - 7, 34); c.lineTo(cx + o, 12); c.lineTo(cx + o + 7, 34);
+      c.closePath(); c.fill();
+    });
+  } else if (m.horn === "leaf") {
+    c.fillStyle = "#5aa864";
+    c.beginPath(); c.ellipse(cx + 8, 22, 12, 6, -0.5, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = "#3f7d52"; c.lineWidth = 2.4;
+    c.beginPath(); c.moveTo(cx, 34); c.lineTo(cx + 4, 24); c.stroke();
+  }
+
+  // the body — a friendly blob, a touch wider than tall
+  const g = c.createLinearGradient(cx - rx, cy - ry, cx + rx, cy + ry);
+  g.addColorStop(0, light); g.addColorStop(1, body);
+  c.fillStyle = g;
+  c.beginPath();
+  c.moveTo(cx - rx, cy + 8);
+  c.bezierCurveTo(cx - rx - 3, cy - 24, cx - 18, cy - ry - 6, cx, cy - ry - 6);
+  c.bezierCurveTo(cx + 18, cy - ry - 6, cx + rx + 3, cy - 24, cx + rx, cy + 8);
+  c.bezierCurveTo(cx + rx, cy + 30, cx + 16, cy + 34, cx, cy + 34);
+  c.bezierCurveTo(cx - 16, cy + 34, cx - rx, cy + 30, cx - rx, cy + 8);
+  c.closePath(); c.fill();
+
+  // markings
+  c.save();
+  c.beginPath();
+  c.ellipse(cx, cy + 2, rx - 1, ry + 2, 0, 0, Math.PI * 2);
+  c.clip();
+  if (m.spot === "dots") {
+    c.fillStyle = mqShade(body, 0.86);
+    [[-16, 18, 5], [12, 24, 6], [20, 6, 4], [-8, 30, 4]].forEach(([ox, oy, r]) => {
+      c.beginPath(); c.arc(cx + ox, cy + oy - 10, r, 0, Math.PI * 2); c.fill();
+    });
+  } else if (m.spot === "stripe") {
+    c.fillStyle = mqShade(body, 0.86);
+    [22, 32].forEach(oy => c.fillRect(cx - rx, cy + oy - 12, rx * 2, 5));
+  }
+  // a paler belly on everyone — it is what makes a blob look friendly
+  c.fillStyle = "rgba(255,255,255,.4)";
+  c.beginPath(); c.ellipse(cx, cy + 20, 17, 13, 0, 0, Math.PI * 2); c.fill();
+  c.restore();
+
+  // arms
+  c.strokeStyle = dark; c.lineWidth = 6; c.lineCap = "round";
+  if (m.arms >= 1) { c.beginPath(); c.moveTo(cx - 28, cy + 4); c.lineTo(cx - 38, cy - 4); c.stroke(); }
+  if (m.arms >= 2) { c.beginPath(); c.moveTo(cx + 28, cy + 4); c.lineTo(cx + 38, cy - 4); c.stroke(); }
+  c.lineCap = "butt";
+
+  /* Eyes and a mouth. These are imaginary creatures, not people — the
+     faceless rule is about depicting human beings. */
+  const eyeY = cy - 6;
+  const spread = m.eyes === 1 ? [0] : m.eyes === 2 ? [-11, 11] : [-15, 0, 15];
+  const shut = mood === "sad";
+  spread.forEach(ox => {
+    c.fillStyle = "#fdfbf6";
+    c.beginPath(); c.ellipse(cx + ox, eyeY, m.eyes === 3 ? 6.5 : 8.5, 9, 0, 0, Math.PI * 2); c.fill();
+    if (shut) {
+      c.strokeStyle = "#3a3733"; c.lineWidth = 2.4; c.lineCap = "round";
+      c.beginPath(); c.arc(cx + ox, eyeY + 3, 6, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
+      c.lineCap = "butt";
+      return;
+    }
+    const look = mood === "win" ? -2.5 : 0;
+    c.fillStyle = "#3a3733";
+    c.beginPath(); c.arc(cx + ox + 1, eyeY + look, m.eyes === 3 ? 3 : 4, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "rgba(255,255,255,.9)";
+    c.beginPath(); c.arc(cx + ox + 2.5, eyeY + look - 2, 1.5, 0, Math.PI * 2); c.fill();
+  });
+
+  c.strokeStyle = "#3a3733"; c.lineWidth = 2.6; c.lineCap = "round";
+  c.beginPath();
+  if (mood === "sad") c.arc(cx, cy + 20, 7, Math.PI * 1.15, Math.PI * 1.85);
+  else if (mood === "win") { c.arc(cx, cy + 10, 9, 0.15, Math.PI - 0.15); }
+  else c.arc(cx, cy + 11, 7, 0.25, Math.PI - 0.25);
+  c.stroke();
+  c.lineCap = "butt";
+
+  if (mood === "win") {                     // a couple of sparkles
+    c.fillStyle = "#f6d64a";
+    [[18, -22, 4], [-22, -14, 3], [26, 4, 2.5]].forEach(([ox, oy, r]) => {
+      c.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+        const rr = i % 2 ? r * 0.4 : r;
+        c[i ? "lineTo" : "moveTo"](cx + ox + Math.cos(a) * rr, cy + oy + Math.sin(a) * rr);
+      }
+      c.closePath(); c.fill();
+    });
+  }
+  c.restore();
+}
+
+/* ---------- which one am I ---------- */
+
+function qzMyAvatar() {
+  let v = null;
+  try { v = localStorage.getItem("ll.qz.avatar"); } catch (e) {}
+  if (v == null) {
+    v = Math.floor(Math.random() * MONSTERS.length);
+    try { localStorage.setItem("ll.qz.avatar", String(v)); } catch (e) {}
+  }
+  return (parseInt(v, 10) || 0) % MONSTERS.length;
+}
+
+function qzPickAvatar(i) {
+  try { localStorage.setItem("ll.qz.avatar", String(i)); } catch (e) {}
+  if (typeof Snd !== "undefined") Snd.pop();
+  render();
+}
+
+function qzAvatarPicker() {
+  const mine = qzMyAvatar();
+  return `<label class="llc-field"><span>Choose your monster</span></label>
+    <div class="qz-mongrid">
+      ${MONSTERS.map(m => `<button type="button" class="qz-monbtn"
+        aria-pressed="${m.id === mine}" title="${esc(m.name)}"
+        onclick="qzPickAvatar(${m.id})">${qzMonImg(m.id, 52, m.id === mine ? "win" : "idle")}</button>`).join("")}
+    </div>
+    <p class="note" style="margin:0 0 10px">You are
+      <strong>${esc(monOf(mine).name)}</strong> today.</p>`;
+}
+</script>
+<script>
+"use strict";
+
+/* ============================================================
+   Making it quick
+   ============================================================ */
+
+/* render() rebuilds the page. A burst of twenty-five answers used to
+   mean twenty-five of them. One per frame is plenty. */
+let QZ_PAINT = 0;
+function quizPaint() {
+  if (QZ_PAINT) return;
+  QZ_PAINT = requestAnimationFrame(() => { QZ_PAINT = 0; render(); });
+}
+
+/* Ten children joining in the same second used to send ten full state
+   broadcasts down the wire. */
+let QZ_TELL = 0;
+function quizTellSoon() {
+  if (QZ_TELL) return;
+  QZ_TELL = setTimeout(() => { QZ_TELL = 0; quizTell(); }, 220);
+}
+
+/* the answered counter, written straight into the page */
+function quizTouchCount() {
+  const el = document.getElementById("qzCount");
+  if (!el) { quizPaint(); return; }
+  const names = Object.keys(QZ.players);
+  const answered = names.filter(n => QZ.players[n].answeredOrd === QZ.ord).length;
+  el.textContent = answered + " of " + names.length + " have answered";
+}
+
+const quizHostHeardFast = quizHostHeard;
+quizHostHeard = function (m) {
+  if (!m || QZ.mode !== "host") return;
+
+  if (m.t === "join") {
+    const p = QZ.players[m.nick];
+    if (p) { if (m.av != null) p.av = m.av; quizTellSoon(); return; }
+    QZ.players[m.nick] = { score: 0, answeredOrd: -1, lastPoints: 0, av: m.av | 0 };
+    quizTellSoon();
+    quizPaint();
+    return;
+  }
+
+  if (m.t === "answer") {
+    const p = QZ.players[m.nick], q = quizQ();
+    if (!p || !q || QZ.stage !== "asking") return;
+    if (p.answeredOrd === QZ.ord) return;
+    p.answeredOrd = QZ.ord;
+    const took = Math.max(0, Date.now() - QZ.askedAt);
+    const limit = q.s * 1000;
+    const right = m.pick === q.k;
+    let points = 0;
+    if (right && took <= limit + 1200) points = 500 + Math.round(500 * Math.max(0, 1 - took / limit));
+    p.lastPoints = points;
+    p.score += points;
+    QuizNet.send({ t: "judged", nick: m.nick, right, points, score: p.score });
+    /* the only thing on screen that changed is a number */
+    quizTouchCount();
+    /* everyone in has answered — no reason to make the teacher wait */
+    const names = Object.keys(QZ.players);
+    if (names.length && names.every(n => QZ.players[n].answeredOrd === QZ.ord)) {
+      clearTimeout(QZ.tick);
+      QZ.tick = setTimeout(quizReveal, 700);
+    }
+    return;
+  }
+
+  return quizHostHeardFast(m);
+};
+
+const quizPlayerHeardFast = quizPlayerHeard;
+quizPlayerHeard = function (m) {
+  if (!m || QZ.mode !== "player") return;
+  if (m.t === "judged" && m.nick === QZ.me) {
+    QZ.myScore = m.score; QZ.lastRight = m.right; QZ.lastPoints = m.points;
+    if (m.right) Snd.win(); else Snd.wrong();
+    /* mid-question the answer grid must not be torn down under the
+       child's finger — only the score line changes */
+    const sc = document.getElementById("qzMyScore");
+    if (sc && QZ.stage === "asking") { sc.textContent = QZ.myScore + " points"; return; }
+    quizPaint();
+    return;
+  }
+  return quizPlayerHeardFast(m);
+};
+
+/* the board carries the monsters now */
+const quizBoardFast = quizBoard;
+quizBoard = function () {
+  return Object.keys(QZ.players)
+    .map(n => ({ nick: n, score: QZ.players[n].score,
+                 last: QZ.players[n].lastPoints, av: QZ.players[n].av | 0 }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 24);
+};
+
+/* join with a monster */
+const quizJoinFun = quizJoin;
+quizJoin = function (code, nick) {
+  const before = QZ.mode;
+  quizJoinFun(code, nick);
+  if (QZ.mode === "player" && before !== "player") {
+    QZ.av = qzMyAvatar();
+    QuizNet.send({ t: "join", nick: QZ.me, av: QZ.av });
+  }
+};
+
+/* ---------- the countdown bar, only while it is counting ---------- */
+let QZ_BAR = 0;
+function quizBarTick() {
+  QZ_BAR = 0;
+  const bar = document.getElementById("qzBar");
+  if (!bar || QZ.stage !== "asking") return;
+  const q = QZ.mode === "host" ? quizQ() : QZ.question;
+  if (!q) return;
+  const left = Math.max(0, 1 - (Date.now() - QZ.askedAt) / (q.s * 1000));
+  bar.style.width = (left * 100).toFixed(1) + "%";
+  bar.style.background = left < 0.25 ? "#d4574a" : "";
+  QZ_BAR = setTimeout(quizBarTick, 120);
+}
+const quizAskBar = quizAsk;
+quizAsk = function () { quizAskBar.apply(this, arguments); clearTimeout(QZ_BAR); quizBarTick(); };
+
+/* ============================================================
+   The podium
+   ============================================================ */
+
+const QZ_MEDAL = ["🥇", "🥈", "🥉"];
+
+function quizPodium(board) {
+  const top = (board || []).slice(0, 3);
+  if (!top.length) return "";
+  const order = [1, 0, 2];                       // second, first, third
+  return `<div class="qz-podium">${order.map(i => {
+    const b = top[i];
+    if (!b) return `<div class="pod p${i + 1}"></div>`;
+    return `<div class="pod p${i + 1}">
+      <div class="who">
+        ${i === 0 ? '<div class="qz-crown">👑</div>' : ""}
+        ${qzMonImg(b.av | 0, i === 0 ? 78 : 62, i === 0 ? "win" : "idle")}
+        <div class="nm">${esc(b.nick)}</div>
+        <div class="sc">${b.score}</div>
+      </div>
+      <div class="blk">${QZ_MEDAL[i]}</div>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+/* a proper cheer, not one puff of confetti */
+function quizCheer() {
+  if (typeof confetti !== "function") return;
+  confetti(40);
+  setTimeout(() => confetti(30), 260);
+  setTimeout(() => confetti(24), 620);
+}
+
+const quizFinishFun = quizFinish;
+quizFinish = function () {
+  quizFinishFun.apply(this, arguments);
+  quizCheer();
+};
+
+/* ---------- the board rows, with monsters ---------- */
+
+quizBoardHtml = function (board, big) {
+  if (!board || !board.length) return '<p class="note">Nobody has scored yet.</p>';
+  const rows = big ? board.slice(3) : board;
+  const head = big ? quizPodium(board) : "";
+  if (big && !rows.length) return head;
+  return head + rows.map((b, i) => {
+    const place = big ? i + 4 : i + 1;
+    return `<div class="qz-place ${place === 1 ? "top" : ""}">
+      <span class="no">${place}</span>
+      ${qzMonImg(b.av | 0, 28, "idle", "av")}
+      <span class="nm">${esc(b.nick)}</span>
+      ${b.last ? `<span class="note">+${b.last}</span>` : ""}
+      <span class="sc">${b.score}</span>
+    </div>`;
+  }).join("");
+};
+
+/* ---------- the screens ---------- */
+
+/* the picker goes on the join card */
+const quizStartPageFun = quizStartPage;
+quizStartPage = function () {
+  let html = quizStartPageFun.apply(this, arguments);
+  const anchor = '<label class="llc-field"><span>Your name</span>';
+  const i = html.indexOf(anchor);
+  if (i < 0) return html;
+  const after = html.indexOf("</label>", i) + "</label>".length;
+  html = html.slice(0, after) + qzAvatarPicker() + html.slice(after);
+
+  /* the footer still claimed a room only reached other tabs, which
+     stopped being true the day the relay went in */
+  return html.replace(/<p class="note" style="margin-top:14px">[\s\S]*?<\/p>/,
+    '<p class="note" style="margin-top:14px">' + (
+      (typeof LLC !== "undefined" && LLC.sb)
+        ? "Your school's project is connected, so players can join from anywhere."
+        : (typeof LAN_OK !== "undefined" && LAN_OK)
+          ? "Everyone on this wifi can join — open the address the teacher shows you."
+          : "This page is a plain file, so a room only reaches other tabs of this browser. "
+            + "Run <code>python3 tools/llserve.py</code> to let the class join from their own devices."
+    ) + "</p>");
+};
+
+/* the lobby chips, the answered counter, and the finish screen */
+const quizHostPageFun = quizHostPage;
+quizHostPage = function () {
+  let html = quizHostPageFun.apply(this, arguments);
+
+  if (QZ.stage === "lobby") {
+    const names = Object.keys(QZ.players);
+    html = html.replace(/<div class="qz-players">[\s\S]*?<\/div>/,
+      '<div class="qz-players">' + names.map(n =>
+        `<span class="qz-chip">${qzMonImg(QZ.players[n].av | 0, 26, "idle", "av")}${esc(n)}</span>`
+      ).join("") + '</div>');
+    return html;
+  }
+
+  if (QZ.stage === "asking") {
+    return html.replace(/<p class="note" style="text-align:center">(\d+ of \d+ have answered)<\/p>/,
+      '<p class="note" style="text-align:center" id="qzCount">$1</p>');
+  }
+
+  if (QZ.stage === "done") {
+    const set = quizSet();
+    return `<div class="qz-wrap">
+      <h1 style="text-align:center">${esc(set.title)} — finished</h1>
+      <div class="card">
+        ${quizBoardHtml(QZ.board, true)}
+        <div class="llc-row"><button class="btn primary" style="width:100%"
+          onclick="quizEnd()">Close the room</button></div>
+      </div>
+    </div>`;
+  }
+  return html;
+};
+
+const quizPlayerPageFun = quizPlayerPage;
+quizPlayerPage = function () {
+  if (QZ.stage === "lobby" && QZ.mode === "player") {
+    return `<div class="qz-wrap">
+      <h1>You are in</h1>
+      <div class="card" style="text-align:center">
+        <div class="qz-code">${esc(QZ.code)}</div>
+        ${qzMonImg(QZ.av == null ? qzMyAvatar() : QZ.av, 96, "idle", "")}
+        <p class="note" style="margin-top:6px">Hello ${esc(QZ.me)} — wait for your
+          teacher to start.</p>
+        <button class="btn" onclick="quizLeave()">Leave</button>
+      </div>
+    </div>`;
+  }
+
+  if (QZ.stage === "done" && QZ.mode === "player") {
+    const board = QZ.board || [];
+    const at = board.findIndex(b => b.nick === QZ.me);
+    const place = at < 0 ? null : at + 1;
+    const mine = QZ.av == null ? qzMyAvatar() : QZ.av;
+    const won = place === 1;
+    const word = place == null ? "You finished"
+      : place === 1 ? "You won!"
+      : place === 2 ? "Second place!"
+      : place === 3 ? "Third place!"
+      : "You came " + place + (place % 10 === 1 && place !== 11 ? "st"
+          : place % 10 === 2 && place !== 12 ? "nd"
+          : place % 10 === 3 && place !== 13 ? "rd" : "th");
+    return `<div class="qz-wrap">
+      <h1 style="text-align:center">Finished</h1>
+      <div class="card">
+        <div class="qz-mine">
+          ${qzMonImg(mine, 72, won ? "win" : place && place <= 3 ? "win" : "idle")}
+          <div>
+            <div class="big">${esc(word)}</div>
+            <div class="note">${QZ.myScore} points${
+              place && place <= 3 ? " · " + QZ_MEDAL[place - 1] : ""}</div>
+          </div>
+        </div>
+        ${quizBoardHtml(board, true)}
+        <button class="btn" style="width:100%;margin-top:10px"
+          onclick="quizLeave()">Leave</button>
+      </div>
+    </div>`;
+  }
+
+  let html = quizPlayerPageFun.apply(this, arguments);
+  if (QZ.stage === "asking") {
+    html = html.replace(/(\d+) points<\/p>/, '<span id="qzMyScore">$1 points</span></p>');
+  }
+  return html;
+};
+
+/* a player who reaches the end should hear it too */
+const quizPlayerHeardCheer = quizPlayerHeard;
+quizPlayerHeard = function (m) {
+  const was = QZ.stage;
+  quizPlayerHeardCheer.call(this, m);
+  if (QZ.mode === "player" && was !== "done" && QZ.stage === "done") {
+    const at = (QZ.board || []).findIndex(b => b.nick === QZ.me);
+    if (at >= 0 && at < 3) quizCheer(); else if (typeof confetti === "function") confetti(14);
+    Snd.cheer();
+  }
+};
+</script>

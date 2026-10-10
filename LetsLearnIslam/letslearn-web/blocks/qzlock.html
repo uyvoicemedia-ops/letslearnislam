@@ -1,0 +1,109 @@
+<!-- ============================================================
+     The report is not for children
+     ------------------------------------------------------------
+     Admin, teacher and parent see quiz reports. A child sees the
+     game and their own garden, and that is all.
+
+     They already did — no student screen builds a report. What
+     was left open was the way IN. Two of them:
+
+     1. THE ROLE SWITCH in the header. It is a reviewer's
+        shortcut: four buttons that turn you into anyone. Since
+        the gate decides who you are, a child signed in on a
+        laptop could press "Teacher" and read the whole madrasah's
+        scores. It is now hidden whenever the person who signed in
+        at the gate is a child. (On a phone the MOBILE block was
+        already hiding it, which is exactly the kind of accident
+        that should not be the thing protecting a child's data.)
+
+     2. THE BUILDERS THEMSELVES. Guarding a call site guards one
+        screen; guarding the function guards every screen anyone
+        adds later. So the report builders return nothing for a
+        child whatever calls them, and a parent printing a report
+        can only print one of their own children — an id typed by
+        hand gets nothing back.
+
+     WHY THIS BLOCK WAITS. `llinsert.py` is idempotent by
+     stripping a block and re-appending it at the END, so editing
+     an EARLIER block moves it after a LATER one. That happened
+     here: a change to the sittings report moved QZSESS behind
+     QZLOCK, QZLOCK's wrappers were left holding functions that
+     did not exist yet, and the guards silently disappeared — the
+     report came back for a signed-in child, with nothing in the
+     console and a clean `llcheck`. So the wrappers are installed
+     on DOMContentLoaded instead: by then every block has run and
+     whatever it wraps is the final version, whatever order the
+     file ended up in.
+
+     None of this is real security: it is one HTML file, and
+     anything the browser holds a determined adult can read. The
+     database is where this is actually enforced — see the RLS in
+     0005_families.sql. This is about the app not putting other
+     people's children in front of a child who taps the wrong
+     button.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* who actually came through the gate, as opposed to whatever `role`
+   has been switched to since */
+function qzlSignedInChild() {
+  const who = (typeof LLA === "object" && LLA && LLA.who) || null;
+  return !!(who && who.role === "student");
+}
+
+function qzlApply() {
+  /* 1. a child cannot become a teacher */
+  const renderRoleSwitchLock = renderRoleSwitch;
+  renderRoleSwitch = function () {
+    const out = renderRoleSwitchLock.apply(this, arguments);
+    const box = document.getElementById("roleSwitch");
+    if (!box) return out;
+    if (qzlSignedInChild()) { box.innerHTML = ""; box.hidden = true; }
+    else box.hidden = false;
+    return out;
+  };
+
+  /* 2. and the reports themselves say no, wherever they are called from */
+  const qsSessionsHtmlLock = qsSessionsHtml;
+  qsSessionsHtml = function () {
+    /* the gate outranks `role`: a child who has forced the role some other
+       way is still a child */
+    if (qzlSignedInChild()) return "";
+    if (role !== "teacher" && role !== "admin") return "";
+    return qsSessionsHtmlLock.apply(this, arguments);
+  };
+
+  const qsChildHtmlLock = qsChildHtml;
+  qsChildHtml = function (kid) {
+    if (role === "student" || qzlSignedInChild()) return "";
+    /* a parent sees their own children and nobody else's */
+    if (role === "parent" && !qsMyChildren().some(k => k.id === (kid && kid.id))) return "";
+    return qsChildHtmlLock.apply(this, arguments);
+  };
+
+  if (typeof qaReportHtml === "function") {
+    const qaReportHtmlLock = qaReportHtml;
+    qaReportHtml = function () {
+      if (role === "student" || role === "parent" || qzlSignedInChild()) return "";
+      return qaReportHtmlLock.apply(this, arguments);
+    };
+  }
+
+  const qsPrintLock = qsPrint;
+  qsPrint = function (what) {
+    if (role === "student" || qzlSignedInChild()) return;
+    if (String(what).indexOf("child:") === 0) {
+      const id = String(what).slice(6);
+      if (role === "parent" && !qsMyChildren().some(k => k.id === id)) return;
+    } else if (role !== "teacher" && role !== "admin") return;
+    return qsPrintLock.apply(this, arguments);
+  };
+}
+
+/* every block has run by DOMContentLoaded, so this wraps the final
+   version of each function no matter what order the file is in */
+if (document.readyState === "loading")
+  document.addEventListener("DOMContentLoaded", qzlApply, { once: true });
+else qzlApply();
+</script>

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Apply every migration to a throwaway Postgres and run the RLS tests.
+#
+#   ./tools/testdb.sh          apply + test
+#   ./tools/testdb.sh keep     leave the container running afterwards
+#
+# Needs Docker. Nothing here touches your Supabase project.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NAME=llpgtest
+PORT=54329
+
+cleanup() { [ "${1:-}" = keep ] || docker rm -f $NAME >/dev/null 2>&1 || true; }
+docker rm -f $NAME >/dev/null 2>&1 || true
+
+echo "starting postgres…"
+docker run -d --name $NAME -e POSTGRES_PASSWORD=test -p $PORT:5432 postgres:16 >/dev/null
+trap 'cleanup "${1:-}"' EXIT
+
+for i in $(seq 1 40); do
+  docker exec $NAME pg_isready -U postgres >/dev/null 2>&1 && break
+  sleep 1
+done
+
+run() {
+  local label="$1" file="$2"
+  printf '  %-28s' "$label"
+  if out=$(docker exec -i $NAME psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres < "$file" 2>&1); then
+    echo "ok"
+  else
+    echo "FAILED"
+    echo "$out" | sed 's/^/      /' | head -30
+    exit 1
+  fi
+}
+
+echo "applying…"
+run "supabase stub"   "$ROOT/supabase/test/0000_supabase_stub.sql"
+run "0001 schema"     "$ROOT/supabase/migrations/0001_schema.sql"
+run "0002 functions"  "$ROOT/supabase/migrations/0002_functions.sql"
+run "0003 rls"        "$ROOT/supabase/migrations/0003_rls.sql"
+run "0004 seed"       "$ROOT/supabase/migrations/0004_seed.sql"
+run "0005 families"   "$ROOT/supabase/migrations/0005_families.sql"
+
+echo "testing…"
+if out=$(docker exec -i $NAME psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres \
+           < "$ROOT/supabase/test/0100_rls_tests.sql" 2>&1); then
+  echo "$out" | sed 's/^/  /'
+else
+  # the failure is at the END, after all the passing notices
+  echo "$out" | sed 's/^/  /' | tail -25
+  exit 1
+fi
+
+echo
+echo "all green"

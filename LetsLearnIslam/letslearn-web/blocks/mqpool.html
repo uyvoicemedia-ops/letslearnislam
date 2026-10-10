@@ -1,0 +1,32 @@
+<!-- ============================================================
+     Which mosques actually have a courtyard pool
+     ------------------------------------------------------------
+     The first correction from the architectural research, and the
+     start of pulling the generic upgrade ladder apart. Everything
+     that reached tier 0.3 grew a formal reflecting pool, which
+     turned forty-eight distinct buildings into one building in
+     different colours — and put a Mughal water feature in front of
+     a mud mosque in Mali.
+
+     A sahn pool is Arab, Persian, Ottoman and Mughal. It is not
+     Sudano-Sahelian, not Chinese, and not modern-tented. This is a
+     predicate rather than a per-mosque flag so the forty-eight
+     specs do not all need editing, and so a mosque added later
+     lands on the right side of it by default.
+     ============================================================ -->
+<script>
+"use strict";
+
+function mqHasPool(sp) {
+  if (!sp) return false;
+  // an explicit yes or no on the spec always wins
+  if (typeof sp.pool === "boolean") return sp.pool;
+  // mud-built West African mosques: the courtyard is swept earth
+  if (sp.body === "mud" || sp.style === "torons") return false;
+  // Chinese mosques: the courtyards are gardens, not water gardens
+  if (sp.style === "pagoda" || sp.body === "tiered") return false;
+  // modern tented and shell roofs sit on a plaza
+  if (sp.body === "tent" || sp.body === "shell") return false;
+  return true;
+}
+</script>

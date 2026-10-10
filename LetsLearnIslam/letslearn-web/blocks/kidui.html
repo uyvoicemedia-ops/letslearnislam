@@ -1,0 +1,99 @@
+<!-- ============================================================
+     KIDUI — the student side, sized for a six-year-old
+     ------------------------------------------------------------
+     All of this hangs off ONE class: body.kid, set by the AUTH block
+     whenever role === "student". Admin, teacher and parent screens are
+     untouched on purpose — they are dense because an adult works
+     through them for an hour at a time, and blowing the type up there
+     would only mean more scrolling.
+
+     It is deliberately CSS and nothing else. Every student screen is
+     built by a different function, several of them wrapped many times
+     over, and rewriting that markup to make the buttons bigger would
+     be a large change with a large blast radius for a small gain. A
+     class on <body> reaches all of them at once and can be taken off
+     again by deleting this block.
+
+     What actually changes:
+       * touch targets never below 52px
+       * one clear size ladder — a heading is obviously a heading
+       * the module tiles become coloured picture buttons with a real
+         button at the bottom, not a text link a child has to hit
+       * the letter grid gets much bigger glyphs
+     ============================================================ -->
+<style>
+/* ---------- the size ladder ---------- */
+body.kid #main h1 { font-size: 34px; letter-spacing: -.5px; }
+body.kid #main > .sub,
+body.kid #main h1 + .sub { font-size: 17px; color: #6d6553; }
+body.kid h2.section { font-size: 23px; margin-top: 30px; }
+body.kid #main .note { font-size: 14px; line-height: 1.55; }
+
+/* ---------- the menu ---------- */
+body.kid #nav a {
+  font-size: 17px; font-weight: 650; padding: 13px 14px; border-radius: 14px;
+  min-height: 52px; display: flex; align-items: center; gap: 12px;
+}
+body.kid #nav .ico { font-size: 23px; width: 30px; text-align: center; }
+body.kid #nav .group { font-size: 12px; letter-spacing: .14em; }
+
+/* ---------- the numbers along the top ---------- */
+body.kid .card.stat { padding: 20px 18px; border-radius: 20px; }
+body.kid .card.stat .n { font-size: 40px; }
+body.kid .card.stat .l { font-size: 15px; }
+
+/* ---------- module tiles: the main thing a child taps ---------- */
+body.kid .mod-tile {
+  border-radius: 22px; padding: 18px 18px 16px; border-width: 2px;
+  display: flex; flex-direction: column;
+}
+body.kid .mod-tile .emoji {
+  font-size: 34px; width: 62px; height: 62px; border-radius: 18px;
+  display: grid; place-items: center; background: rgba(255,255,255,.72);
+}
+body.kid .mod-tile > div:nth-of-type(2) { font-size: 21px !important; margin-top: 12px !important; }
+body.kid .mod-tile .note { font-size: 14px; margin: 5px 0 14px !important; flex: 1; }
+/* the text link becomes something a small finger can actually hit */
+body.kid .mod-tile .go {
+  font-size: 16px; align-self: stretch; text-align: center;
+  background: var(--qaida-green, #2f6f52); color: #fff;
+  border-radius: 13px; padding: 13px 10px; min-height: 50px;
+  display: grid; place-items: center;
+}
+/* a colour each, so a child navigates by colour before they can read */
+body.kid .mod-tile:nth-child(6n+1) { background: #eef5fb; border-color: #cfe1f2; }
+body.kid .mod-tile:nth-child(6n+2) { background: #f4f0fa; border-color: #ded2f0; }
+body.kid .mod-tile:nth-child(6n+3) { background: #edf7f0; border-color: #cee7d6; }
+body.kid .mod-tile:nth-child(6n+4) { background: #fdf4e6; border-color: #f0dfc0; }
+body.kid .mod-tile:nth-child(6n+5) { background: #fdeef0; border-color: #f3d3d8; }
+body.kid .mod-tile:nth-child(6n+6) { background: #eef6f7; border-color: #cee4e7; }
+body.kid .mod-tile:hover { transform: translateY(-3px); }
+body.kid .mod-tile:active { transform: scale(.98); }
+
+/* ---------- the letters ---------- */
+body.kid .heat { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 12px; }
+body.kid .heat button { padding: 16px 6px; border-radius: 18px; border-width: 2px;
+  min-height: 92px; }
+body.kid .heat .g { font-size: 42px; }
+body.kid .heat .s { font-size: 13px; }
+
+/* ---------- everything else a finger has to find ---------- */
+body.kid .chip { font-size: 15px; padding: 11px 18px; min-height: 46px; }
+body.kid .btn { font-size: 16px; padding: 13px 20px; min-height: 50px; border-radius: 13px; }
+body.kid .pill { font-size: 13px; padding: 5px 12px; }
+body.kid .card { border-radius: 20px; }
+body.kid table { font-size: 15px; }
+body.kid table td, body.kid table th { padding: 12px 10px; }
+
+/* The header stays adult-sized: it is chrome, not content, and a child
+   who is meant to stay in their own account should not find "Switch
+   user" more inviting than the lesson. */
+body.kid header { font-size: 13px; }
+
+@media (max-width: 900px) {
+  body.kid #main h1 { font-size: 28px; }
+  body.kid .mod-tile > div:nth-of-type(2) { font-size: 19px !important; }
+  body.kid .heat { grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); }
+  body.kid .heat .g { font-size: 36px; }
+}
+</style>

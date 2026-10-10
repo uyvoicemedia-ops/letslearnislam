@@ -1,0 +1,189 @@
+<!-- ============================================================
+     Joining as somebody the register knows
+     ------------------------------------------------------------
+     Until now a child typed whatever they liked into "Your name",
+     which is fine for a game and useless for a report: "Aisha",
+     "aisha" and "Aisha K" are three children, and none of them is
+     a pupil the madrasah has on its books.
+
+     So the join screen shows the CLASS LIST instead. Tap your
+     class, tap your face, and the score that comes out the other
+     end belongs to a real pupil id — which is what lets a teacher
+     see who played and a parent see their own child.
+
+     A signed-in child skips it: if the register knows the name on
+     the gate, they are picked already and only have to confirm.
+
+     Typing a name is still there behind "My name isn't here", for
+     a visitor, a demo, or a class that has not been entered yet.
+     Those still play; they simply appear in the report as a guest.
+
+     Two things this block must not do, both learned the hard way:
+     it must not call render() to refresh the picker — that wipes
+     the code the child has already typed — and it must leave
+     #qzNick in the DOM, because the QZFIX validation reads it.
+     ============================================================ -->
+<style>
+  .qw-chips { display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 10px; }
+  .qw-chip { border:1.5px solid var(--line); background:var(--bg); color:inherit;
+             border-radius:999px; padding:7px 14px; font:inherit; font-size:13px;
+             font-weight:700; cursor:pointer; }
+  .qw-chip.on { background:var(--qaida-green); border-color:var(--qaida-green); color:#fff; }
+  .qw-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr));
+             gap:8px; }
+  .qw-kid { display:flex; flex-direction:column; align-items:center;
+            justify-content:flex-start; gap:4px; padding:8px 4px 10px;
+            border:2px solid var(--line); border-radius:16px; background:var(--bg);
+            color:inherit; font:inherit; font-size:12.5px; font-weight:700;
+            line-height:1.25; text-align:center; cursor:pointer; min-height:112px; }
+  .qw-kid img { width:54px; height:54px; display:block; }
+  .qw-kid.on { border-color:var(--qaida-green); background:rgba(45,140,110,.10); }
+  .qw-kid .cls { font-weight:600; font-size:11px; color:var(--muted); }
+  .qw-swap { background:none; border:0; padding:4px 0; margin-top:8px; font:inherit;
+             font-size:12.5px; color:var(--muted); text-decoration:underline;
+             cursor:pointer; }
+  .qw-known { display:flex; align-items:center; gap:10px; }
+  .qw-known img { width:46px; height:46px; }
+  body.kid .qw-kid { min-height:126px; font-size:14px; }
+  body.kid .qw-kid img { width:64px; height:64px; }
+</style>
+<script>
+"use strict";
+
+const QW = { cls: "", pid: "", typed: false, ready: false };
+
+const qwStudents = () => (typeof DB !== "undefined" && DB.students) ? DB.students : [];
+const qwClasses  = () => (typeof DB !== "undefined" && DB.classes)  ? DB.classes  : [];
+const qwPupil    = (id) => qwStudents().find(s => s.id === id) || null;
+
+/* the signed-in child, if the register knows that name */
+function qwMe() {
+  const n = (typeof WHO !== "undefined" && WHO.student && WHO.student.name) || "";
+  if (!n) return null;
+  return qwStudents().find(s => s.name === n) || null;
+}
+
+/* pick sensible defaults once per visit to the screen */
+function qwPrime() {
+  if (QW.ready) return;
+  QW.ready = true;
+  const me = role === "student" ? qwMe() : null;
+  if (me) { QW.pid = me.id; QW.cls = me.cls; }
+  else if (!QW.cls) QW.cls = (qwClasses()[0] || {}).id || "";
+}
+
+function qwFaceUrl(s) {
+  if (typeof qzMonsterUrl !== "function" || typeof llaAvatarOf !== "function") return "";
+  return qzMonsterUrl(llaAvatarOf({ id: s.id, name: s.name }), 64, "idle");
+}
+
+function qwPickerHtml() {
+  qwPrime();
+  const chosen = qwPupil(QW.pid);
+
+  /* nothing to pick from, or they asked to type: the old box */
+  if (QW.typed || !qwStudents().length) {
+    return `<label class="llc-field"><span>Your name</span>
+        <input id="qzNick" maxlength="16" placeholder="Aisha"
+          value="${esc(chosen ? chosen.name : "")}"></label>
+      ${qwStudents().length ? `<button class="qw-swap" onclick="qwType(false)">
+        Pick me from the class list instead</button>` : ""}`;
+  }
+
+  const list = qwStudents().filter(s => !QW.cls || s.cls === QW.cls);
+  const nick = chosen ? chosen.name : "";
+
+  return `<input type="hidden" id="qzNick" value="${esc(nick)}">
+    <span class="llc-field"><span>Which class are you in?</span></span>
+    <div class="qw-chips">
+      ${qwClasses().map(c => `<button class="qw-chip ${c.id === QW.cls ? "on" : ""}"
+        onclick="qwSetCls('${c.id}')">${esc(c.name)}</button>`).join("")}
+    </div>
+    <span class="llc-field"><span>Tap your name</span></span>
+    <div class="qw-grid">
+      ${list.map(s => `<button class="qw-kid ${s.id === QW.pid ? "on" : ""}"
+        onclick="qwPick('${s.id}')">
+        <img src="${qwFaceUrl(s)}" alt="" width="54" height="54">
+        <span>${esc(s.name)}</span></button>`).join("")}
+    </div>
+    ${list.length ? "" : '<p class="note">Nobody is in that class yet.</p>'}
+    <button class="qw-swap" onclick="qwType(true)">My name isn't here</button>`;
+}
+
+/* Repaint the picker ALONE. Calling render() here would throw away the
+   code the child has already typed into #qzCode — that exact bug is
+   what QZFIX was written to fix, and it would come straight back. */
+function qwRepaint() {
+  const box = document.getElementById("qwBox");
+  if (!box) return;
+  const code = document.getElementById("qzCode");
+  const kept = code ? code.value : null;
+  box.innerHTML = qwPickerHtml();
+  if (code && kept != null) code.value = kept;
+}
+
+function qwSetCls(id) { QW.cls = id; QW.pid = ""; qwRepaint(); }
+function qwPick(id)   { QW.pid = id; if (typeof Snd === "object" && Snd.pop) Snd.pop(); qwRepaint(); }
+function qwType(on)   { QW.typed = !!on; if (on) QW.pid = QW.pid; qwRepaint(); }
+
+/* ---------- put it on the join card ---------- */
+const quizStartPageWho = quizStartPage;
+quizStartPage = function () {
+  const html = quizStartPageWho.apply(this, arguments);
+  const old = `<label class="llc-field"><span>Your name</span>
+        <input id="qzNick" maxlength="16" placeholder="Aisha"></label>`;
+  if (html.indexOf(old) < 0) return html;          // markup moved: leave it alone
+  QW.ready = false;                                // re-pick the default each visit
+  return html.replace(old, '<div id="qwBox">' + qwPickerHtml() + "</div>");
+};
+
+/* ---------- carry the pupil through the join ---------- */
+const quizJoinWho = quizJoin;
+quizJoin = function (code, nick) {
+  const p = QW.typed ? null : qwPupil(QW.pid);
+  const name = p ? p.name : nick;
+  if (!QW.typed && qwStudents().length && !p) {
+    const box = document.getElementById("qwBox");
+    if (typeof qzWarn === "function" && box) qzWarn(box, "Tap your name so your teacher knows who you are.");
+    else toast("Tap your name first");
+    return;
+  }
+  QZ.mePid = p ? p.id : null;
+  QZ.meCls = p ? p.cls : null;
+  return quizJoinWho.call(this, code, name);
+};
+
+/* The join message is built inside quizJoin, so the pupil id is added
+   on the way out rather than by rewriting it. The same wrapper counts
+   right answers on the host, because `judged` is the only place that
+   knows whether one was right. */
+if (typeof QuizNet === "object" && QuizNet && typeof QuizNet.send === "function") {
+  const qwSendPlain = QuizNet.send.bind(QuizNet);
+  QuizNet.send = function (m) {
+    if (m && m.t === "join" && QZ.mode === "player" && QZ.mePid)
+      m = Object.assign({}, m, { pid: QZ.mePid, cls: QZ.meCls || null });
+    if (m && m.t === "judged" && QZ.mode === "host") {
+      const p = QZ.players[m.nick];
+      if (p) { p.answers = (p.answers | 0) + 1; if (m.right) p.right = (p.right | 0) + 1; }
+    }
+    return qwSendPlain(m);
+  };
+}
+
+const quizHostHeardWho = quizHostHeard;
+quizHostHeard = function (m) {
+  const out = quizHostHeardWho.apply(this, arguments);
+  if (m && m.t === "join" && QZ.mode === "host") {
+    const p = QZ.players[m.nick];
+    if (p) { if (m.pid) p.pid = m.pid; if (m.cls) p.cls = m.cls; }
+  }
+  return out;
+};
+
+/* when the room opened, so a session can be timed */
+const quizAskWho = quizAsk;
+quizAsk = function () {
+  if (QZ.mode === "host" && QZ.ord < 0) QZ.startedAt = new Date().toISOString();
+  return quizAskWho.apply(this, arguments);
+};
+</script>

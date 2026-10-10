@@ -1,0 +1,26 @@
+<!-- ============================================================
+     The dua after wudu
+     ------------------------------------------------------------
+     The wudu area asks for a dua that was not in the list, and
+     duaAsk quietly runs the callback when it does not recognise an
+     id — so the button worked and simply skipped the dua, which is
+     worse than not offering it.
+
+     Well known, short, and with its source shown like the others.
+     Like every other dua in this file it still needs a teacher to
+     check the Arabic before a class uses it. DUAS is a const, so
+     the entry is added by mutating the object.
+     ============================================================ -->
+<script>
+"use strict";
+
+DUAS.wuduAfter = {
+  when: "After wudu",
+  ar: "أَشْهَدُ أَنْ لَا إِلَهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ وَأَشْهَدُ أَنَّ مُحَمَّدًا عَبْدُهُ وَرَسُولُهُ",
+  say: "Ash-hadu an lā ilāha illa-llāhu waḥdahu lā sharīka lah, "
+     + "wa ash-hadu anna Muḥammadan ʿabduhu wa rasūluh",
+  mean: "I bear witness that there is no god but Allah alone, with no partner, "
+      + "and I bear witness that Muhammad is His servant and His Messenger.",
+  src: "Muslim",
+};
+</script>

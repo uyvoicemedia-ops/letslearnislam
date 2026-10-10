@@ -1,0 +1,160 @@
+<!-- ============================================================
+     The roof, and the mass the dome grows out of
+     ------------------------------------------------------------
+     The roof was one flat slab in wall colour with faint grid lines
+     on it, and the domes floated a third of a tile above it on a
+     thin drum. That is why the top of every mosque read as an empty
+     grey terrace with balloons parked on it.
+
+     A real domed mosque is not a box with a dome balanced on top.
+     It is a stepped mass: a lower lead-roofed aisle all the way
+     round, a raised square block in the middle, and the dome
+     rising out of THAT. Getting the middle step in is most of the
+     fix; making the lead read as lead rather than as more wall is
+     the rest.
+
+     mqRoof returns the height the domes should sit at, so the one
+     number is decided here and nowhere else.
+     ============================================================ -->
+<script>
+"use strict";
+
+/* Lead is grey whatever the walls are made of. Warmed very slightly
+   towards the building so a sandstone mosque doesn't get a cold blue
+   hat, but never taken all the way to the wall colour — that was the
+   bug. */
+function mqLead(P, night) {
+  return night ? "#3c434e" : "#9199a3";
+}
+
+/* standing seams running down the slope of a deck */
+function mqSeams(c, R, u0, v0, w, d, n, night) {
+  c.strokeStyle = night ? "rgba(255,255,255,.06)" : "rgba(0,0,0,.10)";
+  c.lineWidth = 1;
+  for (let k = 1; k < n; k++) {
+    const p1 = R(u0 + w * (k / n), v0), p2 = R(u0 + w * (k / n), v0 + d);
+    c.beginPath(); c.moveTo(p1.x, p1.y); c.lineTo(p2.x, p2.y); c.stroke();
+  }
+}
+
+/* Returns the lift the domes should be drawn from. */
+function mqRoof(c, u, v, u0, v0, w, d, bodyH, W, H, P, sp, tier, night, z) {
+  const R = (uu, vv) => { const q = isoPt(uu, vv, W, H); return { x: q.x, y: q.y - isoH(bodyH) }; };
+  const deckPath = () => {
+    c.beginPath();
+    [R(u0, v0), R(u0 + w, v0), R(u0 + w, v0 + d), R(u0, v0 + d)]
+      .forEach((q, k) => c[k ? "lineTo" : "moveTo"](q.x, q.y));
+    c.closePath();
+  };
+
+  const body = sp.body || "";
+  const plain = body === "tent" || body === "tiered" || body === "mud";
+  const lead = mqLead(P, night);
+
+  /* 1. the deck itself */
+  c.save(); deckPath(); c.clip();
+  if (plain) {
+    const g0 = R(u0, v0), g1 = R(u0 + w, v0 + d);
+    const gr = c.createLinearGradient(g0.x, g0.y, g1.x, g1.y);
+    gr.addColorStop(0, mqShade(P.wall, .96)); gr.addColorStop(1, mqShade(P.wall, .82));
+    c.fillStyle = gr; c.fill();
+    mqSeams(c, R, u0, v0, w, d, Math.max(3, Math.round(w * 2)), night);
+  } else {
+    const g0 = R(u0, v0), g1 = R(u0 + w, v0 + d);
+    const gr = c.createLinearGradient(g0.x, g0.y, g1.x, g1.y);
+    gr.addColorStop(0, mqShade(lead, 1.1)); gr.addColorStop(1, mqShade(lead, .88));
+    c.fillStyle = gr; c.fill();
+    mqSeams(c, R, u0, v0, w, d, Math.max(5, Math.round(w * 3)), night);
+  }
+  c.restore();
+  c.strokeStyle = "rgba(0,0,0,.14)"; c.lineWidth = 1; deckPath(); c.stroke();
+
+  if (plain) return { base: bodyH + 0.32, aisle: 0, cu: u0, cv: v0, cw: w, cd: d, plain: true };
+
+  /* 2. the four lead aisle roofs, pitched, round the outside */
+  const cw = w * 0.6, cd = d * 0.6;                   // the raised middle
+  const cu = u - cw / 2, cv = v - cd / 2;
+  const sideW = (w - cw) / 2, sideD = (d - cd) / 2;
+  const aisle = 0.3 + tier * 0.1;
+  isoRoof(c, u0, v0, w, sideD, aisle, bodyH, W, H, lead);                       // back
+  isoRoof(c, u0, cv + cd, w, sideD, aisle, bodyH, W, H, lead);                  // front
+  isoRoof(c, u0, cv, sideW, cd, aisle, bodyH, W, H, mqShade(lead, .94));        // left
+  isoRoof(c, cu + cw, cv, sideW, cd, aisle, bodyH, W, H, mqShade(lead, 1.04));  // right
+
+  /* 3. the raised block the dome grows out of, in masonry not lead */
+  const blockH = 0.5 + tier * 0.14;
+  isoBoxAt(c, cu, cv, cw, cd, blockH, bodyH, W, H,
+    mqShade(P.wall, .94), mqShade(P.wall, .84), mqShade(P.wall, .68));
+  // a cornice line where it meets its own roof
+  const B = (uu, vv) => { const q = isoPt(uu, vv, W, H); return { x:q.x, y:q.y - isoH(bodyH + blockH) }; };
+  c.strokeStyle = tier >= 0.55 ? P.trim : mqShade(P.wall, .72);
+  c.lineWidth = Math.max(1.4, 2 * z);
+  c.beginPath();
+  [B(cu, cv + cd), B(cu + cw, cv + cd), B(cu + cw, cv)]
+    .forEach((q, k) => c[k ? "lineTo" : "moveTo"](q.x, q.y));
+  c.stroke();
+
+  /* 4. the weight turrets at its corners, which is what those little
+        stone spires on an Ottoman roof are actually for */
+  if (tier >= 0.45) {
+    [[cu + 0.07, cv + 0.07], [cu + cw - 0.07, cv + 0.07],
+     [cu + 0.07, cv + cd - 0.07], [cu + cw - 0.07, cv + cd - 0.07]].forEach(([tu, tv]) => {
+      isoCyl(c, tu, tv, 0.055, 0.42, W, H, mqShade(P.wall, 1.0), bodyH + blockH);
+      const q = isoPt(tu, tv, W, H);
+      const capY = q.y - isoH(bodyH + blockH + 0.42);
+      c.fillStyle = mqShade(P.wall, .86);
+      c.beginPath();
+      c.moveTo(q.x, capY - 9 * z);
+      c.lineTo(q.x + 4 * z, capY + 1 * z);
+      c.lineTo(q.x - 4 * z, capY + 1 * z);
+      c.closePath(); c.fill();
+    });
+  }
+
+  /* 5. windows in the raised block — the light in a domed hall comes
+        from here, and without them the middle step reads as a crate */
+  if (sp.windows !== false) {
+    /* isoFace draws from the ground, so the whole canvas is lifted by
+       the wall height and the face drawn as if it stood there */
+    c.save();
+    c.translate(0, -isoH(bodyH));
+    isoFace(c, cu, cv + cd, cu + cw, cv + cd, blockH, W, H, P, {
+      arch: sp.arch, windows: Math.max(3, Math.round(cw * 2.4)),
+    });
+    isoFace(c, cu + cw, cv + cd, cu + cw, cv, blockH, W, H, P, {
+      arch: sp.arch, windows: Math.max(2, Math.round(cd * 2.2)),
+    });
+    c.restore();
+  }
+
+  return { base: bodyH + blockH, aisle: bodyH + aisle * 0.72,
+           cu, cv, cw, cd, plain: false };
+}
+
+/* Where a dome goes. The biggest one crowns the raised block; the
+   others are half-domes and aisle domes and belong a step lower,
+   which is the whole shape of an Ottoman roof and the reason the old
+   version — every dome at one height, all overlapping — read as a
+   pile of balloons. */
+function mqDomePlan(domes, RF, u, v, w, d) {
+  const list = (domes || []).map((dm, i) => ({ dm, i, r: dm.r || 0.2 }));
+  if (!list.length) return [];
+  let mainI = 0;
+  list.forEach((e, k) => { if (e.r > list[mainI].r) mainI = k; });
+  return list.map((e, k) => {
+    const main = k === mainI || RF.plain;
+    const across = Math.max(-0.38, Math.min(0.38, e.dm.x || 0));
+    if (main) {
+      return { dm: e.dm, main: true, base: RF.base,
+               du: u + across * (RF.cw * 0.35), dv: v + across * (RF.cd * 0.2),
+               cap: RF.plain ? Math.min(w, d) * 0.44 : Math.min(RF.cw, RF.cd) * 0.5 };
+    }
+    /* pushed out onto the aisle it actually sits over */
+    const side = across === 0 ? (k % 2 ? 1 : -1) : (across > 0 ? 1 : -1);
+    return { dm: e.dm, main: false, base: RF.aisle,
+             du: u + side * (RF.cw / 2 + (w - RF.cw) / 4) * (e.dm.back ? 0.5 : 1),
+             dv: v + (e.dm.back ? -1 : 1) * (RF.cd / 2 + (d - RF.cd) / 4) * (across ? 0.45 : 0.9),
+             cap: Math.min(w - RF.cw, d - RF.cd) * 0.42 };
+  });
+}
+</script>

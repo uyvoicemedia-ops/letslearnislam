@@ -1,0 +1,213 @@
+<!-- ============================================================
+     A bigger inside, earned by upgrading the outside
+     ------------------------------------------------------------
+     The masjid interior was six fixed rooms and the madrasah six
+     more, and none of it changed however grand the building got
+     outside. So the plan is wider now — fourteen tiles instead of
+     ten — and the rooms at the far end only unlock once the
+     building itself has been improved. That is what ties the two
+     halves of the game together: you upgrade the mosque in the
+     garden, and a door opens inside it.
+
+     `need` is a TIER, not a level, because a village masjid tops
+     out at level 4 and the Haram at level 20. Everything is
+     reachable for every mosque; it just takes the whole ladder.
+     ============================================================ -->
+<script>
+"use strict";
+
+PLAN_LAYOUTS.masjid = [
+  { id:"mhall",   em:"🚪", name:"Entrance",        cost:0,   need:0,    u:0,    v:3.6, w:14,  d:1.7,
+    floor:"#d8cdb4", note:"shoe racks and the way out" },
+  { id:"musalla", em:"🕌", name:"Prayer hall",     cost:0,   need:0,    u:0,    v:0,   w:6,   d:3.6,
+    floor:"#9c6b52", note:"pray here" },
+  { id:"halaqa",  em:"📖", name:"Study circle",    cost:400, need:0.12, u:6,    v:0,   w:4,   d:3.6,
+    floor:"#c2a878", note:"sit and read here" },
+  { id:"mwomen",  em:"🧕", name:"Sisters' hall",   cost:650, need:0.45, u:10,   v:0,   w:4,   d:3.6,
+    floor:"#a8756a", note:"a second prayer hall" },
+  { id:"wudu",    em:"🚿", name:"Wudu area",       cost:300, need:0.12, u:0,    v:5.3, w:3.5, d:3.3,
+    floor:"#cfe0e4", note:"wash before you pray" },
+  { id:"mlib",    em:"📚", name:"Library",         cost:450, need:0.3,  u:3.5,  v:5.3, w:3,   d:3.3,
+    floor:"#cdb890", note:"shelves of books" },
+  { id:"mstore",  em:"🕯", name:"Store room",      cost:200, need:0,    u:6.5,  v:5.3, w:3.5, d:3.3,
+    floor:"#c9c4b4", note:"mats, lamps and spare copies" },
+  { id:"mimam",   em:"🗝", name:"Imam's room",     cost:550, need:0.62, u:10,   v:5.3, w:4,   d:3.3,
+    floor:"#bfae8c", note:"where the imam prepares the lesson" },
+];
+
+PLAN_LAYOUTS.school = [
+  { id:"shall",   em:"🚪", name:"Corridor",        cost:0,   need:0,    u:0,    v:3.6, w:14,  d:1.7,
+    floor:"#dcc79f", note:"pegs, and the way out" },
+  { id:"class1",  em:"🪑", name:"Classroom",       cost:0,   need:0,    u:0,    v:0,   w:5,   d:3.6,
+    floor:"#d9b98a", note:"tables, chairs and a board" },
+  { id:"class2",  em:"✏️", name:"Second class",    cost:500, need:0.3,  u:5,    v:0,   w:5,   d:3.6,
+    floor:"#d3b083", note:"for the older group" },
+  { id:"class3",  em:"🔤", name:"Qaida room",      cost:700, need:0.7,  u:10,   v:0,   w:4,   d:3.6,
+    floor:"#dcc094", note:"for the very beginners" },
+  { id:"slib",    em:"📚", name:"Library",         cost:450, need:0.3,  u:0,    v:5.3, w:3.5, d:3.3,
+    floor:"#cdb890", note:"read here" },
+  { id:"soffice", em:"🗂", name:"Office",          cost:350, need:0,    u:3.5,  v:5.3, w:3,   d:3.3,
+    floor:"#c9c4b4", note:"where the register lives" },
+  { id:"swudu",   em:"🚿", name:"Washroom",        cost:250, need:0,    u:6.5,  v:5.3, w:3.5, d:3.3,
+    floor:"#e3ebed", note:"say the dua going in and out" },
+  { id:"shead",   em:"🏅", name:"Assembly hall",   cost:800, need:0.7,  u:10,   v:5.3, w:4,   d:3.3,
+    floor:"#c8b69a", note:"prize-giving and parents' evening" },
+];
+
+/* if we are already standing inside one, take the new plan now */
+if (typeof Garden !== "undefined" && Garden.inside && PLAN_LAYOUTS[Garden.inside]) {
+  planUse(Garden.inside);
+}
+
+/* ---------- how far this building has been taken ---------- */
+
+/* 0 when it is newly built, 1 when it is finished. For a mosque that
+   is its own ladder, so a village masjid and the Haram both get
+   there — they just take a different number of levels to do it. */
+function planTier(kind) {
+  const g = gState();
+  if (kind === "house") return (Math.max(1, Math.min(5, g.house || 1)) - 1) / 4;
+  let best = 0;
+  (g.buildings || []).forEach(b => {
+    if (b.kind !== kind) return;
+    if (kind === "masjid") best = Math.max(best, mosqueTier(mosqueDef(b.id), b.lvl || 1));
+    else best = Math.max(best, (Math.max(1, Math.min(3, b.lvl || 1)) - 1) / 2);
+  });
+  return best;
+}
+
+function planRoomLocked(r) {
+  if (!r || !r.need) return false;
+  return planTier(Garden.planKind || Garden.inside || "house") < r.need - 1e-6;
+}
+
+/* said in the child's language, not in tiers */
+function planNeedWord(r) {
+  const kind = Garden.planKind || Garden.inside || "house";
+  const what = kind === "masjid" ? "masjid" : kind === "school" ? "madrasah" : "house";
+  return r.need >= 0.6 ? "improve the " + what + " a lot first"
+       : r.need >= 0.4 ? "improve the " + what + " more first"
+       : "improve the " + what + " first";
+}
+
+/* ---------- buying a room now asks the building, not just the purse ---------- */
+
+const planBuyRooms2 = planBuy;
+planBuy = function (id) {
+  const r = planRoom(id);
+  if (r && planRoomLocked(r)) {
+    toast(r.name + " — " + planNeedWord(r));
+    if (typeof Snd !== "undefined") Snd.wrong();
+    return;
+  }
+  return planBuyRooms2.apply(this, arguments);
+};
+
+/* and the panel says so rather than dangling a button that refuses */
+const planPanelRooms2 = planPanel;
+planPanel = function () {
+  let html = planPanelRooms2.apply(this, arguments);
+  PLAN.forEach(r => {
+    if (!planRoomLocked(r)) return;
+    const btn = new RegExp(
+      '<button class="btn[^"]*"\\s*\\n?\\s*onclick="planBuy\\(\'' + r.id + '\'\\)">[^<]*</button>');
+    html = html.replace(btn, '<span class="s">🔒 ' + esc(planNeedWord(r)) + '</span>');
+  });
+  return html;
+};
+
+/* a wider plan wants to be seen from a little further back */
+const planArriveRooms2 = planArrive;
+planArrive = function () {
+  planArriveRooms2.apply(this, arguments);
+  const wide = (PLAN[0] && PLAN[0].w) || 10;
+  Garden.zoom = wide > 12 ? 0.95 : wide > 10 ? 1.05 : 1.15;
+};
+
+/* ---------- what stands in the new rooms ---------- */
+
+const planFixturesRooms2 = planFixtures;
+planFixtures = function (r, night) {
+  const out = [];
+  const add = (u, v, fn) => out.push({ u, v, kind: "fx", draw: fn });
+  const wood = night ? "#6a4c2c" : "#a8763f", woodD = night ? "#523a20" : "#8a5f32";
+
+  /* the sisters' hall: its own mihrab, mats, and a low screen at the
+     front so it reads as a room of its own rather than a copy */
+  if (r.id === "mwomen") {
+    add(r.u + r.w / 2, r.v + 0.14, (c, W, H) => fMihrab(c, r.u + r.w / 2, r.v + 0.12, W, H, night));
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 2; j++) {
+        const mu = r.u + 0.85 + i * 1.05, mv = r.v + 1.35 + j * 0.95;
+        add(mu, mv, (c, W, H) => fMat(c, mu, mv, W, H, night));
+      }
+    }
+    add(r.u + r.w / 2, r.v + r.d - 0.35, (c, W, H) => {
+      const a = isoPt(r.u + 0.35, r.v + r.d - 0.3, W, H);
+      const b = isoPt(r.u + r.w - 0.35, r.v + r.d - 0.3, W, H);
+      c.strokeStyle = night ? "#6d5a3c" : "#a08453";
+      c.lineWidth = Math.max(2, 3 * FZ());
+      c.beginPath(); c.moveTo(a.x, a.y - isoH(0.72)); c.lineTo(b.x, b.y - isoH(0.72)); c.stroke();
+      for (let i = 0; i <= 10; i++) {
+        const x = a.x + (b.x - a.x) * (i / 10), y = a.y + (b.y - a.y) * (i / 10);
+        c.strokeStyle = night ? "#5d4d33" : "#b99a67";
+        c.lineWidth = Math.max(1, 1.6 * FZ());
+        c.beginPath(); c.moveTo(x, y); c.lineTo(x, y - isoH(0.72)); c.stroke();
+      }
+    });
+    return out;
+  }
+
+  /* the imam's room: a desk facing the door, a bookcase, a lamp */
+  if (r.id === "mimam") {
+    add(r.u + 1.3, r.v + 1.1, (c, W, H) => fDesk(c, r.u + 1.3, r.v + 1.1, W, H, night, "down"));
+    add(r.u + r.w - 1.0, r.v + 0.7, (c, W, H) =>
+      fShelf(c, r.u + r.w - 1.5, r.v + 0.35, 1.2, 0.42, 1.35, W, H, night, true));
+    add(r.u + 0.6, r.v + r.d - 0.9, (c, W, H) => {
+      isoCyl(c, r.u + 0.6, r.v + r.d - 0.9, 0.07, 0.95, W, H, night ? "#6b5836" : "#9a8250");
+      const q = isoPt(r.u + 0.6, r.v + r.d - 0.9, W, H);
+      MQ.lamp(c, q.x, q.y - isoH(1.1), 9 * FZ(),
+        { gold:"#e8c05a", goldL:"#f7dd9a", glass: night ? "#ffd489" : "#e8eef2", night:!!night });
+    });
+    return out;
+  }
+
+  /* the qaida room: little desks, low, in one row, and the alphabet
+     board they actually learn from */
+  if (r.id === "class3") {
+    add(r.u + r.w / 2, r.v + 0.14, (c, W, H) =>
+      fBoard(c, r.u + r.w / 2, r.v + 0.12, W, H, night, 30));
+    for (let i = 0; i < 3; i++) {
+      const du = r.u + 0.8 + i * 1.05;
+      add(du, r.v + 1.7, (c, W, H) => {
+        isoBox(c, du - 0.34, r.v + 1.5, 0.68, 0.4, 0.42, W, H,
+          mqShade(wood, 1.08), mqShade(wood, .9), mqShade(wood, .74));
+        isoBox(c, du - 0.2, r.v + 2.05, 0.4, 0.34, 0.3, W, H,
+          mqShade(woodD, 1.05), mqShade(woodD, .88), mqShade(woodD, .72));
+      });
+    }
+    return out;
+  }
+
+  /* the assembly hall: a low stage and rows of chairs */
+  if (r.id === "shead") {
+    add(r.u + r.w / 2, r.v + 0.5, (c, W, H) =>
+      isoBox(c, r.u + 0.5, r.v + 0.3, r.w - 1.0, 0.8, 0.24, W, H,
+        mqShade(wood, 1.06), mqShade(wood, .88), mqShade(wood, .72)));
+    for (let ry = 0; ry < 2; ry++) {
+      for (let cx = 0; cx < 4; cx++) {
+        const cu = r.u + 0.65 + cx * 0.85, cv = r.v + 1.7 + ry * 0.8;
+        add(cu, cv, (c, W, H) => {
+          isoBox(c, cu - 0.18, cv - 0.18, 0.36, 0.36, 0.26, W, H,
+            mqShade(woodD, 1.05), mqShade(woodD, .88), mqShade(woodD, .7));
+          isoBoxAt(c, cu - 0.18, cv + 0.1, 0.36, 0.08, 0.34, 0.26, W, H,
+            mqShade(woodD, 1.0), mqShade(woodD, .84), mqShade(woodD, .68));
+        });
+      }
+    }
+    return out;
+  }
+
+  return planFixturesRooms2(r, night);
+};
+</script>

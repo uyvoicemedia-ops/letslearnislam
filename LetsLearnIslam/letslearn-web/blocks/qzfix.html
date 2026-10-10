@@ -1,0 +1,134 @@
+<!-- ============================================================
+     QZFIX — the join form, and codes a five-year-old can type
+     ------------------------------------------------------------
+     Three things, all small, all things a child hits on the first
+     go:
+
+     1. Picking a monster called render(), which rebuilds the page
+        and threw away the room code and the name the child had
+        just typed. Now the picker updates itself in place and the
+        two boxes are never touched.
+
+     2. Empty boxes only produced a toast, which is gone in two
+        seconds and easy to miss. Now the box itself goes red with
+        a line under it saying what is missing.
+
+     3. Room codes had digits in them — 2345679 — and a code like
+        Q3FNN is genuinely hard for a young child to copy off a
+        board. Letters only now, and still no I or O, which are the
+        two that get read as 1 and 0.
+     ============================================================ -->
+<style>
+.qz-bad input, input.qz-bad { border-color:#c4553f !important; background:#fdf2f0 !important; }
+.qz-note-bad { color:#a8402c; font-size:13.5px; font-weight:700; margin:4px 0 0; }
+body.kid .qz-note-bad { font-size:15px; }
+@keyframes qzShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)}
+                     75%{transform:translateX(5px)} }
+.qz-shake { animation: qzShake .28s; }
+</style>
+<script>
+"use strict";
+
+/* ---------- 1. letters only ---------- */
+
+quizCode = function () {
+  /* No I or O: on a whiteboard they are read as 1 and 0, and a child
+     who mis-types one letter of five gets nowhere. */
+  const abc = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  let s = "";
+  for (let i = 0; i < 5; i++) s += abc[Math.floor(Math.random() * abc.length)];
+  return s;
+};
+
+/* ---------- 2. picking a monster keeps what you typed ---------- */
+
+qzPickAvatar = function (i) {
+  try { localStorage.setItem("ll.qz.avatar", String(i)); } catch (e) {}
+  if (typeof Snd !== "undefined") Snd.pop();
+
+  /* The old version called render(). That rebuilds the whole page,
+     which wipes #qzCode and #qzNick — the child types their name,
+     picks a monster, and the name is gone. Update the grid in place
+     instead and the inputs are never rebuilt. */
+  const grid = document.querySelector(".qz-mongrid");
+  if (!grid) { render(); return; }
+  grid.querySelectorAll(".qz-monbtn").forEach((b, n) => {
+    const on = n === i;
+    b.setAttribute("aria-pressed", String(on));
+    const img = b.querySelector("img");
+    if (img && typeof qzMonsterUrl === "function") {
+      img.src = qzMonsterUrl(n, 52, on ? "win" : "idle");
+    }
+  });
+  const said = grid.parentNode && grid.parentNode.querySelector(".qz-mongrid ~ p strong");
+  const who = document.querySelector(".qz-mongrid ~ .note strong")
+           || (grid.nextElementSibling && grid.nextElementSibling.querySelector("strong"));
+  if (who && typeof monOf === "function") who.textContent = monOf(i).name;
+};
+
+/* ---------- 3. say what is missing, next to the box ---------- */
+
+function qzWarn(el, message) {
+  if (!el) return;
+  el.classList.add("qz-bad", "qz-shake");
+  setTimeout(() => el.classList.remove("qz-shake"), 320);
+  const label = el.closest("label") || el.parentNode;
+  let note = label.querySelector(".qz-note-bad");
+  if (!note) {
+    note = document.createElement("p");
+    note.className = "qz-note-bad";
+    label.appendChild(note);
+  }
+  note.textContent = message;
+  el.focus();
+  const clear = () => {
+    el.classList.remove("qz-bad");
+    if (note.parentNode) note.remove();
+    el.removeEventListener("input", clear);
+  };
+  el.addEventListener("input", clear);
+}
+
+const quizJoinFix = quizJoin;
+quizJoin = function (code, nick) {
+  const cEl = document.getElementById("qzCode");
+  const nEl = document.getElementById("qzNick");
+  const c = String(code || "").trim();
+  const n = String(nick || "").trim();
+
+  if (!c) { qzWarn(cEl, "Type the code your teacher showed you."); return; }
+  if (c.length < 4) { qzWarn(cEl, "That code is too short — it has 5 letters."); return; }
+  if (!n) { qzWarn(nEl, "Type your name so everyone knows who you are."); return; }
+
+  return quizJoinFix.call(this, c, n);
+};
+
+/* the host needs a set picked before a room means anything */
+const quizHostFix = quizHost;
+quizHost = function () {
+  const sel = document.getElementById("qzSet");
+  if (sel && !sel.value) { qzWarn(sel, "Pick a set of questions first."); return; }
+  return quizHostFix.apply(this, arguments);
+};
+
+/* ---------- the code box: letters only as you type ---------- */
+
+const renderQzFix = window.render;
+window.render = function () {
+  const out = renderQzFix.apply(this, arguments);
+  const c = document.getElementById("qzCode");
+  if (c && !c._llLetters) {
+    c._llLetters = true;
+    c.setAttribute("maxlength", "5");
+    c.setAttribute("placeholder", "ABCDE");
+    c.addEventListener("input", () => {
+      const at = c.selectionStart;
+      const was = c.value;
+      c.value = was.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 5);
+      if (c.value !== was) c.setSelectionRange(Math.min(at, c.value.length),
+                                               Math.min(at, c.value.length));
+    });
+  }
+  return out;
+};
+</script>

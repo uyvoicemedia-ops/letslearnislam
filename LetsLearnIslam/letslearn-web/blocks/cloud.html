@@ -1,0 +1,631 @@
+<!-- ============================================================
+     Talking to Supabase
+     ------------------------------------------------------------
+     Everything until now lived in localStorage, which means a
+     teacher's points never actually reached the child — it only
+     looked like they did, because it was all one browser. This is
+     the layer that makes the app real.
+
+     The one rule it obeys: WITH NO KEYS SET, NOTHING CHANGES. The
+     prototype has to keep working on a laptop with no internet and
+     no project, because that is how it gets demonstrated. So the
+     cloud is strictly additive — it wraps llSave and llRecord
+     rather than replacing them, localStorage stays the thing the
+     app reads from, and the network is a background errand that
+     can fail without anybody noticing.
+
+     That also decides the conflict rule. The local copy is what
+     the child is looking at, so it wins on write; the server copy
+     only replaces it when it is genuinely newer, which happens
+     when they sign in on a second device.
+
+     On the anon key: it is public by design and ships in every
+     Supabase web app, so keeping it in localStorage is not a leak.
+     What protects the data is the row-level security in
+     supabase/migrations/0003_rls.sql, not the secrecy of this key.
+     ============================================================ -->
+<style>
+  .llc-chip { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:800;
+              padding:5px 11px; border-radius:999px; border:1.5px solid var(--line);
+              background:var(--card); cursor:pointer; margin-right:10px; color:inherit;
+              font-family:inherit; }
+  .llc-chip:hover { border-color:var(--qaida-green); }
+  .llc-chip .dot { width:7px; height:7px; border-radius:50%; background:#b8b8b0; flex:none; }
+  .llc-chip.on .dot { background:#3f9e5e; }
+  .llc-chip.warn .dot { background:#e0a52e; }
+  .llc-chip.bad .dot { background:#c9483a; }
+
+  .llc-veil { position:fixed; inset:0; z-index:120; background:rgba(28,32,30,.45);
+              display:flex; align-items:center; justify-content:center; padding:20px;
+              animation:fadeIn .16s ease both; }
+  .llc-box { background:var(--card); border-radius:20px; width:min(460px,100%);
+             max-height:88vh; overflow:auto; padding:20px 22px 18px;
+             box-shadow:0 24px 70px rgba(0,0,0,.3); }
+  .llc-box h3 { margin:0 0 3px; font-size:17px; }
+  .llc-box .sub { font-size:12.5px; color:var(--muted); margin:0 0 14px; }
+  .llc-field { display:block; margin-bottom:10px; }
+  .llc-field span { display:block; font-size:12px; font-weight:800; margin-bottom:4px; }
+  .llc-field input { width:100%; padding:9px 11px; border-radius:11px; font:inherit;
+                     border:1.5px solid var(--line); background:var(--bg); color:inherit; }
+  .llc-field input:focus { outline:none; border-color:var(--qaida-green); }
+  .llc-row { display:flex; gap:8px; margin-top:12px; }
+  .llc-row .btn { flex:1; }
+  .llc-note { font-size:11.5px; color:var(--muted); margin:12px 0 0; line-height:1.45; }
+  .llc-err { font-size:12.5px; font-weight:700; color:#c9483a; margin:8px 0 0; }
+  .llc-ok  { font-size:12.5px; font-weight:700; color:#2f7d55; margin:8px 0 0; }
+  .llc-tabs { display:flex; gap:6px; margin-bottom:14px; }
+  .llc-tabs button { flex:1; padding:8px; border-radius:11px; border:1.5px solid var(--line);
+                     background:var(--bg); font:inherit; font-size:12.5px; font-weight:800;
+                     cursor:pointer; color:inherit; }
+  .llc-tabs button[aria-pressed="true"] { background:var(--qaida-green); color:#fff;
+                                          border-color:var(--qaida-green); }
+  .llc-name { display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+              padding:9px 11px; border-radius:12px; border:1.5px solid var(--line);
+              background:var(--bg); font:inherit; cursor:pointer; margin-bottom:6px;
+              color:inherit; font-weight:700; font-size:13.5px; }
+  .llc-name:hover { border-color:var(--qaida-green); }
+  .llc-pin { letter-spacing:.5em; text-align:center; font-size:20px !important;
+             font-weight:800; }
+</style>
+<script>
+"use strict";
+
+/* ============================================================
+   The connection
+   ============================================================ */
+
+const LLC = {
+  cfg: null,          // { url, key }
+  sb: null,           // the supabase client, once the library is here
+  session: null,
+  profile: null,      // { id, role, full_name, school_id }
+  status: "local",    // local | connecting | online | offline | error
+  detail: "",
+  pending: 0,         // pushes still in flight or queued
+  tab: "child",
+  roster: [],
+  picked: null,
+  err: "",
+  ok: "",
+};
+
+const LLC_KEY = "letslearn.cloud.v1";
+
+function llcLoadCfg() {
+  try {
+    const raw = localStorage.getItem(LLC_KEY);
+    LLC.cfg = raw ? JSON.parse(raw) : null;
+  } catch (e) { LLC.cfg = null; }
+  return LLC.cfg;
+}
+
+function llcSaveCfg(url, key) {
+  url = String(url || "").trim().replace(/\/+$/, "");
+  key = String(key || "").trim();
+  if (!url || !key) { localStorage.removeItem(LLC_KEY); LLC.cfg = null; return false; }
+  LLC.cfg = { url, key };
+  localStorage.setItem(LLC_KEY, JSON.stringify(LLC.cfg));
+  return true;
+}
+
+/* The library is only fetched once somebody has actually put keys in.
+   An offline demo should not sit there waiting on a CDN. */
+function llcLoadLib() {
+  if (window.supabase && window.supabase.createClient) return Promise.resolve(true);
+  if (LLC._libP) return LLC._libP;
+  LLC._libP = new Promise((resolve) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js";
+    s.onload = () => resolve(!!(window.supabase && window.supabase.createClient));
+    s.onerror = () => resolve(false);
+    document.head.appendChild(s);
+  });
+  return LLC._libP;
+}
+
+function llcSetStatus(status, detail) {
+  LLC.status = status;
+  LLC.detail = detail || "";
+  llcPaintChip();
+}
+
+/* Bring the connection up. Safe to call whenever — it does nothing at
+   all when there are no keys, which is the normal state of this file
+   on somebody else's laptop. */
+async function llcConnect() {
+  if (!llcLoadCfg()) { llcSetStatus("local", "no project set"); return false; }
+  llcSetStatus("connecting");
+  const haveLib = await llcLoadLib();
+  if (!haveLib) {
+    llcSetStatus("error", "could not load the Supabase library — offline?");
+    return false;
+  }
+  try {
+    LLC.sb = window.supabase.createClient(LLC.cfg.url, LLC.cfg.key, {
+      auth: { persistSession: true, storageKey: "letslearn.auth.v1" },
+    });
+  } catch (e) {
+    llcSetStatus("error", e.message || "bad project settings");
+    return false;
+  }
+
+  const { data } = await LLC.sb.auth.getSession();
+  LLC.session = data && data.session;
+  if (LLC.session) {
+    const got = await llcLoadProfile();
+    if (got) { llcSetStatus("online", LLC.profile.full_name); await llcPull(); }
+    else llcSetStatus("warn", "signed in, but no profile — ask your school");
+  } else {
+    llcSetStatus("warn", "not signed in");
+  }
+
+  LLC.sb.auth.onAuthStateChange((_e, sess) => {
+    LLC.session = sess;
+    if (!sess) { LLC.profile = null; llcSetStatus("warn", "signed out"); }
+  });
+  return true;
+}
+
+async function llcLoadProfile() {
+  const { data, error } = await LLC.sb
+    .from("profiles")
+    .select("id, role, full_name, school_id")
+    .eq("auth_uid", LLC.session.user.id)
+    .maybeSingle();
+  if (error || !data) { LLC.profile = null; return false; }
+  LLC.profile = data;
+  return true;
+}
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Signing in
+   ============================================================ */
+
+async function llcSignInAdult(email, password) {
+  const { error } = await LLC.sb.auth.signInWithPassword({ email, password });
+  if (error) return error.message;
+  const { data } = await LLC.sb.auth.getSession();
+  LLC.session = data.session;
+  if (!await llcLoadProfile()) {
+    return "Signed in, but this email is not on any school roster yet.";
+  }
+  llcSetStatus("online", LLC.profile.full_name);
+  await llcPull();
+  return null;
+}
+
+async function llcSignUpAdult(email, password) {
+  const { error } = await LLC.sb.auth.signUp({ email, password });
+  if (error) return error.message;
+  return null;
+}
+
+/* The class code shows the names in that class and nothing else — see
+   class_roster() in 0002_functions.sql. */
+async function llcRoster(code) {
+  const { data, error } = await LLC.sb.rpc("class_roster", { p_code: code });
+  if (error) return { err: error.message };
+  return { rows: data || [] };
+}
+
+/* A child signing in.
+   Anonymous auth gives the browser a real session, then claim_pupil
+   checks the PIN and attaches that session to the pupil. The service
+   key is never anywhere near the device. */
+async function llcSignInChild(code, pupilId, pin) {
+  if (!LLC.session) {
+    const { data, error } = await LLC.sb.auth.signInAnonymously();
+    if (error) return "Could not start a session: " + error.message;
+    LLC.session = data.session;
+  }
+  const { data, error } = await LLC.sb.rpc("claim_pupil", {
+    p_code: code, p_pupil: pupilId, p_pin: String(pin),
+  });
+  if (error) return error.message;
+  if (!data || !data.ok) {
+    return ({
+      wrong_pin:    "That PIN is not right — try again.",
+      not_in_class: "That name is not in this class.",
+      locked:       "Too many tries. Ask your teacher, or wait fifteen minutes.",
+      no_session:   "Could not start a session.",
+    })[data && data.error] || "Could not sign in.";
+  }
+  await llcLoadProfile();
+  llcSetStatus("online", (LLC.profile && LLC.profile.full_name) || data.full_name);
+  await llcPull();
+  return null;
+}
+
+async function llcSignOut() {
+  if (LLC.sb) await LLC.sb.auth.signOut();
+  LLC.session = null; LLC.profile = null;
+  llcSetStatus("warn", "signed out");
+  render();
+}
+
+/* ============================================================
+   Sync
+   ------------------------------------------------------------
+   Pull on sign-in, push in the background. Both are best-effort: a
+   failure sets the chip to "offline" and changes nothing else, because
+   localStorage is still holding everything the child can see.
+   ============================================================ */
+
+const LLC_PUSH_MS = 2500;     // settle time before a garden write
+
+function llcLive() { return !!(LLC.sb && LLC.profile); }
+
+async function llcPull() {
+  if (!llcLive()) return;
+  try {
+    if (LLC.profile.role === "student") await llcPullPupil();
+    else await llcPullStaff();
+    llcSetStatus("online", LLC.profile.full_name);
+  } catch (e) {
+    llcSetStatus("offline", e.message || "could not reach the project");
+  }
+}
+
+async function llcPullPupil() {
+  const id = LLC.profile.id;
+
+  // the garden, if the server's copy is newer than this device's
+  const { data: g } = await LLC.sb.from("garden")
+    .select("state, spent, updated_at").eq("pupil_id", id).maybeSingle();
+  if (g && g.state && Object.keys(g.state).length) {
+    const localAt = Number(gState()._at || 0);
+    const serverAt = Date.parse(g.updated_at || 0) || 0;
+    if (serverAt > localAt) {
+      // The child is looking at the local copy, so this only happens
+      // when they have genuinely been playing somewhere else.
+      Object.assign(gState(), g.state);
+      gState()._at = serverAt;
+      llSave();
+    }
+  }
+
+  // coins, from the ledger rather than a counter
+  const { data: pts } = await LLC.sb.from("points")
+    .select("source, amount, reason, at").eq("pupil_id", id)
+    .order("at", { ascending: false }).limit(200);
+  LLC.points = pts || [];
+
+  const { data: att } = await LLC.sb.from("attendance")
+    .select("on_date, mark").eq("pupil_id", id)
+    .order("on_date", { ascending: false }).limit(60);
+  LLC.attendance = att || [];
+
+  const { data: hw } = await LLC.sb.from("homework")
+    .select("id, title, due_on, module_id, class_id")
+    .order("due_on", { ascending: false }).limit(40);
+  LLC.homework = hw || [];
+}
+
+async function llcPullStaff() {
+  const { data: cls } = await LLC.sb.from("classes").select("id, name, room, join_code");
+  LLC.classes = cls || [];
+  const { data: pupils } = await LLC.sb.from("profiles")
+    .select("id, full_name").eq("role", "student").order("full_name");
+  LLC.pupils = pupils || [];
+}
+
+/* ---------- pushing ---------- */
+
+let llcGardenTimer = null;
+
+function llcQueueGarden() {
+  if (!llcLive() || LLC.profile.role !== "student") return;
+  clearTimeout(llcGardenTimer);
+  llcGardenTimer = setTimeout(llcPushGarden, LLC_PUSH_MS);
+}
+
+async function llcPushGarden() {
+  if (!llcLive() || LLC.profile.role !== "student") return;
+  const g = gState();
+  LLC.pending++; llcPaintChip();
+  try {
+    const { error } = await LLC.sb.from("garden").upsert({
+      pupil_id: LLC.profile.id,
+      state: g,
+      spent: Number(g._spent || 0),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "pupil_id" });
+    if (error) throw error;
+    g._at = Date.now();
+    if (LLC.status === "offline") llcSetStatus("online", LLC.profile.full_name);
+  } catch (e) {
+    llcSetStatus("offline", "changes are saved on this device only");
+  } finally {
+    LLC.pending = Math.max(0, LLC.pending - 1);
+    llcPaintChip();
+  }
+}
+
+async function llcPushPractice(moduleId, score, stars, label, letters) {
+  if (!llcLive() || LLC.profile.role !== "student") return;
+  try {
+    await LLC.sb.from("practice").insert({
+      pupil_id: LLC.profile.id,
+      module_id: moduleId, label: label || null,
+      score: Math.max(0, Math.min(100, Math.round(score))),
+      stars: stars || 0, letters: letters || [],
+    });
+  } catch (e) { /* best effort — the local record already stands */ }
+}
+
+/* ---------- hooking into what already exists ----------
+   Both of these are plain function declarations, so a later block can
+   take them over. Neither wrapper changes what the original returns —
+   the app must behave identically with the network unplugged. */
+
+const llSaveCloud = llSave;
+llSave = function () {
+  const out = llSaveCloud.apply(this, arguments);
+  llcQueueGarden();
+  return out;
+};
+
+const llRecordCloud = llRecord;
+llRecord = function (moduleId, score, label, letters) {
+  const out = llRecordCloud.apply(this, arguments);
+  try { llcPushPractice(moduleId, score, out && out.stars, label, letters); } catch (e) {}
+  return out;
+};
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   The panel
+   ============================================================ */
+
+function llcChipLook() {
+  switch (LLC.status) {
+    case "online":     return ["on",   LLC.pending ? "Saving…" : "Synced"];
+    case "connecting": return ["warn", "Connecting…"];
+    case "offline":    return ["bad",  "Offline"];
+    case "error":      return ["bad",  "Problem"];
+    case "warn":       return ["warn", "Sign in"];
+    default:           return ["",     "This device only"];
+  }
+}
+
+function llcPaintChip() {
+  const el = document.getElementById("llcChip");
+  if (!el) return;
+  const [cls, label] = llcChipLook();
+  el.className = "llc-chip " + cls;
+  el.title = LLC.detail || label;
+  el.querySelector(".lbl").textContent = label;
+}
+
+function llcMountChip() {
+  const header = document.querySelector("header");
+  if (!header || document.getElementById("llcChip")) return;
+  const who = header.querySelector(".whoami");
+  const b = document.createElement("button");
+  b.id = "llcChip";
+  b.className = "llc-chip";
+  b.innerHTML = '<span class="dot"></span><span class="lbl">This device only</span>';
+  b.onclick = llcOpen;
+  header.insertBefore(b, who || null);
+  llcPaintChip();
+}
+
+function llcOpen() {
+  LLC.err = ""; LLC.ok = "";
+  if (!LLC.cfg) LLC.tab = "setup";
+  else if (LLC.profile) LLC.tab = "who";
+  else if (LLC.tab === "setup" || LLC.tab === "who") LLC.tab = "child";
+  llcPaint();
+}
+
+function llcClose() {
+  document.querySelectorAll(".llc-veil").forEach(v => v.remove());
+}
+
+function llcPaint() {
+  llcClose();
+  const veil = document.createElement("div");
+  veil.className = "llc-veil";
+  veil.onclick = (e) => { if (e.target === veil) llcClose(); };
+  veil.innerHTML = '<div class="llc-box">' + llcBody() + "</div>";
+  document.body.appendChild(veil);
+  const first = veil.querySelector("input");
+  if (first) first.focus();
+}
+
+function llcBody() {
+  const msg = (LLC.err ? '<p class="llc-err">' + esc(LLC.err) + "</p>" : "")
+            + (LLC.ok ? '<p class="llc-ok">' + esc(LLC.ok) + "</p>" : "");
+
+  if (LLC.tab === "setup") return `
+    <h3>Connect to your school</h3>
+    <p class="sub">From your Supabase project: Settings → API. The anon key is
+      meant to be public — what protects the data is the security rules in the
+      database, not this key.</p>
+    <label class="llc-field"><span>Project URL</span>
+      <input id="llcUrl" placeholder="https://xxxxx.supabase.co"
+             value="${esc((LLC.cfg && LLC.cfg.url) || "")}"></label>
+    <label class="llc-field"><span>Anon public key</span>
+      <input id="llcKey" placeholder="eyJhbGciOi…"
+             value="${esc((LLC.cfg && LLC.cfg.key) || "")}"></label>
+    ${msg}
+    <div class="llc-row">
+      <button class="btn" onclick="llcClose()">Cancel</button>
+      <button class="btn primary" onclick="llcDoSetup()">Connect</button>
+    </div>
+    <p class="llc-note">Leave both empty and clear them to go back to working on
+      this device alone. Nothing is sent anywhere until a project is set.</p>`;
+
+  if (LLC.tab === "who") return `
+    <h3>${esc(LLC.profile.full_name)}</h3>
+    <p class="sub">Signed in as ${esc(LLC.profile.role)} · ${esc(llcChipLook()[1])}</p>
+    ${LLC.detail ? '<p class="llc-note">' + esc(LLC.detail) + "</p>" : ""}
+    ${msg}
+    <div class="llc-row">
+      <button class="btn" onclick="llcClose()">Close</button>
+      <button class="btn" onclick="llcPullNow()">Refresh</button>
+      <button class="btn" onclick="llcSignOut();llcClose()">Sign out</button>
+    </div>
+    <p class="llc-note"><button class="chip" onclick="LLC.tab='setup';llcPaint()"
+      style="font-size:11.5px">Change project</button></p>`;
+
+  const tabs = `
+    <div class="llc-tabs">
+      <button aria-pressed="${LLC.tab === "child"}"
+        onclick="LLC.tab='child';LLC.err='';llcPaint()">I'm a student</button>
+      <button aria-pressed="${LLC.tab === "adult"}"
+        onclick="LLC.tab='adult';LLC.err='';llcPaint()">Teacher or parent</button>
+    </div>`;
+
+  if (LLC.tab === "adult") return `
+    <h3>Sign in</h3>
+    <p class="sub">Use the email your school has on its roster for you.</p>
+    ${tabs}
+    <label class="llc-field"><span>Email</span>
+      <input id="llcEmail" type="email" autocomplete="username"></label>
+    <label class="llc-field"><span>Password</span>
+      <input id="llcPass" type="password" autocomplete="current-password"></label>
+    ${msg}
+    <div class="llc-row">
+      <button class="btn" onclick="llcDoSignUp()">Create account</button>
+      <button class="btn primary" onclick="llcDoSignIn()">Sign in</button>
+    </div>
+    <p class="llc-note">Creating an account only works if your school has already
+      put your email on the roster.</p>`;
+
+  // child: code -> pick a name -> PIN
+  if (!LLC.roster.length) return `
+    <h3>Join your class</h3>
+    <p class="sub">Type the code your teacher put on the board.</p>
+    ${tabs}
+    <label class="llc-field"><span>Class code</span>
+      <input id="llcCode" placeholder="QAIDA1" autocapitalize="characters"
+             style="text-transform:uppercase;letter-spacing:.15em;font-weight:800"></label>
+    ${msg}
+    <div class="llc-row">
+      <button class="btn" onclick="llcClose()">Cancel</button>
+      <button class="btn primary" onclick="llcDoCode()">Find my class</button>
+    </div>`;
+
+  if (!LLC.picked) return `
+    <h3>Which one is you?</h3>
+    <p class="sub">Class ${esc(LLC.code)}</p>
+    ${LLC.roster.map(r => `<button class="llc-name"
+        onclick="llcPick('${r.pupil_id}')">${esc(r.full_name)}</button>`).join("")}
+    ${msg}
+    <div class="llc-row">
+      <button class="btn" onclick="LLC.roster=[];llcPaint()">Back</button>
+    </div>`;
+
+  return `
+    <h3>Hello, ${esc(LLC.picked.full_name)}</h3>
+    <p class="sub">Type your four numbers.</p>
+    <label class="llc-field"><span>Your PIN</span>
+      <input id="llcPin" class="llc-pin" type="password" inputmode="numeric"
+             maxlength="8" autocomplete="off"></label>
+    ${msg}
+    <div class="llc-row">
+      <button class="btn" onclick="LLC.picked=null;LLC.err='';llcPaint()">Back</button>
+      <button class="btn primary" onclick="llcDoPin()">Let me in</button>
+    </div>`;
+}
+
+/* ---------- what the buttons do ---------- */
+
+async function llcDoSetup() {
+  const url = (document.getElementById("llcUrl") || {}).value;
+  const key = (document.getElementById("llcKey") || {}).value;
+  if (!url && !key) {
+    llcSaveCfg("", "");
+    LLC.sb = null; LLC.profile = null; LLC.session = null;
+    llcSetStatus("local", "no project set");
+    llcClose(); toast("Back to this device only"); return;
+  }
+  if (!/^https:\/\/[\w-]+\.supabase\.(co|in)$/.test(String(url).trim().replace(/\/+$/, ""))) {
+    LLC.err = "That does not look like a project URL."; llcPaint(); return;
+  }
+  llcSaveCfg(url, key);
+  LLC.err = ""; LLC.ok = "Connecting…"; llcPaint();
+  const up = await llcConnect();
+  LLC.ok = "";
+  if (!up) { LLC.err = LLC.detail || "Could not connect."; llcPaint(); return; }
+  LLC.tab = LLC.profile ? "who" : "child";
+  llcPaint();
+}
+
+async function llcDoSignIn() {
+  const email = (document.getElementById("llcEmail") || {}).value;
+  const pass = (document.getElementById("llcPass") || {}).value;
+  LLC.err = ""; LLC.ok = "Signing in…"; llcPaint();
+  const err = await llcSignInAdult(email, pass);
+  LLC.ok = "";
+  if (err) { LLC.err = err; llcPaint(); return; }
+  llcClose(); toast("Signed in as " + LLC.profile.full_name); render();
+}
+
+async function llcDoSignUp() {
+  const email = (document.getElementById("llcEmail") || {}).value;
+  const pass = (document.getElementById("llcPass") || {}).value;
+  LLC.err = ""; LLC.ok = "Creating…"; llcPaint();
+  const err = await llcSignUpAdult(email, pass);
+  LLC.ok = err ? "" : "Account made. Check your email if confirmation is on, then sign in.";
+  LLC.err = err || "";
+  llcPaint();
+}
+
+async function llcDoCode() {
+  const code = ((document.getElementById("llcCode") || {}).value || "").trim().toUpperCase();
+  if (!code) { LLC.err = "Type the code first."; llcPaint(); return; }
+  LLC.err = ""; LLC.ok = "Looking…"; llcPaint();
+  const res = await llcRoster(code);
+  LLC.ok = "";
+  if (res.err) { LLC.err = res.err; llcPaint(); return; }
+  if (!res.rows.length) { LLC.err = "No class with that code."; llcPaint(); return; }
+  LLC.code = code; LLC.roster = res.rows; LLC.picked = null;
+  llcPaint();
+}
+
+function llcPick(id) {
+  LLC.picked = LLC.roster.find(r => r.pupil_id === id) || null;
+  LLC.err = "";
+  llcPaint();
+}
+
+async function llcDoPin() {
+  const pin = ((document.getElementById("llcPin") || {}).value || "").trim();
+  if (!/^\d{4,8}$/.test(pin)) { LLC.err = "A PIN is four numbers."; llcPaint(); return; }
+  LLC.err = ""; LLC.ok = "Checking…"; llcPaint();
+  const err = await llcSignInChild(LLC.code, LLC.picked.pupil_id, pin);
+  LLC.ok = "";
+  if (err) { LLC.err = err; llcPaint(); return; }
+  const name = LLC.picked.full_name;
+  LLC.roster = []; LLC.picked = null;
+  llcClose(); toast("Welcome back, " + name.split(" ")[0]); render();
+}
+
+async function llcPullNow() {
+  LLC.ok = "Refreshing…"; llcPaint();
+  await llcPull();
+  LLC.ok = "Up to date."; llcPaint();
+}
+
+/* ---------- keep the chip alive across re-renders ---------- */
+const renderCloud = render;
+render = function () {
+  const out = renderCloud.apply(this, arguments);
+  llcMountChip();
+  return out;
+};
+
+llcMountChip();
+llcLoadCfg();
+if (LLC.cfg) llcConnect();
+else llcSetStatus("local", "no project set");
+</script>

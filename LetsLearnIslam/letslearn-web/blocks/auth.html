@@ -1,0 +1,668 @@
+<!-- ============================================================
+     AUTH — signing in, and "who's learning?"
+     ------------------------------------------------------------
+     Two screens in front of the app:
+
+       1. Sign in    — Google, Facebook, email, or a class code.
+       2. Who's      — big monster cards, one per person on this
+          learning?    device. A child taps their face and types a PIN.
+
+     Everything works with no Supabase project at all: the profiles
+     then live in localStorage and the app behaves exactly as it did
+     before this block existed. That is deliberate — the classroom
+     demo must never depend on a network.
+     ============================================================ -->
+<style>
+#llaGate {
+  position: fixed; inset: 0; z-index: 900; overflow: auto;
+  background: radial-gradient(120% 100% at 50% 0%, #fdfaf3 0%, #f1ece0 60%, #e6e0d0 100%);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.lla-card {
+  width: 100%; max-width: 620px; background: #fff; border-radius: 26px;
+  box-shadow: 0 18px 50px rgba(40,30,10,.16); padding: 34px 30px 28px;
+  text-align: center;
+}
+.lla-brand { font-size: 15px; letter-spacing: .18em; text-transform: uppercase;
+  color: #9a8f78; font-weight: 800; margin-bottom: 6px; }
+.lla-card h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: -.4px; }
+.lla-card .lla-sub { color: #6d6553; font-size: 15px; margin: 0 0 22px; }
+
+/* the people grid */
+.lla-people { display: grid; gap: 16px; justify-content: center;
+  grid-template-columns: repeat(auto-fit, 132px); margin: 4px 0 20px; }
+/* A button centres its content, so one card whose name wraps to two
+   lines drags its own face out of line with the rest of the row. */
+.lla-person { background: none; border: 0; padding: 10px 6px 12px; cursor: pointer;
+  border-radius: 20px; transition: transform .12s, background .12s;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: flex-start; }
+.lla-person:hover, .lla-person:focus-visible { background: #f6f1e4; transform: translateY(-3px); }
+.lla-person img, .lla-face { width: 96px; height: 96px; border-radius: 50%;
+  display: block; margin: 0 auto 9px; background: #f2ecdd; }
+.lla-face { display: grid; place-items: center; font-size: 38px; font-weight: 800;
+  color: #fff; }
+.lla-name { font-size: 16px; font-weight: 750; color: #2c2618; }
+.lla-role { font-size: 12.5px; color: #8b8371; margin-top: 1px; }
+.lla-add .lla-face { background: #efe9da; color: #8b8371; border: 2px dashed #cfc6ad; }
+
+/* buttons */
+.lla-btn { display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; padding: 15px 18px; margin: 9px 0; border-radius: 15px;
+  border: 1.5px solid #ded6c2; background: #fff; font: inherit; font-size: 16px;
+  font-weight: 650; cursor: pointer; color: #2c2618; }
+.lla-btn:hover { background: #faf7ef; }
+.lla-btn.primary { background: var(--qaida-green, #2f6f52); border-color: transparent;
+  color: #fff; }
+.lla-btn.primary:hover { filter: brightness(1.07); }
+.lla-btn[disabled] { opacity: .5; cursor: not-allowed; }
+.lla-btn svg { width: 20px; height: 20px; flex: none; }
+.lla-or { display: flex; align-items: center; gap: 12px; color: #a49a83;
+  font-size: 13px; margin: 18px 0 10px; }
+.lla-or::before, .lla-or::after { content: ""; flex: 1; height: 1px; background: #e3dccb; }
+.lla-small { background: none; border: 0; color: #6d6553; font: inherit;
+  font-size: 14px; text-decoration: underline; cursor: pointer; padding: 8px; }
+.lla-row { display: flex; gap: 10px; justify-content: center; margin-top: 14px;
+  flex-wrap: wrap; }
+.lla-field { display: block; text-align: left; margin: 12px 0; }
+.lla-field span { display: block; font-size: 13px; font-weight: 700; color: #6d6553;
+  margin-bottom: 5px; }
+.lla-field input { width: 100%; padding: 13px 14px; border-radius: 12px;
+  border: 1.5px solid #ded6c2; font: inherit; font-size: 16px; background: #fdfcf8; }
+.lla-note { font-size: 13px; color: #8b8371; line-height: 1.55; margin: 14px 0 0; }
+.lla-err { background: #fdecec; color: #8c2f2f; border-radius: 11px;
+  padding: 10px 13px; font-size: 14px; margin: 12px 0; text-align: left; }
+.lla-ok { background: #ecf6ee; color: #2c6b40; border-radius: 11px;
+  padding: 10px 13px; font-size: 14px; margin: 12px 0; text-align: left; }
+
+/* the PIN pad — big, because a five-year-old is using it */
+.lla-dots { display: flex; gap: 14px; justify-content: center; margin: 20px 0 8px; }
+.lla-dots i { width: 17px; height: 17px; border-radius: 50%; background: #e3dccb; }
+.lla-dots i.on { background: var(--qaida-green, #2f6f52); }
+.lla-pad { display: grid; grid-template-columns: repeat(3, 84px); gap: 12px;
+  justify-content: center; margin: 16px 0 4px; }
+.lla-pad button { height: 74px; border-radius: 20px; border: 1.5px solid #ded6c2;
+  background: #fff; font: inherit; font-size: 27px; font-weight: 700; cursor: pointer; }
+.lla-pad button:hover { background: #f6f1e4; }
+.lla-pad button.ghost { border-color: transparent; background: none; font-size: 17px;
+  font-weight: 650; color: #6d6553; }
+
+.lla-mongrid { display: grid; grid-template-columns: repeat(auto-fit, 66px); gap: 10px;
+  justify-content: center; margin: 6px 0 4px; }
+.lla-monbtn { border: 2.5px solid transparent; border-radius: 16px; background: none;
+  padding: 3px; cursor: pointer; line-height: 0; }
+.lla-monbtn[aria-pressed="true"] { border-color: var(--qaida-green, #2f6f52);
+  background: #f1f7f3; }
+.lla-monbtn img { width: 56px; height: 56px; }
+
+@media (max-width: 560px) {
+  .lla-card { padding: 26px 18px 22px; border-radius: 20px; }
+  .lla-people { grid-template-columns: repeat(auto-fit, 108px); }
+  .lla-person img, .lla-face { width: 80px; height: 80px; }
+}
+</style>
+<script>
+"use strict";
+
+/* ============================================================
+   State
+   ============================================================ */
+
+const LLA_WHO_KEY   = "letslearn.who.v1";
+const LLA_LOCAL_KEY = "letslearn.people.v1";
+
+const LLA = {
+  stage: null,      // null = the app is running; otherwise a gate screen
+  who: null,        // the profile in use
+  people: [],       // what the picker shows
+  pin: "",
+  target: null,     // the child whose PIN is being typed
+  draft: null,      // the child being added
+  err: "",
+  ok: "",
+  busy: false,
+};
+
+/* Is there a real project behind this, or is it a demo on one laptop? */
+function llaCloud() { return !!(typeof LLC !== "undefined" && LLC.sb); }
+
+/* ---------- local people, for when there is no project ---------- */
+
+function llaLocalRead() {
+  try {
+    const raw = localStorage.getItem(LLA_LOCAL_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) { /* fall through to the seed */ }
+  /* First run. Seed from the four demo people the prototype already
+     pretends to be, so the picker is never an empty room. */
+  const seed = ["admin", "teacher", "parent", "student"].map((r, i) => ({
+    id: "local-" + r,
+    name: (typeof WHO !== "undefined" && WHO[r] ? WHO[r].name : r),
+    role: r,
+    av: i + 2,
+    pin: r === "student" ? "1234" : null,
+  }));
+  llaLocalWrite(seed);
+  return seed;
+}
+
+function llaLocalWrite(list) {
+  try { localStorage.setItem(LLA_LOCAL_KEY, JSON.stringify(list)); } catch (e) {}
+}
+
+/* ============================================================
+   Loading the people
+   ============================================================ */
+
+async function llaLoadPeople() {
+  if (!llaCloud() || !LLC.profile) { LLA.people = llaLocalRead(); return; }
+
+  /* The adult themselves, then their household, then any child they are
+     down as a guardian for. A school parent has the second without the
+     first; a home parent has the first without the second. */
+  const me = LLC.profile;
+  const rows = [{ id: me.id, name: me.full_name, role: me.role, av: null, cloud: true }];
+  const seen = { [me.id]: true };
+
+  try {
+    const { data } = await LLC.sb
+      .from("profiles")
+      .select("id, full_name, role, avatar, family_id")
+      .eq("role", "student");
+    (data || []).forEach(r => {
+      if (seen[r.id]) return;
+      seen[r.id] = true;
+      rows.push({ id: r.id, name: r.full_name, role: "student",
+                  av: (r.avatar && typeof r.avatar.monster === "number") ? r.avatar.monster : null,
+                  cloud: true });
+    });
+  } catch (e) { /* the picker still shows the adult */ }
+
+  LLA.people = rows;
+}
+
+/* A stable monster for somebody who has not picked one, so the same
+   child is the same creature on every device. */
+function llaAvatarOf(p) {
+  if (typeof p.av === "number") return p.av;
+  let h = 0;
+  const s = String(p.id || p.name || "");
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % (typeof MONSTERS !== "undefined" ? MONSTERS.length : 12);
+}
+
+function llaFace(p, size) {
+  size = size || 96;
+  if (p.role === "student" && typeof qzMonsterUrl === "function") {
+    return `<img src="${qzMonsterUrl(llaAvatarOf(p), size, "happy")}" alt="">`;
+  }
+  const colour = (typeof WHO !== "undefined" && WHO[p.role] && WHO[p.role].colour) || "#7a6f58";
+  return `<span class="lla-face" style="background:${esc(colour)};width:${size}px;height:${size}px">${
+    esc((p.name || "?").trim().charAt(0).toUpperCase())}</span>`;
+}
+
+const LLA_ROLE_WORD = { admin: "Runs the madrasah", teacher: "Teacher",
+                        parent: "Parent", student: "Learner" };
+
+/* ============================================================
+   The gate
+   ============================================================ */
+
+function llaShow(stage) {
+  LLA.stage = stage;
+  LLA.err = ""; LLA.ok = "";
+  llaPaint();
+}
+
+function llaHide() {
+  LLA.stage = null;
+  const g = document.getElementById("llaGate");
+  if (g) g.remove();
+}
+
+function llaPaint() {
+  let g = document.getElementById("llaGate");
+  if (!LLA.stage) { if (g) g.remove(); return; }
+  if (!g) {
+    g = document.createElement("div");
+    g.id = "llaGate";
+    document.body.appendChild(g);
+  }
+  g.innerHTML = '<div class="lla-card">' + llaBody() + "</div>";
+  const f = g.querySelector("input");
+  if (f) f.focus();
+}
+
+function llaMsg() {
+  return (LLA.err ? '<p class="lla-err">' + esc(LLA.err) + "</p>" : "")
+       + (LLA.ok  ? '<p class="lla-ok">'  + esc(LLA.ok)  + "</p>" : "");
+}
+
+const LLA_G_ICON = '<svg viewBox="0 0 48 48"><path fill="#4285F4" d="M45 24c0-1.6-.1-2.7-.4-4H24v7.5h12c-.2 2-1.5 5-4.4 7l6.7 5.2C42.2 36 45 30.6 45 24z"/><path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.3l-6.7-5.2c-1.8 1.3-4.3 2.2-7.8 2.2-5.9 0-11-4-12.8-9.5l-7 5.4C7.9 41 15.4 46 24 46z"/><path fill="#FBBC05" d="M11.2 28.2c-.5-1.4-.7-2.8-.7-4.2s.3-2.9.7-4.2l-7-5.4C2.8 17.3 2 20.5 2 24s.8 6.7 2.2 9.6l7-5.4z"/><path fill="#EA4335" d="M24 9.5c3.3 0 6.2 1.1 8.5 3.3l6-6C34.9 3.5 29.9 1 24 1 15.4 1 7.9 6 4.2 14.4l7 5.4C13 14.4 18.1 9.5 24 9.5z"/></svg>';
+const LLA_F_ICON = '<svg viewBox="0 0 24 24"><path fill="#1877F2" d="M24 12a12 12 0 10-13.9 11.9v-8.4H7.1V12h3V9.4c0-3 1.8-4.7 4.5-4.7 1.3 0 2.7.24 2.7.24v2.9h-1.5c-1.5 0-2 .93-2 1.9V12h3.3l-.53 3.5h-2.8v8.4A12 12 0 0024 12z"/></svg>';
+
+function llaBody() {
+  const S = LLA.stage;
+
+  /* ---------- 1. signing in ---------- */
+  if (S === "signin") {
+    const cloud = llaCloud();
+    return `
+      <p class="lla-brand">LetsLearn</p>
+      <h1>Assalamu alaikum</h1>
+      <p class="lla-sub">Sign in to carry your work between devices.</p>
+      <button class="lla-btn" ${cloud ? "" : "disabled"} onclick="llaOAuth('google')">
+        ${LLA_G_ICON} Continue with Google</button>
+      <button class="lla-btn" ${cloud ? "" : "disabled"} onclick="llaOAuth('facebook')">
+        ${LLA_F_ICON} Continue with Facebook</button>
+      <button class="lla-btn" ${cloud ? "" : "disabled"} onclick="llaShow('email')"><span>✉️</span> Continue with an email</button>
+      ${cloud ? "" : `<p class="lla-note">No school project is connected on this
+        device, so those three have nothing to talk to yet. Everything below
+        works without one.</p>`}
+      <div class="lla-or">or</div>
+      <button class="lla-btn" onclick="llaShow('code')"><span>🏫</span> I have a class code</button>
+      <button class="lla-btn primary" onclick="llaShow('picker')"><span>👋</span> Use this device</button>
+      ${llaMsg()}
+      <p class="lla-note">Grown-ups sign in with Google, Facebook or an email.
+        Children never need one — they tap their face and type a PIN.</p>`;
+  }
+
+  /* ---------- email ---------- */
+  if (S === "email") return `
+    <p class="lla-brand">LetsLearn</p>
+    <h1>Your email</h1>
+    <p class="lla-sub">For parents and teachers.</p>
+    <label class="lla-field"><span>Email</span>
+      <input id="llaEmail" type="email" autocomplete="username"></label>
+    <label class="lla-field"><span>Password</span>
+      <input id="llaPass" type="password" autocomplete="current-password"></label>
+    ${llaMsg()}
+    <button class="lla-btn primary" onclick="llaEmailIn(false)">Sign in</button>
+    <button class="lla-btn" onclick="llaEmailIn(true)">Create an account</button>
+    <div class="lla-row"><button class="lla-small" onclick="llaShow('signin')">Back</button></div>`;
+
+  /* ---------- 2. who's learning ---------- */
+  if (S === "picker") {
+    const cards = LLA.people.map(p => `
+      <button class="lla-person" onclick="llaPick('${esc(p.id)}')">
+        ${llaFace(p)}
+        <div class="lla-name">${esc(p.name)}</div>
+        <div class="lla-role">${esc(LLA_ROLE_WORD[p.role] || p.role)}</div>
+      </button>`).join("");
+    const canAdd = !llaCloud()
+      || (LLC.profile && LLC.profile.role !== "student");
+    return `
+      <p class="lla-brand">LetsLearn</p>
+      <h1>Who's learning?</h1>
+      <p class="lla-sub">Tap your face.</p>
+      <div class="lla-people">${cards}
+        ${canAdd ? `<button class="lla-person lla-add" onclick="llaShow('addchild')">
+          <span class="lla-face">＋</span>
+          <div class="lla-name">Add a child</div>
+          <div class="lla-role">&nbsp;</div></button>` : ""}
+      </div>
+      ${llaMsg()}
+      <div class="lla-row">
+        <button class="lla-small" onclick="llaShow('signin')">Sign in as somebody else</button>
+      </div>`;
+  }
+
+  /* ---------- 3. the PIN ---------- */
+  if (S === "pin") {
+    const p = LLA.target || {};
+    const dots = [0, 1, 2, 3].map(i =>
+      `<i class="${i < LLA.pin.length ? "on" : ""}"></i>`).join("");
+    const keys = [1,2,3,4,5,6,7,8,9].map(n =>
+      `<button onclick="llaPinKey('${n}')">${n}</button>`).join("");
+    return `
+      ${llaFace(p, 84)}
+      <h1>Hello ${esc((p.name || "").split(" ")[0])}</h1>
+      <p class="lla-sub">Type your secret number.</p>
+      <div class="lla-dots">${dots}</div>
+      ${llaMsg()}
+      <div class="lla-pad">
+        ${keys}
+        <button class="ghost" onclick="llaShow('picker')">Back</button>
+        <button onclick="llaPinKey('0')">0</button>
+        <button class="ghost" onclick="llaPinKey('del')">⌫</button>
+      </div>`;
+  }
+
+  /* ---------- 4. adding a child ---------- */
+  if (S === "addchild") {
+    const d = LLA.draft || (LLA.draft = { name: "", av: 0, pin: "" });
+    return `
+      <p class="lla-brand">LetsLearn</p>
+      <h1>Add a child</h1>
+      <p class="lla-sub">They will use this on their own, so keep the PIN
+        something they can remember and you can too.</p>
+      <label class="lla-field"><span>Their name</span>
+        <input id="llaKidName" value="${esc(d.name)}" placeholder="Maryam"
+               oninput="LLA.draft.name=this.value"></label>
+      <label class="lla-field"><span>Pick their monster</span></label>
+      <div class="lla-mongrid">
+        ${(typeof MONSTERS !== "undefined" ? MONSTERS : []).map(m => `
+          <button type="button" class="lla-monbtn" aria-pressed="${m.id === d.av}"
+                  title="${esc(m.name)}"
+                  onclick="LLA.draft.av=${m.id};llaPaint()">
+            <img src="${qzMonsterUrl(m.id, 56, "happy")}" alt="${esc(m.name)}">
+          </button>`).join("")}
+      </div>
+      <label class="lla-field"><span>A four-digit PIN</span>
+        <input id="llaKidPin" inputmode="numeric" maxlength="8" value="${esc(d.pin)}"
+               placeholder="4821" oninput="LLA.draft.pin=this.value"></label>
+      ${llaMsg()}
+      <button class="lla-btn primary" ${LLA.busy ? "disabled" : ""}
+              onclick="llaAddChild()">${LLA.busy ? "Adding…" : "Add them"}</button>
+      <div class="lla-row"><button class="lla-small" onclick="llaShow('picker')">Back</button></div>
+      <p class="lla-note">A child added here can read, practise and garden at
+        home straight away. Joining a class at the madrasah is a separate step —
+        a teacher has to say yes.</p>`;
+  }
+
+  /* ---------- a class code ---------- */
+  if (S === "code") return `
+    <p class="lla-brand">LetsLearn</p>
+    <h1>Your class code</h1>
+    <p class="lla-sub">The one your teacher put on the board.</p>
+    <label class="lla-field"><span>Code</span>
+      <input id="llaCode" placeholder="QAIDA1" autocapitalize="characters"
+             style="text-transform:uppercase;letter-spacing:.16em;font-weight:800"></label>
+    ${llaMsg()}
+    <button class="lla-btn primary" onclick="llaCodeGo()">Find my class</button>
+    <div class="lla-row"><button class="lla-small" onclick="llaShow('signin')">Back</button></div>`;
+
+  return "";
+}
+
+/* ============================================================
+   What the buttons do
+   ============================================================ */
+
+/* Google and Facebook. The provider bounces back to this same page, so
+   there is nothing to handle on return beyond noticing the session —
+   llaBoot() does that. */
+async function llaOAuth(provider) {
+  if (!llaCloud()) { LLA.err = "Connect a school project first."; return llaPaint(); }
+  LLA.err = "";
+  const back = location.origin + location.pathname;
+  const { error } = await LLC.sb.auth.signInWithOAuth({
+    provider, options: { redirectTo: back },
+  });
+  if (error) { LLA.err = error.message; llaPaint(); }
+}
+
+async function llaEmailIn(makeAccount) {
+  const email = (document.getElementById("llaEmail") || {}).value || "";
+  const pass  = (document.getElementById("llaPass")  || {}).value || "";
+  LLA.err = ""; LLA.ok = "";
+  if (!email || !pass) { LLA.err = "Both boxes, please."; return llaPaint(); }
+  if (makeAccount) {
+    const { error } = await LLC.sb.auth.signUp({ email, password: pass });
+    LLA.err = error ? error.message : "";
+    LLA.ok = error ? "" : "Account made. Now sign in.";
+    return llaPaint();
+  }
+  const { error } = await LLC.sb.auth.signInWithPassword({ email, password: pass });
+  if (error) { LLA.err = error.message; return llaPaint(); }
+  await llaAfterAdult();
+}
+
+/* Everything an adult sign-in needs afterwards, whichever door they
+   came through. family_open() is idempotent: it does nothing for
+   somebody the school already put on a roster, and makes a household
+   for somebody who arrived on their own. */
+async function llaAfterAdult() {
+  const { data } = await LLC.sb.auth.getSession();
+  LLC.session = data && data.session;
+  if (!LLC.session) { LLA.err = "That did not take. Try again?"; return llaPaint(); }
+  try { await LLC.sb.rpc("family_open", { p_name: null }); } catch (e) {}
+  await llcLoadProfile();
+  if (!LLC.profile) {
+    LLA.err = "Signed in, but there is no profile for you yet.";
+    return llaPaint();
+  }
+  llcSetStatus("online", LLC.profile.full_name);
+  await llaLoadPeople();
+  llaShow("picker");
+}
+
+/* The class-code door, unchanged in substance from the old modal. */
+async function llaCodeGo() {
+  const code = ((document.getElementById("llaCode") || {}).value || "").trim();
+  if (!code) { LLA.err = "Type the code first."; return llaPaint(); }
+  if (!llaCloud()) {
+    LLA.err = "No school project is connected on this device.";
+    return llaPaint();
+  }
+  const r = await llcRoster(code);
+  if (r.err || !r.rows || !r.rows.length) {
+    LLA.err = "No class with that code.";
+    return llaPaint();
+  }
+  LLA.people = r.rows.map(x => ({
+    id: x.pupil_id, name: x.full_name, role: "student", cloud: true,
+    code: code,
+    av: (x.avatar && typeof x.avatar.monster === "number") ? x.avatar.monster : null,
+  }));
+  llaShow("picker");
+}
+
+/* Tapping a face. An adult walks straight in; a child meets the pad. */
+function llaPick(id) {
+  const p = LLA.people.find(x => String(x.id) === String(id));
+  if (!p) return;
+  if (p.role !== "student") return llaEnter(p);
+  LLA.target = p; LLA.pin = "";
+  llaShow("pin");
+}
+
+function llaPinKey(k) {
+  if (k === "del") { LLA.pin = LLA.pin.slice(0, -1); LLA.err = ""; return llaPaint(); }
+  if (LLA.pin.length >= 4) return;
+  LLA.pin += k;
+  LLA.err = "";
+  llaPaint();
+  if (LLA.pin.length === 4) setTimeout(llaPinTry, 130);
+}
+
+async function llaPinTry() {
+  const p = LLA.target;
+  if (!p) return;
+
+  if (!p.cloud) {
+    if (String(p.pin || "") !== LLA.pin) {
+      LLA.pin = ""; LLA.err = "That is not the right number. Have another go.";
+      return llaPaint();
+    }
+    return llaEnter(p);
+  }
+
+  /* A class-code child goes through claim_pupil, a home child through
+     claim_child. Same PIN guard behind both — see ll_pin_ok in 0005. */
+  const msg = p.code
+    ? await llcSignInChild(p.code, p.id, LLA.pin)
+    : await llaClaimChild(p.id, LLA.pin);
+  if (msg) { LLA.pin = ""; LLA.err = msg; return llaPaint(); }
+  llaEnter(p);
+}
+
+async function llaClaimChild(pupilId, pin) {
+  if (!LLC.session) {
+    const { data, error } = await LLC.sb.auth.signInAnonymously();
+    if (error) return "Could not start a session: " + error.message;
+    LLC.session = data.session;
+  }
+  const { data, error } = await LLC.sb.rpc("claim_child",
+                                           { p_pupil: pupilId, p_pin: String(pin) });
+  if (error) return error.message;
+  if (!data || !data.ok) {
+    return ({
+      wrong_pin:          "That is not the right number. Have another go.",
+      locked:             "Too many tries. Ask a grown-up, or wait fifteen minutes.",
+      not_a_family_child: "Use your class code for this one.",
+      no_session:         "Could not start a session.",
+    })[data && data.error] || "Could not sign in.";
+  }
+  await llcLoadProfile();
+  llcSetStatus("online", (LLC.profile && LLC.profile.full_name) || data.full_name);
+  if (typeof llcPull === "function") await llcPull();
+  return null;
+}
+
+async function llaAddChild() {
+  const d = LLA.draft || {};
+  const name = String(d.name || "").trim();
+  const pin  = String(d.pin || "").trim();
+  LLA.err = "";
+  if (!name) { LLA.err = "They need a name."; return llaPaint(); }
+  if (!/^[0-9]{4,8}$/.test(pin)) { LLA.err = "The PIN is four to eight digits."; return llaPaint(); }
+
+  if (!llaCloud() || !LLC.profile) {
+    const list = llaLocalRead();
+    list.push({ id: "local-" + Date.now(), name, role: "student", av: d.av | 0, pin });
+    llaLocalWrite(list);
+    LLA.people = list;
+    LLA.draft = null;
+    llaShow("picker");
+    LLA.ok = name + " is ready.";
+    return llaPaint();
+  }
+
+  LLA.busy = true; llaPaint();
+  try {
+    const { data, error } = await LLC.sb.rpc("family_add_child", {
+      p_name: name, p_pin: pin, p_avatar: { monster: d.av | 0 },
+    });
+    LLA.busy = false;
+    if (error) { LLA.err = error.message; return llaPaint(); }
+    if (!data || !data.ok) {
+      LLA.err = ({
+        bad_pin:           "The PIN is four to eight digits.",
+        no_family:         "Sign in again — no household was made for you.",
+        too_many_children: "That is as many children as one household can hold.",
+        children_cannot_add_children: "Only a grown-up can add a child.",
+      })[data && data.error] || "Could not add them.";
+      return llaPaint();
+    }
+    LLA.draft = null;
+    await llaLoadPeople();
+    llaShow("picker");
+    LLA.ok = name + " is ready.";
+    llaPaint();
+  } catch (e) {
+    LLA.busy = false; LLA.err = e.message || "Could not add them."; llaPaint();
+  }
+}
+
+/* ============================================================
+   Going in, coming out
+   ============================================================ */
+
+function llaEnter(p) {
+  LLA.who = p;
+  try { localStorage.setItem(LLA_WHO_KEY, JSON.stringify(p)); } catch (e) {}
+
+  /* The header reads WHO[role], and the four demo people live there.
+     Point the current role's entry at whoever actually tapped. */
+  role = (p.role && NAV[p.role]) ? p.role : "student";
+  if (WHO[role]) {
+    WHO[role].name = p.name;
+    WHO[role].initial = (p.name || "?").trim().charAt(0).toUpperCase();
+  }
+  page = NAV[role][0][1][0][0];
+  document.body.classList.toggle("kid", role === "student");
+  llaHide();
+  render();
+}
+
+function llaSwitchUser() {
+  try { localStorage.removeItem(LLA_WHO_KEY); } catch (e) {}
+  LLA.who = null;
+  LLA.pin = ""; LLA.target = null;
+  llaLoadPeople().then(() => llaShow("picker"));
+}
+
+async function llaSignOutAll() {
+  try { localStorage.removeItem(LLA_WHO_KEY); } catch (e) {}
+  LLA.who = null;
+  if (llaCloud() && typeof llcSignOut === "function") { try { await llcSignOut(); } catch (e) {} }
+  LLA.people = [];
+  llaShow("signin");
+}
+
+/* ---------- the header control ---------- */
+
+function llaMountSwitch() {
+  const header = document.querySelector("header");
+  if (!header || document.getElementById("llaSwitch")) return;
+  const who = header.querySelector(".whoami");
+  const b = document.createElement("button");
+  b.id = "llaSwitch";
+  b.className = "chip";
+  b.type = "button";
+  b.textContent = "Switch user";
+  b.style.cssText = "font-size:11.5px;margin-left:8px";
+  b.onclick = llaSwitchUser;
+  if (who && who.parentNode) who.parentNode.insertBefore(b, who.nextSibling);
+  else header.appendChild(b);
+}
+
+const renderAuth = window.render;
+window.render = function () {
+  const out = renderAuth.apply(this, arguments);
+  llaMountSwitch();
+  const chip = document.getElementById("llcChip");
+  if (chip && typeof llcOpen === "function") chip.onclick = llcOpen;
+  document.body.classList.toggle("kid", role === "student");
+  return out;
+};
+
+/* ============================================================
+   Boot
+   ------------------------------------------------------------
+   Runs after the CLOUD block has had its go at reconnecting, so that
+   coming back from Google — which returns to this same URL with a
+   session already in the store — lands on the picker rather than on
+   the sign-in screen the person just came from.
+   ============================================================ */
+
+async function llaBoot() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(LLA_WHO_KEY) || "null"); } catch (e) {}
+
+  if (llaCloud() && LLC.session && !LLC.profile) {
+    /* A session with no profile is what an OAuth return looks like the
+       first time: the account exists, the household does not yet. */
+    try { await LLC.sb.rpc("family_open", { p_name: null }); } catch (e) {}
+    await llcLoadProfile();
+  }
+
+  await llaLoadPeople();
+
+  if (saved) {
+    const still = LLA.people.find(x => String(x.id) === String(saved.id));
+    if (still || !llaCloud()) { llaEnter(still || saved); return; }
+  }
+
+  if (llaCloud() && LLC.profile) llaShow("picker");
+  else llaShow("signin");
+}
+
+/* The header chip used to be the only way in, so it carried its own
+   sign-in tabs. Signing in happens at the gate now, and two front doors
+   that disagree is worse than one. The chip goes back to being what it
+   says on it: which project this device is talking to. */
+if (typeof llcOpen === "function") {
+  const llcOpenAuth = llcOpen;
+  llcOpen = function () {
+    if (typeof LLC !== "undefined" && !LLC.profile) {
+      LLC.tab = "setup"; LLC.err = ""; LLC.ok = "";
+      return llcPaint();
+    }
+    return llcOpenAuth.apply(this, arguments);
+  };
+}
+
+window.addEventListener("load", () => { setTimeout(llaBoot, 350); });
+</script>
