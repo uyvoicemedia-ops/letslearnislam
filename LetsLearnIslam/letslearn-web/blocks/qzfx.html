@@ -1,0 +1,552 @@
+<!-- ============================================================
+     QZFX — the live quiz gets its drama
+     ------------------------------------------------------------
+     Everything the game needed to WORK was already here: the
+     relay, server-side timing, the podium, a picture on every
+     question. What it lacked is everything that makes thirty
+     children lean forward.
+
+     Six things, and none of them changes a rule:
+
+       1. A big ticking countdown, not a 8px bar. A bar tells you
+          there is time left; a number tells you how much, and the
+          last five seconds tick out loud.
+       2. On reveal, how many chose each answer. This is the most
+          useful thing a teacher gets out of a quiz and the app
+          was throwing it away: "eleven of you said ب" is a
+          lesson, "the answer was ت" is not.
+       3. Points that fly up when they are won.
+       4. A streak flame, because answering four in a row is the
+          thing a child will tell their mother about.
+       5. A rank arrow, so climbing is visible while it happens
+          rather than only at the podium.
+       6. A lobby with a pulse, and a 3-2-1 before the first
+          question so nobody is reading the first one late.
+
+     PERFORMANCE RULES, which this block must not break. A class
+     answers all at once: quizPaint coalesces renders to one per
+     frame, an answer writes a number into the DOM rather than
+     repainting, and NOTHING here calls render() from a message
+     handler. The countdown runs on its own interval and writes to
+     one element.
+     ============================================================ -->
+<style>
+  /* ---------- the clock ---------- */
+  .qz-clockrow { display:flex; align-items:center; gap:14px; margin:4px 0 14px; }
+  .qz-clock { width:72px; height:72px; border-radius:50%; flex:none; position:relative;
+              display:grid; place-items:center; font-weight:800; font-size:28px;
+              font-variant-numeric:tabular-nums; color:var(--qaida-green);
+              background:var(--card); border:3px solid var(--line); }
+  .qz-clock.warn { color:#b07d18; border-color:#e0bb6a; }
+  .qz-clock.hot  { color:#c9483a; border-color:#dd8a7e; animation:qzPulse .9s ease-in-out infinite; }
+  @keyframes qzPulse { 0%,100% { transform:scale(1) } 50% { transform:scale(1.09) } }
+  .qz-clockrow .mid { flex:1; min-width:0; }
+  .qz-tally { display:flex; align-items:center; gap:9px; font-size:13px; font-weight:700;
+              color:var(--muted); }
+  .qz-tally .bar { flex:1; height:10px; border-radius:999px; background:var(--line);
+                   overflow:hidden; min-width:60px; }
+  .qz-tally .bar i { display:block; height:100%; background:var(--qaida-green);
+                     width:0; transition:width .3s ease; }
+  .qz-tally .n { font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .qz-tally-wrap { flex-wrap:wrap; column-gap:9px; row-gap:1px; }
+  .qz-tally .qz-dim { font-weight:700; opacity:.78; }
+
+  /* ---------- answer tiles that can show a count ---------- */
+  .qz-ans { position:relative; overflow:hidden; }
+  /* A bar along the bottom edge rather than a wash across the whole
+     tile. A translucent white covering a faded tile is invisible,
+     which is what the first version was; a hard band on the edge
+     reads as a bar chart against every one of the four colours. */
+  .qz-ans .qzfill { position:absolute; left:0; bottom:0; height:7px; width:0;
+                    background:rgba(255,255,255,.92); border-radius:0 4px 0 0;
+                    pointer-events:none;
+                    transition:width .75s cubic-bezier(.2,.8,.3,1); }
+  .qz-ans .qzcnt { position:absolute; right:12px; top:50%; transform:translateY(-50%);
+                   font-size:17px; font-weight:800; background:rgba(0,0,0,.26);
+                   border-radius:999px; padding:3px 11px; font-variant-numeric:tabular-nums; }
+  .qz-ans > .sh, .qz-ans { position:relative; }
+  /* Fading the whole tile with opacity faded the bar with it. Taking
+     the colour out instead de-emphasises just as well and leaves the
+     count and the bar at full strength, which is the part the class
+     is being shown. */
+  .qz-ans.miss { filter:grayscale(.55) brightness(1.06); }
+  .qz-ans.right { animation:qzRight .55s cubic-bezier(.2,1.5,.4,1) both; }
+  @keyframes qzRight { 0% { transform:scale(1) } 40% { transform:scale(1.045) } 100% { transform:scale(1) } }
+
+  .qz-you { font-size:11.5px; font-weight:800; background:rgba(0,0,0,.26);
+            border-radius:999px; padding:2px 8px; margin-left:7px; white-space:nowrap;
+            text-transform:uppercase; letter-spacing:.04em; }
+  .qz-verdict { text-align:center; font-weight:800; font-size:15.5px; margin:12px 0 2px; }
+  .qz-verdict .big { font-size:21px; }
+
+  /* ---------- the board rows ---------- */
+  .qz-rank { font-size:11.5px; font-weight:800; margin-left:5px; }
+  .qz-rank.up { color:#2f7d55; } .qz-rank.down { color:#c9483a; }
+  .qz-flame { font-size:12.5px; margin-left:5px; white-space:nowrap; }
+
+  /* ---------- points flying up ---------- */
+  .qz-fly { position:fixed; left:50%; top:52%; transform:translate(-50%,-50%);
+            font-size:46px; font-weight:800; color:var(--qaida-green);
+            text-shadow:0 2px 0 rgba(255,255,255,.7); pointer-events:none; z-index:200;
+            animation:qzFly 1.15s cubic-bezier(.2,.9,.3,1) both; }
+  .qz-fly.bad { color:#c9483a; font-size:30px; }
+  @keyframes qzFly {
+    0%   { opacity:0; transform:translate(-50%,-20%) scale(.6) }
+    18%  { opacity:1; transform:translate(-50%,-50%) scale(1.12) }
+    32%  { transform:translate(-50%,-50%) scale(1) }
+    100% { opacity:0; transform:translate(-50%,-128%) scale(1) }
+  }
+
+  /* ---------- the lobby ---------- */
+  .qz-code { position:relative; }
+  .qz-lobby-hint { text-align:center; font-size:13px; color:var(--muted); margin:2px 0 12px; }
+  .qz-chip { animation:qzChipIn .34s cubic-bezier(.2,1.5,.4,1) both; }
+  @keyframes qzChipIn { 0% { opacity:0; transform:scale(.6) translateY(6px) } 100% { opacity:1 } }
+  .qz-ready { display:flex; align-items:center; justify-content:center; gap:8px;
+              font-weight:800; font-size:14px; color:var(--qaida-green); margin:6px 0 10px; }
+  .qz-ready .dot { width:8px; height:8px; border-radius:50%; background:var(--qaida-green);
+                   animation:qzDot 1.1s ease-in-out infinite; }
+  .qz-ready .dot:nth-child(2) { animation-delay:.18s }
+  .qz-ready .dot:nth-child(3) { animation-delay:.36s }
+  @keyframes qzDot { 0%,100% { opacity:.25; transform:scale(.8) } 50% { opacity:1; transform:scale(1.25) } }
+
+  /* ---------- 3-2-1 ---------- */
+  .qz-go { position:fixed; inset:0; z-index:210; display:grid; place-items:center;
+           background:rgba(22,28,25,.72); backdrop-filter:blur(3px); }
+  .qz-go span { font-size:clamp(90px,26vw,190px); font-weight:800; color:#fff;
+                font-variant-numeric:tabular-nums;
+                animation:qzGo .85s cubic-bezier(.2,1.3,.4,1) both; }
+  @keyframes qzGo { 0% { opacity:0; transform:scale(.35) } 30% { opacity:1; transform:scale(1) }
+                    75% { opacity:1 } 100% { opacity:0; transform:scale(1.45) } }
+
+  /* The phone layout was measured so that the picture, the question,
+     all four answers and the button fit a 390x780 screen without
+     scrolling. The clock row is new height on that screen and pushed
+     it to 803 — so the clock, its margins and the tile gap all give
+     back what the row took. Measured in a 390px iframe, not guessed:
+     a media query reads the viewport, not the container. */
+  @media (max-width:520px) {
+    /* A circle sets the height of its whole row, and on a phone that
+       row is the difference between fitting the screen and not. The
+       clock becomes a pill on the same line as the score instead —
+       46px of circle became 30px of pill, which is the 7px the
+       question screen was over by, with room to spare. */
+    .qz-clock { width:auto; min-width:42px; height:30px; font-size:16.5px;
+                border-width:2px; border-radius:999px; padding:0 11px; }
+    .qz-clockrow { gap:10px; margin:0 0 8px; }
+    .qz-tally { font-size:12px; }
+    .qz-grid { gap:8px !important; }
+    /* A question that wraps to three lines ("We believe in Allah's
+       messengers. Who was the last of them?") ran 23px past the
+       bottom of a 390x780 screen. The margin under it and a little
+       off each tile buy back 34px, and a tile is still 68px tall
+       against a 52px minimum touch target. Measured, not guessed. */
+    .qz-big { margin:4px 0 10px !important; }
+    .qz-ans { padding:16px 14px !important; }
+    /* A LONG ENGLISH question only. It was 28px over three lines =
+       126px of the 776 a phone has, which is what put the tiles off
+       the bottom. Arabic is never shrunk: QUIZSETS sets it to 25px
+       precisely because the harakat are unreadable below that, and
+       a prompt with Arabic in it keeps every pixel of that.
+       body.kid is spelled out because KIDUI sets the size there with
+       !important at a higher specificity, and a later !important at
+       lower specificity loses. */
+    .qz-big.qz-long,
+    body.kid .qz-big.qz-long { font-size:23px !important; line-height:1.35 !important; }
+    .qz-ans .qzcnt { font-size:14px; padding:2px 8px; right:8px; }
+    .qz-verdict { margin:9px 0 2px; font-size:14px; }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .qz-clock.hot, .qz-chip, .qz-fly, .qz-go span, .qz-ans.right,
+    .qz-ready .dot { animation:none !important; }
+    .qz-ans .qzfill { transition:none; }
+  }
+</style>
+<script>
+"use strict";
+
+/* ============================================================
+   Remembering enough to show it
+   ------------------------------------------------------------
+   The host knew each player's score and whether they had
+   answered. It did not keep WHICH answer, so the distribution
+   could not be drawn, and it did not keep a streak. Both are one
+   field each on a record that already exists.
+   ============================================================ */
+
+const QZFX = { prevRank: {}, lastTick: -1, go: 0 };
+
+/* how many chose each answer this question */
+function qzfxCounts() {
+  const q = quizQ();
+  const out = q ? q.a.map(() => 0) : [];
+  Object.keys(QZ.players).forEach(n => {
+    const p = QZ.players[n];
+    if (p.answeredOrd === QZ.ord && typeof p.pick === "number" && out[p.pick] != null) {
+      out[p.pick]++;
+    }
+  });
+  return out;
+}
+
+/* Wrapping the FAST handler, not the original: QUIZFUN replaced it
+   with a version that writes a number into the DOM instead of
+   repainting, and a class of thirty answering at once depends on
+   that staying true. */
+const quizHostHeardFx = quizHostHeard;
+quizHostHeard = function (m) {
+  if (m && QZ.mode === "host" && m.t === "answer") {
+    const p = QZ.players[m.nick];
+    /* record it BEFORE the original runs, because the original is
+       what sets answeredOrd and then returns early next time */
+    if (p && QZ.stage === "asking" && p.answeredOrd !== QZ.ord) {
+      p.pick = m.pick;
+      /* The streak is QZPOD's job and it already counts it, in a
+         wrapper above this one, keyed on the same "before the base
+         handler marks them answered" trick. Counting it here as well
+         made every child look exactly twice as hot as they were. */
+    }
+  }
+  if (m && QZ.mode === "host" && m.t === "join") {
+    try { Snd.pop(); } catch (e) {}
+  }
+  return quizHostHeardFx.apply(this, arguments);
+};
+
+/* The board carries the streak and the rank it held a moment ago, so
+   a child can see themselves climbing rather than finding out at the
+   podium. */
+const quizBoardFx = quizBoard;
+quizBoard = function () {
+  const rows = quizBoardFx.apply(this, arguments);
+  /* r.streak is already set by QZPOD; all this adds is how far each
+     name has moved since the previous board */
+  rows.forEach((r, i) => {
+    const was = QZFX.prevRank[r.nick];
+    r.move = (was == null) ? 0 : (was - i);
+  });
+  return rows;
+};
+
+/* remember the order BEFORE it is recomputed */
+const quizRevealFx = quizReveal;
+quizReveal = function () {
+  QZFX.prevRank = {};
+  (QZ.board || []).forEach((b, i) => { QZFX.prevRank[b.nick] = i; });
+  /* Send the distribution out with the reveal, and the answer TEXTS
+     with it. quizTell deliberately sets q to null once the question
+     is over, so by the time a child sees their reveal the phone has
+     no words left to put on the tiles — it was drawing four coloured
+     shapes with numbers on them. The texts are not secret at reveal;
+     the key itself is already in the state message. */
+  const out = quizRevealFx.apply(this, arguments);
+  try {
+    const q = quizQ();
+    QuizNet.send({ t: "counts", ord: QZ.ord, counts: qzfxCounts(),
+                   a: q ? q.a : null });
+  } catch (e) {}
+  return out;
+};
+
+/* a player receives it and keeps it for their own reveal screen */
+const quizPlayerHeardFx = quizPlayerHeard;
+quizPlayerHeard = function (m) {
+  if (m && QZ.mode === "player" && m.t === "counts") {
+    QZ.counts = m.counts; QZ.countsOrd = m.ord; QZ.countsA = m.a || null;
+    quizPaint();
+    return;
+  }
+  if (m && QZ.mode === "player" && m.t === "judged" && m.nick === QZ.me) {
+    /* the points fly before the repaint the original triggers */
+    qzfxFly(m.right ? "+" + m.points : "—", !m.right);
+    QZ.myStreak = m.right ? ((QZ.myStreak || 0) + 1) : 0;
+  }
+  if (m && QZ.mode === "player" && m.t === "state" && m.stage === "asking") {
+    QZ.counts = null; QZ.countsA = null;
+  }
+  return quizPlayerHeardFx.apply(this, arguments);
+};
+
+/* ---------- points flying up ---------- */
+
+function qzfxFly(text, bad) {
+  try {
+    const el = document.createElement("div");
+    el.className = "qz-fly" + (bad ? " bad" : "");
+    el.textContent = text;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1300);
+  } catch (e) {}
+}
+
+/* ---------- the clock ---------- */
+
+/* One interval, writing to one element. The existing bar interval
+   stays as it is; this adds the number and the ticking, and both
+   stop dead when the question is not live. */
+setInterval(() => {
+  const el = document.getElementById("qzClock");
+  if (!el) { QZFX.lastTick = -1; return; }
+  if (QZ.stage !== "asking") return;
+  const q = QZ.mode === "host" ? quizQ() : QZ.question;
+  if (!q) return;
+
+  const leftMs = Math.max(0, q.s * 1000 - (Date.now() - QZ.askedAt));
+  const secs = Math.ceil(leftMs / 1000);
+  if (el.textContent !== String(secs)) el.textContent = String(secs);
+  el.className = "qz-clock" + (secs <= 3 ? " hot" : secs <= 6 ? " warn" : "");
+
+  /* tick out loud for the last five, once per second, and never
+     twice for the same second */
+  if (secs <= 5 && secs >= 1 && secs !== QZFX.lastTick) {
+    QZFX.lastTick = secs;
+    try { Snd.tick(); } catch (e) {}
+  }
+  if (secs > 5) QZFX.lastTick = -1;
+}, 200);
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   The host's board
+   ============================================================ */
+
+const quizHostPageFx = quizHostPage;
+quizHostPage = function () {
+  let html = quizHostPageFx.apply(this, arguments);
+  const set = quizSet();
+  const names = Object.keys(QZ.players);
+
+  /* ---------- lobby: make the wait feel like a countdown ---------- */
+  if (QZ.stage === "lobby") {
+    const ready = names.length
+      ? '<div class="qz-ready"><span class="dot"></span><span class="dot"></span>' +
+        '<span class="dot"></span><span>' + names.length +
+        (names.length === 1 ? " player is" : " players are") + " ready</span></div>"
+      : "";
+    html = html.replace(/<p class="note" style="text-align:center;margin:0 0 8px">[\s\S]*?<\/p>/,
+      ready + '<p class="qz-lobby-hint">' +
+      (names.length ? "Start when everyone is in."
+                    : "Nobody yet — the code is on the board.") + "</p>");
+    return html;
+  }
+
+  const q = quizQ();
+  if (!q) return html;
+
+  /* ---------- asking: a real clock and a filling tally ---------- */
+  if (QZ.stage === "asking") {
+    const answered = names.filter(n => QZ.players[n].answeredOrd === QZ.ord).length;
+    const row = '<div class="qz-clockrow">' +
+      '<div class="qz-clock" id="qzClock">' + q.s + "</div>" +
+      '<div class="mid"><div class="qz-tally">' +
+      '<span class="bar"><i id="qzTallyBar" style="width:' +
+        (names.length ? Math.round(answered / names.length * 100) : 0) + '%"></i></span>' +
+      '<span class="n" id="qzCount">' + answered + " of " + names.length +
+      " have answered</span></div></div></div>";
+
+    /* Replace the thin bar and the plain counter with the pair.
+       QUIZFUN gives that paragraph an id so its fast path can write
+       into it without a repaint, so match on the id rather than on
+       the attributes in the order the first version happened to
+       write them — matching the tag text left the old counter in
+       place and printed the tally twice. */
+    html = html.replace(/<div class="qz-timer">[\s\S]*?<\/div>\s*/, "");
+    html = html.replace(/<p class="note"[^>]*id="qzCount"[^>]*>[\s\S]*?<\/p>/, row);
+    if (html.indexOf("qzClock") === -1) {
+      html = html.replace(/<p class="note" style="text-align:center">[\s\S]*?<\/p>/, row);
+    }
+    if (html.indexOf("qzClock") === -1) {
+      html = html.replace('<div class="qz-grid">', row + '<div class="qz-grid">');
+    }
+    return html;
+  }
+
+  /* ---------- reveal: where did everybody go ---------- */
+  const counts = qzfxCounts();
+  const total = counts.reduce((a, c) => a + c, 0);
+  const gotIt = counts[q.k] || 0;
+  const most = Math.max(1, ...counts);
+
+  const tiles = q.a.map((a, i) => {
+    const n = counts[i] || 0;
+    const w = Math.round(n / most * 100);
+    return '<div class="qz-ans ' + QZ_COL[i] + (i === q.k ? " right" : " miss") + '">' +
+      '<span class="qzfill" style="width:' + (i === q.k || n ? w : 0) + '%"></span>' +
+      '<span class="sh">' + QZ_SHAPE[i] + "</span>" + esc(a) +
+      (total ? '<span class="qzcnt">' + n + "</span>" : "") +
+      "</div>";
+  }).join("");
+
+  html = html.replace(/<div class="qz-grid">[\s\S]*?<\/div>\s*<div class="card qz-board">/,
+    '<div class="qz-grid">' + tiles + "</div>" +
+    '<p class="qz-verdict">' +
+    (total
+      ? '<span class="big">' + gotIt + " of " + total + "</span> got it right"
+      : "Nobody answered that one") +
+    "</p>" +
+    '<div class="card qz-board">');
+
+  return html;
+};
+
+/* ---------- board rows: the climb, and the flame ---------- */
+
+const quizBoardHtmlFx = quizBoardHtml;
+quizBoardHtml = function (board, big) {
+  const html = quizBoardHtmlFx.apply(this, arguments);
+  if (!board || !board.length) return html;
+
+  /* the rows are in board order, so walk them together */
+  let i = -1;
+  return html.replace(/<span class="nm">([\s\S]*?)<\/span>/g, (m0, nm) => {
+    i++;
+    const b = board[i];
+    if (!b) return m0;
+    const arrow = b.move > 0 ? '<span class="qz-rank up">▲' + b.move + "</span>"
+                : b.move < 0 ? '<span class="qz-rank down">▼' + (-b.move) + "</span>"
+                : "";
+    /* the flame belongs to QZPOD, which appends it to this same
+       span further up the chain — only the arrow is new here */
+    return '<span class="nm">' + nm + "</span>" + arrow;
+  });
+};
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   The child's phone
+   ------------------------------------------------------------
+   The screen thirty children are actually holding. It had the
+   question, four tiles and a line of text. It now has the clock
+   they are racing, their own streak, and a reveal that says what
+   the rest of the class did.
+   ============================================================ */
+
+const quizPlayerPageFx = quizPlayerPage;
+quizPlayerPage = function () {
+  let html = quizPlayerPageFx.apply(this, arguments);
+
+  if (QZ.stage === "lobby") {
+    return html.replace(/<p class="note">Hello([\s\S]*?)<\/p>/,
+      '<div class="qz-ready"><span class="dot"></span><span class="dot"></span>' +
+      '<span class="dot"></span><span>You are in</span></div>' +
+      '<p class="note">Hello$1</p>');
+  }
+
+  if (QZ.stage === "asking" && QZ.question) {
+    const q = QZ.question;
+    const done = QZ.myPick != null;
+    const streak = (QZ.myStreak || 0) >= 2
+      ? ' · 🔥' + QZ.myStreak + " in a row" : "";
+    /* One line, not two stacked ones, and no "Tap your answer" —
+       four big coloured buttons do not need a caption telling a
+       child to press one, and on a 390px screen that sentence wraps
+       to its own line. Two tally rows pushed the question screen
+       past the 780px it was measured to fit in. The hold-on message
+       stays, because once they HAVE answered there is nothing else
+       on screen saying what is happening. */
+    const row = '<div class="qz-clockrow">' +
+      '<div class="qz-clock" id="qzClock">' + (q.s || 20) + "</div>" +
+      '<div class="mid"><div class="qz-tally qz-tally-wrap">' +
+      (done ? '<span class="n">Answer in \u2014 hold on\u2026</span>' : "") +
+      '<span class="n qz-dim">' + QZ.myScore + " points" + streak +
+      "</span></div></div></div>";
+
+    html = html.replace(/<p class="note"[^>]*>Question[\s\S]*?<\/p>/, "");
+    /* mark a long, Arabic-free prompt so the phone can shrink it */
+    const hasArabic = /[\u0600-\u06FF]/.test(q.p || "");
+    if (!hasArabic && String(q.p || "").length > 42) {
+      html = html.replace('<div class="qz-big"', '<div class="qz-big qz-long"');
+    }
+    html = html.replace(/<p class="note" style="text-align:center">Answer in[\s\S]*?<\/p>/, "");
+    html = html.replace('<div class="qz-grid">', row + '<div class="qz-grid">');
+    return html;
+  }
+
+  /* reveal on the phone: what did everyone else say */
+  if (QZ.counts && QZ.counts.length && QZ.revealKey != null) {
+    const counts = QZ.counts;
+    const total = counts.reduce((a, c) => a + c, 0);
+    const most = Math.max(1, ...counts);
+    const mine = QZ.myPick;
+    const bars = counts.map((n, i) => {
+      const right = i === QZ.revealKey;
+      const label = (QZ.countsA && QZ.countsA[i] != null) ? esc(QZ.countsA[i]) : "";
+      const tag = i === mine ? ' <span class="qz-you">you</span>' : "";
+      return '<div class="qz-ans ' + QZ_COL[i] + (right ? " right" : " miss") +
+        '" style="font-size:18px;padding:12px 14px">' +
+        '<span class="qzfill" style="width:' + Math.round(n / most * 100) + '%"></span>' +
+        '<span class="sh">' + QZ_SHAPE[i] + "</span>" + label + tag +
+        '<span class="qzcnt">' + n + "</span></div>";
+    }).join("");
+    html = html.replace("</h1>", "</h1>");
+    html = html.replace(/<p class="note">You have([\s\S]*?)<\/p>/,
+      '<p class="note">You have$1</p>' +
+      '<div class="qz-grid" style="margin:12px 0 4px">' + bars + "</div>" +
+      '<p class="qz-verdict" style="font-size:13.5px">' +
+      (total ? (counts[QZ.revealKey] || 0) + " of " + total + " got it right" : "") + "</p>");
+  }
+  return html;
+};
+
+/* ============================================================
+   3 — 2 — 1
+   ------------------------------------------------------------
+   Only before the FIRST question. Doing it between every question
+   would add thirty seconds to a ten-question game and stop being
+   exciting by question three.
+   ============================================================ */
+
+function qzfxGo(then) {
+  let n = 3;
+  const veil = document.createElement("div");
+  veil.className = "qz-go";
+  document.body.appendChild(veil);
+  const beat = () => {
+    if (n === 0) { veil.remove(); then(); return; }
+    veil.innerHTML = "<span>" + n + "</span>";
+    try { n === 1 ? Snd.win() : Snd.tick(); } catch (e) {}
+    n--;
+    QZFX.go = setTimeout(beat, 800);
+  };
+  beat();
+}
+
+const quizAskFx = quizAsk;
+quizAsk = function () {
+  /* ord is still -1 before the first question */
+  if (QZ.mode === "host" && QZ.ord < 0 && !QZFX.counted) {
+    QZFX.counted = true;
+    qzfxGo(() => quizAskFx.call(this));
+    return;
+  }
+  return quizAskFx.apply(this, arguments);
+};
+
+const quizEndFx = quizEnd;
+quizEnd = function () {
+  QZFX.counted = false;
+  QZFX.prevRank = {};
+  clearTimeout(QZFX.go);
+  document.querySelectorAll(".qz-go").forEach(v => v.remove());
+  return quizEndFx.apply(this, arguments);
+};
+
+/* the tally bar follows the counter the fast path already writes */
+const quizTouchCountFx = quizTouchCount;
+quizTouchCount = function () {
+  const out = quizTouchCountFx.apply(this, arguments);
+  const bar = document.getElementById("qzTallyBar");
+  if (bar) {
+    const names = Object.keys(QZ.players);
+    const answered = names.filter(n => QZ.players[n].answeredOrd === QZ.ord).length;
+    bar.style.width = (names.length ? Math.round(answered / names.length * 100) : 0) + "%";
+  }
+  return out;
+};
+</script>

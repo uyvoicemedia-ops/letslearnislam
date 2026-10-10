@@ -1,0 +1,192 @@
+<!-- ============================================================
+     SOLOQZ — the practice quiz joins the same game
+     ------------------------------------------------------------
+     A child plays two quizzes in this app. In class, on the
+     teacher's board, it is four big coloured tiles with shapes on
+     them. Practising alone five minutes later, it was small white
+     cards in a grid that put three on one row and left the fourth
+     stranded underneath — a different app, and a worse one.
+
+     This brings the practice quiz onto the live quiz's tiles:
+     the same four colours, the same four shapes, two by two,
+     one column on a phone. A child recognises the game.
+
+     THREE THINGS IT DELIBERATELY DOES NOT COPY.
+
+     No countdown. The class game is a race and that is the point
+     of it; practice is where a four year old works out which
+     letter has two dots, and a clock ticking at them while they
+     do it teaches them to guess. The streak and the progress bar
+     carry the momentum instead.
+
+     No points. Practice already pays in stars through llRecord,
+     and a second currency on the same screen would only confuse
+     which one matters.
+
+     No louder sound than it had. Snd.right and Snd.wrong already
+     fire; this adds no new noise to a room where a child may be
+     practising next to someone reading.
+
+     The grid fix is deliberately NOT scoped to the quiz. The
+     assessment module renders through the same .opts/.opt markup
+     and strands its fourth option in exactly the same way.
+     ============================================================ -->
+<style>
+  /* ---------- two by two, everywhere .opts is used ---------- */
+  .opts { grid-template-columns:repeat(2, minmax(0,1fr)) !important; }
+  @media (max-width:560px) { .opts { grid-template-columns:1fr !important; } }
+
+  /* ---------- the tiles ---------- */
+  .opt.sq { position:relative; overflow:hidden; border:0; color:#fff;
+            padding:20px 16px 20px 52px; border-radius:16px; text-align:left;
+            box-shadow:0 2px 0 rgba(0,0,0,.12); min-height:76px;
+            display:flex; flex-direction:column; justify-content:center;
+            transition:transform .12s ease, filter .12s ease; }
+  .opt.sq .sqsh { position:absolute; left:17px; top:50%; transform:translateY(-50%);
+                  font-size:19px; opacity:.9; line-height:1; }
+  .opt.sq:hover:not(:disabled) { transform:translateY(-2px); filter:brightness(1.07); }
+  .opt.sq:active:not(:disabled) { transform:scale(.985); }
+  .opt.sq:disabled { cursor:default; }
+
+  /* the content inside a coloured tile has to be white, and the
+     form row's muted grey and cream highlight are invisible on it */
+  .opt.sq .label { font-size:16px; font-weight:800; color:#fff; }
+  .opt.sq .translit { color:rgba(255,255,255,.88); }
+  .opt.sq .arabic-lg { color:#fff; }
+  .opt.sq .forms span { color:rgba(255,255,255,.72); }
+  .opt.sq .forms span.pick { color:#fff; background:rgba(255,255,255,.22); }
+
+  /* Answered: the right one stands up and the rest step back.
+     The first version greyed the others by 60% and ringed the right
+     one in white, and on screen all four simply looked muted — the
+     ring was too thin to carry it and the grey was not far enough
+     from the colour. The right tile now keeps its full colour and
+     gains a white ring and a lift; everything else drops to 40%
+     opacity, which is a difference nobody can miss across a room. */
+  .opt.sq.sq-right { animation:sqRight .55s cubic-bezier(.2,1.5,.4,1) both;
+                     box-shadow:0 0 0 5px #fff inset,
+                                0 0 0 3px rgba(47,125,85,.9),
+                                0 6px 16px rgba(0,0,0,.18);
+                     transform:translateY(-2px); z-index:1; }
+  .opt.sq.sq-wrong { opacity:.9;
+                     box-shadow:0 0 0 5px rgba(0,0,0,.45) inset,
+                                0 2px 0 rgba(0,0,0,.12); }
+  .opt.sq.sq-dim { opacity:.38; }
+  @keyframes sqRight { 0% { transform:scale(1) } 40% { transform:scale(1.04) } 100% { transform:scale(1) } }
+
+  /* ---------- the strip above the question ---------- */
+  .sq-strip { display:flex; align-items:center; gap:12px; margin:0 0 14px; }
+  .sq-strip .bar { flex:1; height:10px; border-radius:999px; background:var(--line);
+                   overflow:hidden; min-width:70px; }
+  .sq-strip .bar i { display:block; height:100%; background:var(--qaida-green);
+                     transition:width .4s cubic-bezier(.2,.8,.3,1); }
+  .sq-strip .n { font-size:13px; font-weight:800; color:var(--muted);
+                 font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .sq-flame { font-size:13px; font-weight:800; color:#b4600f; white-space:nowrap;
+              animation:sqFlame .5s cubic-bezier(.2,1.5,.4,1) both; }
+  @keyframes sqFlame { 0% { transform:scale(.5); opacity:0 } 100% { transform:scale(1); opacity:1 } }
+
+  /* ---------- the verdict line ---------- */
+  .sq-said { display:flex; align-items:center; justify-content:center; gap:10px;
+             flex-wrap:wrap; margin-top:18px; }
+  .sq-said .v { font-weight:800; font-size:16px; }
+  .sq-said .v.ok { color:#2f7d55; } .sq-said .v.no { color:#c9483a; }
+
+  body.kid .opt.sq { min-height:92px; padding:22px 18px 22px 54px; }
+  body.kid .opt.sq .label { font-size:18px; }
+
+  @media (prefers-reduced-motion:reduce) {
+    .opt.sq, .opt.sq.sq-right, .sq-flame { animation:none !important; transition:none !important; }
+  }
+</style>
+<script>
+"use strict";
+
+/* The four colours and shapes are the live quiz's own constants, so
+   the two screens can never drift apart. */
+const SQ_COL = (typeof QZ_COL !== "undefined") ? QZ_COL : ["qz-a","qz-b","qz-c","qz-d"];
+const SQ_SHAPE = (typeof QZ_SHAPE !== "undefined") ? QZ_SHAPE : ["▲","◆","●","■"];
+
+/* a run of right answers, this sitting only */
+function sqStreak() { return (play && play.streak) | 0; }
+
+const quizAnswerSq = quizAnswer;
+quizAnswer = function (id) {
+  if (!play || play.answered != null) return;
+  const q = play.qs[play.i];
+  const right = q && id === q.correct;
+  play.streak = right ? (sqStreak() + 1) : 0;
+  if (right && play.streak > ((play.bestStreak | 0))) play.bestStreak = play.streak;
+  return quizAnswerSq.apply(this, arguments);
+};
+
+/* ---------- the strip, and the tiles ---------- */
+
+function sqStrip(i, total, right) {
+  const st = sqStreak();
+  return '<div class="sq-strip">' +
+    '<span class="n">' + (i + 1) + " / " + total + "</span>" +
+    '<span class="bar"><i style="width:' + Math.round(i / total * 100) + '%"></i></span>' +
+    '<span class="n">' + right + " right</span>" +
+    (st >= 2 ? '<span class="sq-flame">🔥 ' + st + "</span>" : "") +
+    "</div>";
+}
+
+/* Turn the module's own white cards into the live quiz's tiles.
+   Done by rewriting the rendered markup rather than the module, so
+   the question-building, the scoring and the homework hook below it
+   are all untouched — and if this block is deleted the practice
+   quiz is exactly what it was. */
+function sqPaintOpts(html, answeredId, correctId) {
+  let i = -1;
+  return html.replace(/<button class="opt ([a-z]*)"([\s\S]*?)>/g, (m0, state, rest) => {
+    i++;
+    const col = SQ_COL[i % 4];
+    const done = answeredId != null;
+    let cls = "opt sq " + col;
+    if (done) {
+      if (state === "right") cls += " sq-right";
+      else if (state === "wrong") cls += " sq-wrong";
+      else cls += " sq-dim";
+    }
+    return '<button class="' + cls + '"' + rest + '><span class="sqsh">' +
+      SQ_SHAPE[i % 4] + "</span>";
+  });
+}
+
+const MODULES_QUIZ_SQ = MODULES.quizzes.render;
+MODULES.quizzes.render = function () {
+  let html = MODULES_QUIZ_SQ.apply(this, arguments);
+  if (!play || !play.qs || play.i >= play.qs.length) return html;   // the result card
+
+  const q = play.qs[play.i];
+  const done = play.answered != null;
+
+  /* the bar and the "1 / 10 · 3 right" chip become one strip */
+  html = html.replace(/<div class="bar" style="margin-bottom:18px">[\s\S]*?<\/div>/,
+    sqStrip(play.i, play.qs.length, play.right));
+  html = html.replace(/<span class="qcount">[\s\S]*?<\/span>/, "");
+
+  html = sqPaintOpts(html, play.answered, q.correct);
+
+  /* the verdict, in the live quiz's words rather than a pill */
+  if (done) {
+    const ok = play.answered === q.correct;
+    html = html.replace(/<div class="row" style="justify-content:center;margin-top:20px">[\s\S]*?<\/div>\s*<\/div>/,
+      '<div class="sq-said"><span class="v ' + (ok ? "ok" : "no") + '">' +
+      (ok ? (sqStreak() >= 3 ? "Right again — that’s " + sqStreak() + " in a row"
+                             : "Right") + "!"
+          : "Not this time — it was the " + SQ_SHAPE[sqIndexOf(q, q.correct)] + " one") +
+      "</span>" +
+      '<button class="btn primary" onclick="play.i++;play.answered=null;render()">Next →</button>' +
+      "</div></div>");
+  }
+  return html;
+};
+
+/* which tile holds the right answer, so the verdict can name its shape */
+function sqIndexOf(q, id) {
+  const at = (q.options || []).findIndex(o => String(o.id) === String(id));
+  return at < 0 ? 0 : (at % 4);
+}
+</script>
