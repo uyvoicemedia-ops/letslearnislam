@@ -136,14 +136,108 @@ OR'd together, so one careless management rule quietly opened every child in the
 school to every teacher. That is not visible from inside the app, which is why
 the tests exist.
 
+## 7. Fees by Direct Debit
+
+This is the only part of the app that moves real money, so read the whole
+section before you set any of it up.
+
+**The app never sees a bank detail.** The parent types their sort code and
+account number on GoCardless's own page, on GoCardless's domain. What comes
+back here is a customer id and a mandate id. There is no form in this app
+that asks for bank details, and there must never be one — if you are ever
+asked to add one, something has gone wrong.
+
+### What you need from GoCardless
+
+From the GoCardless dashboard, in **Developers**:
+
+1. **An access token.** Create one. Use the **sandbox** one first — sandbox
+   and live are separate dashboards at separate URLs, and a live token
+   collects real money from real people on your first test.
+2. **A webhook endpoint**, pointed at
+   `https://<your-project>.supabase.co/functions/v1/gocardless/webhook`.
+   Creating it gives you an **endpoint secret**. Copy it then; it is not
+   shown again.
+
+### Setting the secrets
+
+```bash
+supabase secrets set GC_ACCESS_TOKEN=...        # from step 1
+supabase secrets set GC_WEBHOOK_SECRET=...      # from step 2
+supabase secrets set GC_ENVIRONMENT=sandbox     # "live" when you are ready
+supabase secrets set APP_URL=https://your-app/index.html
+```
+
+`APP_URL` is where a parent lands when they come back from GoCardless. It
+has to be a real address they can reach — not `127.0.0.1`, which means the
+computer they are not holding.
+
+### Deploying the function
+
+```bash
+supabase functions deploy gocardless --no-verify-jwt
+```
+
+`--no-verify-jwt` is required and is the one thing here worth understanding.
+GoCardless's webhook is not a signed-in user and carries no Supabase JWT, so
+with JWT verification on, every webhook is rejected and nothing ever updates.
+The `/start` and `/collect` routes check the caller themselves — they read
+the Authorization header, ask Supabase who it belongs to, and refuse anyone
+who is not the right person — so turning the gateway's check off does not
+leave them open. The `/webhook` route is protected by the HMAC signature
+instead, which is the only thing that could protect it.
+
+### Add what the madrasah charges
+
+As an admin, in SQL or in the app:
+
+```sql
+insert into fee_plans (school_id, name, amount_pence, interval)
+values ('<your school id>', 'Monthly tuition', 3500, 'monthly');
+```
+
+Amounts are in **pence**. 3500 is £35.00. That is also what the GoCardless
+API takes, which is why it is stored that way.
+
+### Trying it, in this order
+
+1. In sandbox, sign in as a parent and press **Set up a Direct Debit**. You
+   land on GoCardless's page. Use their test bank details — they publish a
+   set; do not use a real account.
+2. Come back. The screen will say it is checking. That is correct and it is
+   not being coy: the redirect proves nothing, and the status only changes
+   when the signed webhook arrives. In sandbox that is usually seconds.
+3. As an admin, open **Direct Debit** and press **Check**. It tells you how
+   many families *would* be charged. Nothing is sent.
+4. Only then type COLLECT and run it.
+
+**Step 3 is not optional ceremony.** A collection cannot be undone from this
+app. Once a payment is submitted to Bacs, cancelling it is something you do
+in the GoCardless dashboard, quickly, and a payment that has already been
+taken is somebody's grocery money until it is refunded.
+
+### What is deliberately missing
+
+- **No teacher sees any of this.** Not who pays, not who is behind. If the
+  madrasah wants that changed it is one policy in `0007_fees.sql`, and it
+  should be a decision somebody takes out loud.
+- **Nobody can mark a charge paid from the app.** Not a parent, not an admin.
+  Those statuses are written only by the edge function, only in response to
+  a signed webhook. There are assertions in the test suite for each of
+  those, because an admin who could type `confirmed` could show a term's
+  fees collected without a penny moving.
+- **No refunds, no retries of a failed payment, no plan per family.** A
+  failed charge shows as failed and somebody deals with it by hand. Those
+  are the obvious next pieces.
+
 ## What is not done yet
 
-- The app still **reads** from localStorage. The sync layer pushes the garden and
-  practice up and pulls them back on a new device, but the screens have not been
-  repointed at the server's copy of homework, attendance and points.
-- No realtime yet. The quiz tables and scoring are in and tested; the live room
-  needs the client half.
+- No realtime yet. The quiz tables and scoring are in and tested; the live
+  room needs the client half.
 - Nothing has run against a real project — only against Postgres in Docker.
   **Google and Facebook sign-in cannot be tested there at all**, because the
   provider handshake happens between the browser, the provider and your live
   Supabase project. That part is untested by definition until you do step 3.
+  The same is true of everything in step 7: the payment code has been tested
+  against hand-built stand-ins for the GoCardless API, which proves the
+  shapes and the ordering and proves nothing about the provider.

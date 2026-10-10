@@ -35,8 +35,12 @@ declare
   mauluda_uid uuid := gen_random_uuid();
   abdur_uid uuid := gen_random_uuid();
   fatima_uid uuid := gen_random_uuid();
+  yusuf uuid; yusuf_uid uuid := gen_random_uuid();
+  sch uuid;
   n int; res jsonb; okbool boolean;
 begin
+  select id into yusuf from profiles where full_name = 'Yusuf Ibrahim';
+  select id into sch   from schools  limit 1;
   select id into aisha   from profiles where full_name = 'Aisha Khan';
   select id into bilal   from profiles where full_name = 'Bilal Ahmed';
   select id into hamza   from profiles where full_name = 'Hamza Malik';
@@ -48,7 +52,8 @@ begin
   insert into auth.users (id, email) values
     (mauluda_uid, 'teacher@example.com'),
     (abdur_uid,   'teacher2@example.com'),
-    (fatima_uid,  'parent@example.com');
+    (fatima_uid,  'parent@example.com'),
+    (yusuf_uid,   'admin@example.com');
   -- the trigger should have linked them by email
   perform t_assert((select auth_uid from profiles where id = mauluda) = mauluda_uid,
                    'signing up links you to the roster row waiting for you');
@@ -184,6 +189,119 @@ begin
   select count(*) into n from quiz_questions;
   perform t_assert(n = 0, 'a child cannot read the questions of a SHARED set');
   reset role;
+
+  -- ---------- fees: nobody marks their own bill paid ----------
+  -- The whole value of these tables is that a status in them means
+  -- GoCardless said so. These are the assertions that make that true.
+  raise notice 'fees and mandates';
+
+  declare
+    plan_id uuid;
+    mand_id uuid;
+    chg_id  uuid;
+  begin
+    -- seeded as the service role would, because the edge function does
+    insert into fee_plans (school_id, name, amount_pence, interval)
+      values (sch, 'Monthly tuition', 3500, 'monthly') returning id into plan_id;
+    insert into mandates (school_id, payer_id, gc_mandate_id, status, reference)
+      values (sch, fatima, 'MD_TEST_1', 'active', 'LLI-0001') returning id into mand_id;
+    insert into fee_charges (school_id, payer_id, plan_id, mandate_id,
+                             amount_pence, period, status)
+      values (sch, fatima, plan_id, mand_id, 3500, 'Oct 2026', 'pending')
+      returning id into chg_id;
+
+    -- the parent who signed it
+    perform t_be(fatima_uid);
+    set local role authenticated;
+
+    select count(*) into n from mandates;
+    perform t_assert(n = 1, 'a payer sees their own Direct Debit');
+    select count(*) into n from fee_charges;
+    perform t_assert(n = 1, 'a payer sees their own charges');
+    perform t_assert((fee_status()->>'outstanding_pence')::int = 3500,
+                     'and what they still owe');
+
+    -- the one that matters
+    begin
+      update fee_charges set status = 'confirmed' where id = chg_id;
+      perform t_assert(not found, 'a payer cannot mark their own bill paid');
+    exception when others then
+      perform t_assert(true, 'a payer cannot mark their own bill paid');
+    end;
+
+    begin
+      insert into fee_charges (school_id, payer_id, amount_pence, status)
+        values (sch, fatima, 1, 'confirmed');
+      perform t_assert(false, 'a payer cannot invent a charge');
+    exception when others then
+      perform t_assert(true, 'a payer cannot invent a charge');
+    end;
+
+    begin
+      update mandates set status = 'active', gc_mandate_id = 'MD_FAKE'
+        where id = mand_id;
+      perform t_assert(not found, 'a payer cannot forge a mandate id');
+    exception when others then
+      perform t_assert(true, 'a payer cannot forge a mandate id');
+    end;
+    reset role;
+
+    -- a teacher is not in this conversation at all
+    perform t_be(mauluda_uid);
+    set local role authenticated;
+    select count(*) into n from mandates;
+    perform t_assert(n = 0, 'a teacher cannot see who has a Direct Debit');
+    select count(*) into n from fee_charges;
+    perform t_assert(n = 0, 'a teacher cannot see who is behind on fees');
+    reset role;
+
+    -- a second member of staff, to be sure it is not just Mauluda
+    perform t_be(abdur_uid);
+    set local role authenticated;
+    select count(*) into n from fee_charges;
+    perform t_assert(n = 0, 'no member of staff but an admin sees a fee');
+    reset role;
+
+    -- an admin may look, and may set the price, and may not fake a payment
+    perform t_be(yusuf_uid);
+    set local role authenticated;
+    select count(*) into n from fee_charges;
+    perform t_assert(n = 1, 'an admin sees the school''s charges');
+
+    begin
+      insert into fee_plans (school_id, name, amount_pence)
+        values (sch, 'Termly', 10500);
+      perform t_assert(true, 'an admin sets what the madrasah charges');
+    exception when others then
+      perform t_assert(false, 'an admin sets what the madrasah charges');
+    end;
+
+    begin
+      update fee_charges set status = 'paid_out' where id = chg_id;
+      perform t_assert(not found, 'an admin cannot mark a charge collected');
+    exception when others then
+      perform t_assert(true, 'an admin cannot mark a charge collected');
+    end;
+    reset role;
+
+    -- the webhook log belongs to the service role and nobody else
+    insert into webhook_events (id, resource_type, action)
+      values ('EV_TEST_1', 'payments', 'confirmed');
+    perform t_be(yusuf_uid);
+    set local role authenticated;
+    select count(*) into n from webhook_events;
+    perform t_assert(n = 0, 'not even an admin reads the webhook log');
+    reset role;
+
+    -- and a child is nowhere near any of it
+    perform t_be(aisha_uid);
+    set local role authenticated;
+    select count(*) into n from mandates;
+    perform t_assert(n = 0, 'a child cannot read a mandate');
+    select count(*) into n from fee_charges;
+    perform t_assert(n = 0, 'a child cannot read a fee charge');
+    reset role;
+  end;
 
   raise notice 'a parent';
   perform t_be(fatima_uid);

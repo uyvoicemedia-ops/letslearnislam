@@ -1,0 +1,463 @@
+<!-- ============================================================
+     PAY — fees that are real money
+     ------------------------------------------------------------
+     pageDD and pageFees already existed as mock screens, with a
+     callout on the admin one saying plainly that nothing here can
+     collect real money. This is the block that makes them true,
+     when — and only when — a project is connected.
+
+     What this block is NOT allowed to do, ever:
+
+       * ask for a sort code or an account number. The parent
+         types those on GoCardless's own page, on GoCardless's own
+         domain, and this app never sees them. There is no form
+         here to fill in, and there must never be one.
+       * call the GoCardless API. The key lives in the edge
+         function. This block invokes the function; the function
+         talks to the provider.
+       * believe the redirect. A parent comes back from the
+         hosted page with "done" in the URL, and anybody can type
+         that. The screen says we are checking; the status comes
+         from a signed webhook, later.
+
+     With no keys set, nothing changes: every screen is the mock
+     it was, warning and all.
+     ============================================================ -->
+<style>
+  .pay-state { display:flex; align-items:center; gap:11px; padding:13px 15px;
+               border-radius:13px; border:1.5px solid var(--line);
+               background:var(--card); margin-bottom:14px; }
+  .pay-state .em { font-size:22px; flex:none; }
+  .pay-state .t { flex:1; min-width:0; }
+  .pay-state .n { font-weight:800; font-size:15px; display:block; }
+  .pay-state .s { font-size:12.5px; color:var(--muted); }
+  .pay-state.on   { border-color:#a7d3b6; background:#eef8f1; }
+  .pay-state.wait { border-color:#e0c98a; background:#fdf7e7; }
+  .pay-state.bad  { border-color:#d9a79e; background:#fbeae7; }
+  @media (prefers-color-scheme:dark){
+    .pay-state.on { background:#16291e; } .pay-state.wait { background:#2a2414; }
+    .pay-state.bad { background:#2c1a17; }
+  }
+  .pay-guarantee { font-size:12.5px; line-height:1.55; }
+  .pay-run { background:var(--card); border:1.5px solid var(--line); border-radius:13px;
+             padding:15px 17px; margin-top:14px; }
+  .pay-run h3 { margin:0 0 4px; font-size:15px; }
+  .pay-run .row { gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .pay-run select, .pay-run input { font:inherit; padding:7px 10px; border-radius:10px;
+      border:1.5px solid var(--line); background:var(--bg); color:inherit; }
+  .pay-dry { font-size:13px; margin-top:10px; padding:10px 12px; border-radius:10px;
+             background:var(--bg); border:1.5px solid var(--line); }
+  .pay-err { font-size:12.5px; font-weight:700; color:#c9483a; margin-top:8px; }
+</style>
+<script>
+"use strict";
+
+const PAY = {
+  loaded: false, busy: false, err: "",
+  mandate: null,          // { status, reference, since, reason }
+  outstanding: 0,         // pence
+  plans: [], mandates: [], charges: [],
+  run: { planId: "", period: "", date: "", dry: null },
+  returned: "",           // "done" | "exit" | ""
+};
+
+function payLive() {
+  try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; }
+}
+
+/* amounts are pence everywhere, because money in a float is a bug
+   waiting for a rounding. money() takes pounds, so it gets pounds. */
+function moneyP(pence) {
+  return "£" + (Number(pence || 0) / 100).toLocaleString("en-GB",
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function payDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return isNaN(d) ? String(iso)
+    : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+const PAY_MANDATE_WORDS = {
+  pending:   ["wait", "⏳", "Waiting for you to finish",
+              "You started setting it up but did not finish. It takes two minutes."],
+  submitted: ["wait", "⏳", "Being set up with your bank",
+              "Your bank is confirming it. This usually takes a few working days."],
+  active:    ["on", "✓", "Your Direct Debit is set up", ""],
+  failed:    ["bad", "!", "It could not be set up", "Nothing has been collected."],
+  cancelled: ["bad", "!", "It has been cancelled",
+              "Set it up again, or speak to the madrasah."],
+  expired:   ["bad", "!", "It expired", "Set it up again when you are ready."],
+};
+
+const PAY_CHARGE_WORDS = {
+  pending:      ["gold", "Not sent yet"],
+  submitted:    ["blue", "On its way"],
+  confirmed:    ["green", "Paid"],
+  paid_out:     ["green", "Paid"],
+  failed:       ["red", "Failed"],
+  cancelled:    ["grey", "Cancelled"],
+  charged_back: ["red", "Charged back"],
+};
+
+/* A mandate has its own states and its own words. Borrowing the
+   charge pill printed "Paid active", which is two answers to one
+   question. */
+const PAY_MANDATE_PILL = {
+  active:    ["green", "Set up"],
+  submitted: ["blue",  "With the bank"],
+  pending:   ["gold",  "Not finished"],
+  failed:    ["red",   "Failed"],
+  cancelled: ["grey",  "Cancelled"],
+  expired:   ["grey",  "Expired"],
+};
+
+function payMandatePill(st) {
+  const w = PAY_MANDATE_PILL[st] || ["grey", st || "\u2014"];
+  return '<span class="pill ' + w[0] + '">' + esc(w[1]) + "</span>";
+}
+
+function payChargePill(st) {
+  const w = PAY_CHARGE_WORDS[st] || ["grey", st || "—"];
+  return '<span class="pill ' + w[0] + '">' + esc(w[1]) + "</span>";
+}
+
+/* ============================================================
+   Reading what is there
+   ============================================================ */
+
+async function payPull() {
+  if (!payLive()) return false;
+  PAY.err = "";
+  try {
+    const role6 = LLC.profile.role;
+
+    if (role6 === "parent") {
+      const { data, error } = await LLC.sb.rpc("fee_status");
+      if (error) throw error;
+      PAY.mandate = (data && data.mandate) || null;
+      PAY.outstanding = (data && data.outstanding_pence) || 0;
+      const { data: ch } = await LLC.sb.from("fee_charges")
+        .select("id, amount_pence, currency, charge_date, period, status, failed_reason, created_at")
+        .order("created_at", { ascending: false }).limit(60);
+      PAY.charges = ch || [];
+    }
+
+    if (role6 === "admin") {
+      const { data: plans } = await LLC.sb.from("fee_plans")
+        .select("id, name, amount_pence, currency, interval, active").order("name");
+      PAY.plans = plans || [];
+      const { data: md } = await LLC.sb.from("mandates")
+        .select("id, payer_id, status, reference, failed_reason, created_at");
+      PAY.mandates = md || [];
+      const { data: ch } = await LLC.sb.from("fee_charges")
+        .select("id, payer_id, amount_pence, period, status, charge_date, failed_reason, created_at")
+        .order("created_at", { ascending: false }).limit(500);
+      PAY.charges = ch || [];
+      if (!PAY.run.planId && PAY.plans.length) PAY.run.planId = PAY.plans[0].id;
+      if (!PAY.run.period) {
+        const d = new Date();
+        PAY.run.period = d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+      }
+    }
+
+    PAY.loaded = true;
+    return true;
+  } catch (e) {
+    PAY.err = (e && e.message) || "could not read the fees";
+    return false;
+  }
+}
+
+if (typeof llcPull === "function") {
+  const llcPullPay = llcPull;
+  llcPull = async function () {
+    const out = await llcPullPay.apply(this, arguments);
+    try { if (payLive()) { await payPull(); if (typeof render === "function") render(); } }
+    catch (e) {}
+    return out;
+  };
+}
+
+/* ============================================================
+   Setting it up
+   ------------------------------------------------------------
+   One button, one round trip, then the parent leaves this app
+   entirely. Everything that follows happens on GoCardless's
+   domain, which is the point: the bank details are theirs to
+   handle, not ours.
+   ============================================================ */
+
+window.payStart = async function () {
+  if (!payLive() || PAY.busy) return;
+  PAY.busy = true; PAY.err = ""; render();
+  try {
+    const { data, error } = await LLC.sb.functions.invoke("gocardless/start", {
+      method: "POST", body: {},
+    });
+    if (error) throw error;
+    if (data && data.already) { await payPull(); PAY.busy = false; render(); return; }
+    if (!data || !data.authorisation_url) throw new Error("no link came back");
+    /* leaving the app on purpose */
+    window.location.href = data.authorisation_url;
+  } catch (e) {
+    PAY.err = (e && e.message) || "could not start that";
+    PAY.busy = false;
+    render();
+  }
+};
+
+/* Coming back. The URL says "done"; that is not evidence, so the
+   screen says we are checking and we ask the database — which only
+   knows what the signed webhook told it. */
+function payCheckReturn() {
+  const h = String(location.hash || "");
+  if (h.indexOf("dd-done") > -1) PAY.returned = "done";
+  else if (h.indexOf("dd-exit") > -1) PAY.returned = "exit";
+  if (!PAY.returned) return;
+  try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+  if (!payLive()) return;
+  /* the webhook may land a moment after the redirect, so look twice */
+  let tries = 0;
+  const again = () => {
+    payPull().then(() => {
+      render();
+      if (++tries < 5 && (!PAY.mandate || PAY.mandate.status === "pending")) {
+        setTimeout(again, 2500);
+      }
+    });
+  };
+  setTimeout(again, 1200);
+}
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   The parent's screen
+   ============================================================ */
+
+function payParentDD() {
+  const m = PAY.mandate;
+  const st = m && m.status;
+  const w = PAY_MANDATE_WORDS[st] || null;
+
+  let head;
+  if (!m) {
+    head = '<div class="pay-state"><span class="em">🏦</span>' +
+      '<span class="t"><span class="n">No Direct Debit yet</span>' +
+      '<span class="s">Set one up and the madrasah’s fees are collected ' +
+      "automatically. You can cancel it at any time with your bank.</span></span></div>";
+  } else {
+    head = '<div class="pay-state ' + w[0] + '"><span class="em">' + w[1] + "</span>" +
+      '<span class="t"><span class="n">' + esc(w[2]) + "</span>" +
+      '<span class="s">' + esc(m.reference ? "Reference " + m.reference + " · " : "") +
+      esc(w[3] || ("started " + payDate(m.since))) +
+      (m.reason ? " · " + esc(m.reason) : "") + "</span></span></div>";
+  }
+
+  const returned = PAY.returned === "done"
+    ? '<div class="pay-state wait"><span class="em">⏳</span><span class="t">' +
+      '<span class="n">Thank you — we are checking with your bank</span>' +
+      '<span class="s">Your bank confirms a new Direct Debit in its own time, so ' +
+      "this page may still say “being set up” for a few days. Nothing is " +
+      "collected until it is confirmed.</span></span></div>"
+    : PAY.returned === "exit"
+    ? '<div class="pay-state"><span class="em">—</span><span class="t">' +
+      '<span class="n">You came back without finishing</span>' +
+      '<span class="s">Nothing was set up. You can start again whenever you like.' +
+      "</span></span></div>"
+    : "";
+
+  const canStart = !m || ["failed", "cancelled", "expired", "pending"].indexOf(st) > -1;
+  const button = canStart
+    ? '<button class="btn primary" style="width:100%" onclick="payStart()"' +
+      (PAY.busy ? " disabled" : "") + ">" +
+      (PAY.busy ? "Opening…" : m ? "Set it up again" : "Set up a Direct Debit") +
+      "</button>" +
+      '<p class="note" style="margin-top:8px">This opens GoCardless, who handle the ' +
+      "payment for the madrasah. <strong>You type your bank details on their page, " +
+      "not here</strong> — this app never sees them.</p>"
+    : "";
+
+  const rows = PAY.charges.length
+    ? PAY.charges.map(c => "<tr><td>" + esc(payDate(c.charge_date || c.created_at)) + "</td>" +
+        "<td>" + esc(c.period || "Fee") +
+        (c.failed_reason ? '<div class="note">' + esc(c.failed_reason) + "</div>" : "") +
+        "</td><td>" + payChargePill(c.status) + "</td>" +
+        '<td class="num">' + moneyP(c.amount_pence) + "</td></tr>").join("")
+    : '<tr><td colspan="4" class="note" style="padding:14px 0">Nothing collected yet.</td></tr>';
+
+  return "<h1>Direct Debit</h1>" +
+    '<p class="sub">' + esc((LLC.profile && LLC.profile.full_name) || "") + "</p>" +
+    returned + head +
+    (PAY.outstanding ? '<div class="pay-state wait"><span class="em">£</span>' +
+      '<span class="t"><span class="n">' + moneyP(PAY.outstanding) + " outstanding</span>" +
+      '<span class="s">Still to be collected, or failed and not yet retried.' +
+      "</span></span></div>" : "") +
+    (PAY.err ? '<p class="pay-err">' + esc(PAY.err) + "</p>" : "") +
+    button +
+    '<div class="callout" style="margin-top:16px"><div class="pay-guarantee">' +
+    "<strong>The Direct Debit Guarantee.</strong> You will always be told at least " +
+    "3 working days before the amount, date or frequency changes. If a mistake is " +
+    "made, you are entitled to an immediate refund from your bank. You can cancel " +
+    "at any time by contacting your bank." +
+    "</div></div>" +
+    '<h2 class="section">Your payments</h2>' +
+    '<div class="card"><table><thead><tr><th>Date</th><th>For</th><th>Status</th>' +
+    '<th class="num">Amount</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+}
+
+/* ============================================================
+   The admin's screen
+   ============================================================ */
+
+window.payRunSet = function (k, v) { PAY.run[k] = v; };
+
+window.payDryRun = async function () {
+  if (!payLive() || PAY.busy) return;
+  PAY.busy = true; PAY.err = ""; PAY.run.dry = null; render();
+  try {
+    const { data, error } = await LLC.sb.functions.invoke("gocardless/collect", {
+      method: "POST",
+      body: { plan_id: PAY.run.planId, period: PAY.run.period,
+              charge_date: PAY.run.date || null, dry_run: true },
+    });
+    if (error) throw error;
+    PAY.run.dry = data;
+  } catch (e) { PAY.err = (e && e.message) || "could not check that"; }
+  PAY.busy = false; render();
+};
+
+/* The real run is deliberately only reachable after a dry run, and
+   only by typing the word. A collection cannot be undone from here —
+   a payment already submitted to Bacs is somebody's rent money. */
+window.payCollect = async function () {
+  const box = document.getElementById("payConfirm");
+  if (!box || box.value.trim().toUpperCase() !== "COLLECT") {
+    PAY.err = "Type COLLECT to confirm."; render(); return;
+  }
+  if (!payLive() || PAY.busy) return;
+  PAY.busy = true; PAY.err = ""; render();
+  try {
+    const { data, error } = await LLC.sb.functions.invoke("gocardless/collect", {
+      method: "POST",
+      body: { plan_id: PAY.run.planId, period: PAY.run.period,
+              charge_date: PAY.run.date || null },
+    });
+    if (error) throw error;
+    toast("Collected " + (data.charged || 0) + " — the rest were already done");
+    PAY.run.dry = null;
+    await payPull();
+  } catch (e) { PAY.err = (e && e.message) || "the run failed"; }
+  PAY.busy = false; render();
+};
+
+function payAdminDD() {
+  const byStatus = (s) => PAY.mandates.filter(m => m.status === s).length;
+  const active = byStatus("active");
+  const waiting = byStatus("pending") + byStatus("submitted");
+  const broken = byStatus("failed") + byStatus("cancelled") + byStatus("expired");
+
+  const owed = PAY.charges
+    .filter(c => ["pending", "submitted", "failed"].indexOf(c.status) > -1)
+    .reduce((a, c) => a + c.amount_pence, 0);
+  const got = PAY.charges
+    .filter(c => ["confirmed", "paid_out"].indexOf(c.status) > -1)
+    .reduce((a, c) => a + c.amount_pence, 0);
+
+  const planOpts = PAY.plans.map(p =>
+    '<option value="' + esc(p.id) + '"' + (p.id === PAY.run.planId ? " selected" : "") +
+    ">" + esc(p.name) + " — " + moneyP(p.amount_pence) + "</option>").join("");
+
+  const dry = PAY.run.dry
+    ? '<div class="pay-dry"><strong>' + PAY.run.dry.would_charge + " famil" +
+      (PAY.run.dry.would_charge === 1 ? "y" : "ies") + " would be charged " +
+      moneyP(PAY.run.dry.amount_pence) + "</strong> for " + esc(PAY.run.dry.period) +
+      ". " + PAY.run.dry.skipped + " already done, and anyone without a live " +
+      "Direct Debit is skipped." +
+      (PAY.run.dry.would_charge ? '<div class="row" style="margin-top:10px">' +
+        '<input id="payConfirm" placeholder="Type COLLECT" style="flex:1;min-width:130px">' +
+        '<button class="btn primary" onclick="payCollect()"' +
+        (PAY.busy ? " disabled" : "") + ">Collect now</button></div>" +
+        '<p class="note" style="margin-top:6px">This cannot be undone from here. ' +
+        "A payment already sent to the banks has to be cancelled at GoCardless." +
+        "</p>" : "") +
+      "</div>"
+    : "";
+
+  const run = '<div class="pay-run"><h3>Run a collection</h3>' +
+    '<p class="note" style="margin:0">Check it first. Nothing is sent until you ' +
+    "have seen how many families it would charge.</p>" +
+    '<div class="row">' +
+    (PAY.plans.length
+      ? '<select onchange="payRunSet(\'planId\', this.value)">' + planOpts + "</select>"
+      : '<span class="note">No fee set up yet — add one below.</span>') +
+    '<input value="' + esc(PAY.run.period) + '" placeholder="Oct 2026" ' +
+    "onchange=\"payRunSet('period', this.value)\" style=\"width:110px\">" +
+    '<input type="date" value="' + esc(PAY.run.date) + '" ' +
+    "onchange=\"payRunSet('date', this.value)\">" +
+    '<button class="btn" onclick="payDryRun()"' + (PAY.busy ? " disabled" : "") +
+    ">Check</button></div>" + dry +
+    (PAY.err ? '<p class="pay-err">' + esc(PAY.err) + "</p>" : "") + "</div>";
+
+  const mRows = PAY.mandates.length
+    ? PAY.mandates.map(m => {
+        const who = (DB.students.find(s => s.id === m.payer_id) || {}).name;
+        return "<tr><td><strong>" + esc(who || m.payer_id.slice(0, 8)) + "</strong>" +
+          (m.failed_reason ? '<div class="note">' + esc(m.failed_reason) + "</div>" : "") +
+          "</td><td>" + esc(m.reference || "—") + "</td>" +
+          "<td>" + payMandatePill(m.status) + "</td>" +
+          "<td>" + esc(payDate(m.created_at)) + "</td></tr>";
+      }).join("")
+    : '<tr><td colspan="4" class="note" style="padding:14px 0">Nobody has set one up yet.</td></tr>';
+
+  return "<h1>Direct Debit</h1>" +
+    '<p class="sub">Mandates and collections · ' +
+    esc(LLC.profile && LLC.profile.full_name || "") + "</p>" +
+    '<div class="grid g4">' +
+    stat(active, "Set up") +
+    stat(waiting, "Waiting on a bank") +
+    stat(broken, "Need chasing", broken ? "failed or cancelled" : "", broken ? "down" : "") +
+    stat(moneyP(owed), "Outstanding", moneyP(got) + " collected") +
+    "</div>" + run +
+    '<h2 class="section">Mandates</h2>' +
+    '<div class="card"><table><thead><tr><th>Who</th><th>Reference</th>' +
+    "<th>Status</th><th>Since</th></tr></thead><tbody>" + mRows + "</tbody></table></div>" +
+    '<div class="callout" style="margin-top:16px"><strong>No bank details are ' +
+    "stored here.</strong> A parent types them on GoCardless’s own page. What " +
+    "this database holds is a customer id and a mandate id, and a status that only " +
+    "ever changes because GoCardless said so over a signed webhook — not " +
+    "because somebody typed it in.</div>";
+}
+
+/* ---------- wire them up ---------- */
+
+const pageDDPay = pageDD;
+pageDD = function () {
+  if (!payLive() || !PAY.loaded) return pageDDPay.apply(this, arguments);
+  if (role === "parent") return payParentDD();
+  if (role === "admin")  return payAdminDD();
+  return pageDDPay.apply(this, arguments);
+};
+if (typeof PAGES === "object") PAGES.dd = pageDD;
+
+/* The fees page keeps its shape; only the numbers become real. */
+const pageFeesPay = pageFees;
+pageFees = function () {
+  const html = pageFeesPay.apply(this, arguments);
+  if (!payLive() || !PAY.loaded) return html;
+  if (role !== "admin" && role !== "parent") return html;
+  return html.replace("</h1>", "</h1>" +
+    '<div class="callout" style="margin-top:10px">Fees are collected by Direct ' +
+    'Debit. <a href="#" onclick="page=\'dd\';render();return false">Open the ' +
+    "Direct Debit screen</a> for what is set up and what has been collected." +
+    "</div>");
+};
+if (typeof PAGES === "object") PAGES.fees = pageFees;
+
+payCheckReturn();
+if (payLive() && !PAY.loaded) { payPull().then(() => render(), () => {}); }
+</script>
