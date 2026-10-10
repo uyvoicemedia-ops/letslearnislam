@@ -135,6 +135,56 @@ begin
   perform t_assert(n = 0, 'a colleague cannot read someone else''s answer key');
   reset role;
 
+  -- ---------- sharing a set is a decision, not a default ----------
+  -- 0006 lets a teacher hand a set to the rest of the school. The
+  -- point of these four is that nothing happens until somebody says
+  -- so, and that a child is never in the room for any of it.
+  raise notice 'sharing a quiz set';
+
+  perform t_be(abdur_uid);
+  set local role authenticated;
+  select count(*) into n from quiz_sets;
+  perform t_assert(n = 1, 'a colleague can see that the set exists');
+  select count(*) into n from quiz_questions;
+  perform t_assert(n = 0, 'an unshared set has no readable questions');
+  reset role;
+
+  -- the owner shares it
+  perform t_be(mauluda_uid);
+  set local role authenticated;
+  update quiz_sets set shared = true where owner_id = mauluda;
+  perform t_assert((select shared from quiz_sets where owner_id = mauluda),
+                   'the owner can share their own set');
+  reset role;
+
+  perform t_be(abdur_uid);
+  set local role authenticated;
+  select count(*) into n from quiz_questions;
+  perform t_assert(n = 5, 'a colleague can host a set once it is shared');
+  -- and cannot edit it: sharing is read, not write
+  begin
+    update quiz_questions set prompt = 'tampered' where ord = 1;
+    if found then
+      perform t_assert(false, 'sharing a set does not hand over the editing');
+    else
+      perform t_assert(true, 'sharing a set does not hand over the editing');
+    end if;
+  exception when insufficient_privilege or others then
+    perform t_assert(true, 'sharing a set does not hand over the editing');
+  end;
+  -- a colleague must not be able to share somebody else's set either
+  update quiz_sets set shared = false where owner_id = mauluda;
+  perform t_assert((select shared from quiz_sets where owner_id = mauluda),
+                   'a colleague cannot unshare a set that is not theirs');
+  reset role;
+
+  -- the whole point: a child is never in this conversation
+  perform t_be(aisha_uid);
+  set local role authenticated;
+  select count(*) into n from quiz_questions;
+  perform t_assert(n = 0, 'a child cannot read the questions of a SHARED set');
+  reset role;
+
   raise notice 'a parent';
   perform t_be(fatima_uid);
   set local role authenticated;

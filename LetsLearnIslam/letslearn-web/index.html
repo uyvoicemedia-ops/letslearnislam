@@ -31376,5 +31376,354 @@ if (typeof feePill === "function") {
 if (llvLive()) { llvPullExtra().then(() => { llvAdopt(); render(); }, () => {}); }
 </script>
 <!-- LIVE-BLOCK-END -->
+<!-- QZDB-BLOCK-START --><!-- ============================================================
+     QZDB — quiz sets come from the database
+     ------------------------------------------------------------
+     QUIZ_SETS held nineteen built-in sets and, since QZAUTHOR,
+     whatever the teacher had written into THIS browser. So a set
+     written on the laptop in the office did not exist on the
+     laptop in the classroom, and nothing a colleague wrote ever
+     existed at all.
+
+     The shape of the fix is the one QZAUTHOR already chose:
+     sets from elsewhere join the same array the built-in ones
+     live in, so the picker, the host screen, the relay and the
+     scoring need no changes whatsoever. qaLoadIntoPicker() does
+     it for localStorage; this does it for Supabase.
+
+     Two things worth knowing.
+
+     QUIZ_SETS is keyed by id, not by position, so pushing into it
+     is safe — unlike MONSTERS, where a child's choice is stored
+     as an index and inserting an entry turns their creature into
+     a stranger's.
+
+     And a set is only offered if its QUESTIONS came back. RLS
+     lets a teacher see every set title in the school but only
+     read the questions of their own sets and of sets somebody
+     deliberately shared (0006). A set whose questions are not
+     readable would otherwise sit in the picker looking perfectly
+     normal and start a game with nothing in it.
+     ============================================================ -->
+<style>
+  .qzdb-tag { font-size:10.5px; font-weight:800; padding:2px 7px; border-radius:999px;
+              border:1.5px solid var(--line); margin-left:6px; white-space:nowrap; }
+  .qzdb-tag.shared { border-color:#a7d3b6; background:#eef8f1; color:#20603c; }
+  .qzdb-tag.mine   { border-color:#cfc6ad; color:var(--muted); }
+  @media (prefers-color-scheme:dark){ .qzdb-tag.shared { background:#16291e; color:#bfe4cd; } }
+  .qzdb-err { font-size:12px; font-weight:700; color:#c9483a; margin:6px 0 0; }
+</style>
+<script>
+"use strict";
+
+const QZDB = { loaded: false, pulling: false, err: "", sets: [] };
+
+function qzdbLive() {
+  try {
+    return typeof llcLive === "function" && llcLive() &&
+           LLC.profile && (LLC.profile.role === "teacher" || LLC.profile.role === "admin");
+  } catch (e) { return false; }
+}
+
+/* ---------- the two shapes ---------- */
+
+/* a row out of quiz_questions becomes the { p, a, k, s } the quiz reads */
+function qzdbToClientQ(r) {
+  let choices = r.choices;
+  if (typeof choices === "string") { try { choices = JSON.parse(choices); } catch (e) { choices = []; } }
+  const q = {
+    p: String(r.prompt || ""),
+    a: (choices || []).map(c => String(c)),
+    k: Number(r.answer || 0),
+    s: Number(r.seconds || 20),
+  };
+  /* a blank tile is a tile a child can tap, so pad the way qaSave does */
+  while (q.a.length < 4) q.a.push("—");
+  if (r.pic) q.pic = r.pic;
+  return q;
+}
+
+/* and back again */
+function qzdbToRowQ(setId, q, i) {
+  return {
+    set_id: setId, ord: i + 1,
+    prompt: String(q.p || ""),
+    choices: (q.a || []).map(a => String(a)),
+    answer: Number(q.k || 0),
+    seconds: Number(q.s || 20),
+    pic: q.pic || null,
+  };
+}
+
+/* ---------- reading ---------- */
+
+async function qzdbPull() {
+  if (!qzdbLive() || QZDB.pulling) return false;
+  QZDB.pulling = true;
+  QZDB.err = "";
+  try {
+    const { data: sets, error: e1 } = await LLC.sb.from("quiz_sets")
+      .select("id, title, grp, note, shared, owner_id")
+      .order("title");
+    if (e1) throw e1;
+
+    const { data: qs, error: e2 } = await LLC.sb.from("quiz_questions")
+      .select("set_id, ord, prompt, choices, answer, seconds, pic")
+      .order("ord");
+    if (e2) throw e2;
+
+    const bySet = {};
+    (qs || []).forEach(r => { (bySet[r.set_id] = bySet[r.set_id] || []).push(r); });
+
+    QZDB.sets = (sets || []).map(s => ({
+      id: s.id, title: s.title,
+      grp: s.grp || null, note: s.note || "",
+      shared: !!s.shared,
+      owned: s.owner_id === LLC.profile.id,
+      qs: (bySet[s.id] || []).map(qzdbToClientQ),
+    }));
+
+    QZDB.loaded = true;
+    qzdbLoadIntoPicker();
+    return true;
+  } catch (e) {
+    QZDB.err = (e && e.message) || "could not read the quizzes";
+    return false;
+  } finally {
+    QZDB.pulling = false;
+  }
+}
+
+/* The same splice-then-push that qaLoadIntoPicker uses, so running it
+   again after a save replaces rather than duplicates. */
+function qzdbLoadIntoPicker() {
+  for (let i = QUIZ_SETS.length - 1; i >= 0; i--) {
+    if (QUIZ_SETS[i].cloud) QUIZ_SETS.splice(i, 1);
+  }
+  QZDB.sets.forEach(s => {
+    /* no readable questions means no hostable set — say nothing rather
+       than offering a game that cannot start */
+    if (!s.qs.length) return;
+    /* drop the localStorage stand-in for this same quiz */
+    try {
+      const shadow = qaMine().find(m => m.cloudId === s.id);
+      if (shadow) {
+        for (let i = QUIZ_SETS.length - 1; i >= 0; i--) {
+          if (QUIZ_SETS[i].mine && QUIZ_SETS[i].id === shadow.id) QUIZ_SETS.splice(i, 1);
+        }
+      }
+    } catch (e) {}
+    QUIZ_SETS.push({
+      id: s.id, title: s.title,
+      group: s.grp || (s.owned ? "Your school" : "Shared by colleagues"),
+      note: s.note || "",
+      cloud: true, owned: s.owned, shared: s.shared,
+      qs: s.qs,
+    });
+  });
+}
+
+/* pulled whenever the connection comes up */
+if (typeof llcPull === "function") {
+  const llcPullQzdb = llcPull;
+  llcPull = async function () {
+    const out = await llcPullQzdb.apply(this, arguments);
+    try { if (qzdbLive()) { await qzdbPull(); if (typeof render === "function") render(); } }
+    catch (e) {}
+    return out;
+  };
+}
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Writing a set back
+   ------------------------------------------------------------
+   qaSave already validates the draft and writes it to
+   localStorage. That stays — it is what makes the editor work
+   with no project at all. This adds the second half: when there
+   IS a project, the set goes to the school as well, so the quiz
+   written in the office can be hosted from the classroom.
+
+   Questions are replaced wholesale rather than diffed. A set is
+   a handful of rows, (set_id, ord) is unique, and a diff that
+   gets it wrong leaves a question from the old version sitting
+   in the middle of the new one.
+   ============================================================ */
+
+async function qzdbSaveSet(draft) {
+  if (!qzdbLive()) return null;
+  const isCloud = QZDB.sets.some(s => s.id === draft.id);
+  const payload = {
+    school_id: LLC.profile.school_id,
+    owner_id: LLC.profile.id,
+    title: draft.title,
+    grp: draft.grp || "Your school",
+    note: draft.note || null,
+  };
+  if (isCloud) payload.id = draft.id;
+
+  const { data, error } = await LLC.sb.from("quiz_sets")
+    .upsert(payload, { onConflict: "id" })
+    .select("id").single();
+  if (error) throw error;
+  const setId = data.id;
+
+  await LLC.sb.from("quiz_questions").delete().eq("set_id", setId);
+  const rows = (draft.qs || []).map((q, i) => qzdbToRowQ(setId, q, i));
+  if (rows.length) {
+    const { error: e2 } = await LLC.sb.from("quiz_questions").insert(rows);
+    if (e2) throw e2;
+  }
+  return setId;
+}
+
+if (typeof qaSave === "function") {
+  const qaSaveQzdb = qaSave;
+  qaSave = function () {
+    /* Only the id is worth keeping from before the call. qaSave
+       VALIDATES the draft in place — it strips empty answers, re-finds
+       the ticked one and pads the row back to four with an em dash —
+       and a copy taken beforehand has none of that. Sending that copy
+       to the school put empty answer tiles in the database while
+       localStorage got the cleaned-up version of the same quiz. */
+    const id = QA.draft && QA.draft.id;
+    const out = qaSaveQzdb.apply(this, arguments);
+    /* the original bails out without saving when validation fails —
+       QA.draft still being there is how we know */
+    if (!id || QA.draft) return out;
+    if (!qzdbLive()) return out;
+
+    const saved = qaMine().find(x => x.id === id);
+    if (!saved) return out;
+
+    qzdbSaveSet(saved).then(
+      (setId) => {
+        /* Remember where it went. Without this the local copy and the
+           school copy have different ids and the picker lists the same
+           quiz twice. */
+        const mine = qaMine();
+        const at = mine.findIndex(x => x.id === id);
+        if (at > -1) { mine[at].cloudId = setId; qaWrite(QA_KEY, mine); }
+        qaLoadIntoPicker();
+        return qzdbPull().then(() => { QZ.setId = setId; toast("Saved to your school"); render(); });
+      },
+      (e) => { toast("Saved on this device, but not to the school"); QZDB.err = e.message || ""; }
+    );
+    return out;
+  };
+}
+
+/* A set that reached the school is listed from the school. The local
+   copy stays as the offline stand-in, but it is not offered twice. */
+if (typeof qaLoadIntoPicker === "function") {
+  const qaLoadIntoPickerQzdb = qaLoadIntoPicker;
+  qaLoadIntoPicker = function () {
+    const out = qaLoadIntoPickerQzdb.apply(this, arguments);
+    const live = QZDB.sets.filter(s => s.qs.length).map(s => s.id);
+    if (!live.length) return out;
+    const byCloudId = {};
+    qaMine().forEach(m => { if (m.cloudId) byCloudId[m.id] = m.cloudId; });
+    for (let i = QUIZ_SETS.length - 1; i >= 0; i--) {
+      const s = QUIZ_SETS[i];
+      if (s.mine && byCloudId[s.id] && live.indexOf(byCloudId[s.id]) > -1) {
+        QUIZ_SETS.splice(i, 1);
+      }
+    }
+    return out;
+  };
+}
+
+if (typeof qaDelete === "function") {
+  const qaDeleteQzdb = qaDelete;
+  qaDelete = function (id) {
+    const cloud = QZDB.sets.find(s => s.id === id);
+    const out = qaDeleteQzdb.apply(this, arguments);
+    if (cloud && qzdbLive()) {
+      LLC.sb.from("quiz_sets").delete().eq("id", id).then(
+        () => qzdbPull().then(() => render()),
+        () => toast("Removed here, but not from the school")
+      );
+    }
+    return out;
+  };
+}
+
+/* ---------- sharing ----------
+   0006 makes this a decision somebody takes rather than a default.
+   Unshared, a colleague sees the title and cannot read a question. */
+window.qzdbShare = function (id, on) {
+  if (!qzdbLive()) return;
+  LLC.sb.from("quiz_sets").update({ shared: !!on }).eq("id", id).then(
+    () => qzdbPull().then(() => {
+      toast(on ? "Other teachers can use this now" : "Back to just you");
+      render();
+    }),
+    () => toast("Could not change that")
+  );
+};
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   What the teacher sees
+   ------------------------------------------------------------
+   QZAUTHOR's "Quizzes made here" card lists what is in this
+   browser. Once there is a school, the same card lists what is
+   in the school, says which of them are yours, and lets you hand
+   one to your colleagues.
+   ============================================================ */
+
+const quizStartPageQzdb = quizStartPage;
+quizStartPage = function () {
+  let html = quizStartPageQzdb.apply(this, arguments);
+  if (role !== "teacher" && role !== "admin") return html;
+  if (!qzdbLive()) return html;
+
+  const rows = QZDB.sets.map(s => {
+    const tag = s.owned
+      ? '<span class="qzdb-tag ' + (s.shared ? "shared" : "mine") + '">' +
+        (s.shared ? "shared with the school" : "only you") + "</span>"
+      : '<span class="qzdb-tag shared">shared by a colleague</span>';
+    const count = s.qs.length
+      ? s.qs.length + " questions"
+      : "questions not shared with you";
+    const buttons = s.owned
+      ? '<button class="btn" onclick="qzdbShare(\'' + esc(s.id) + "'," +
+        (s.shared ? "false" : "true") + ')">' +
+        (s.shared ? "Stop sharing" : "Share with the school") + "</button>" +
+        '<button class="btn" onclick="qaDelete(\'' + esc(s.id) + '\')">Delete</button>'
+      : "";
+    return '<div class="creq"><span class="who">' + esc(s.title) + tag + "</span>" +
+      '<span class="when">' + esc(count) + "</span>" +
+      '<span class="sp"></span>' + buttons + "</div>";
+  }).join("");
+
+  const card = '<div class="card" style="margin-top:12px">' +
+    '<h3 class="card-title">Your school\'s quizzes</h3>' +
+    (rows || '<p class="note">Nobody has written one yet. Make one and it is ' +
+             "saved to the school, not just to this browser.</p>") +
+    (QZDB.err ? '<p class="qzdb-err">' + esc(QZDB.err) + "</p>" : "") +
+    "</div>";
+
+  /* straight after the "Quizzes made here" card when that exists,
+     otherwise at the end */
+  const at = html.indexOf("Quizzes made here");
+  if (at > -1) {
+    const close = html.indexOf("</div>", html.indexOf("</div>", at) + 6);
+    if (close > -1) return html.slice(0, close + 6) + card + html.slice(close + 6);
+  }
+  return html + card;
+};
+
+/* a set from the school is pulled the moment the page is opened with a
+   connection already up — llcConnect has usually finished by now */
+if (qzdbLive() && !QZDB.loaded) { qzdbPull().then(() => render(), () => {}); }
+</script>
+<!-- QZDB-BLOCK-END -->
 </body>
 </html>

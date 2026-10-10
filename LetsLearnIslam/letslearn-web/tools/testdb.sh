@@ -42,6 +42,7 @@ run "0002 functions"  "$ROOT/supabase/migrations/0002_functions.sql"
 run "0003 rls"        "$ROOT/supabase/migrations/0003_rls.sql"
 run "0004 seed"       "$ROOT/supabase/migrations/0004_seed.sql"
 run "0005 families"   "$ROOT/supabase/migrations/0005_families.sql"
+run "0006 quiz sets"  "$ROOT/supabase/migrations/0006_quiz_sets.sql"
 
 echo "testing…"
 if out=$(docker exec -i $NAME psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres \
