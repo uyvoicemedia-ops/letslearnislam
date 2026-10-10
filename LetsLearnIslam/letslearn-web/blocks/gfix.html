@@ -1,0 +1,300 @@
+<!-- ============================================================
+     GFIX — three things the garden recorded and never showed
+     ------------------------------------------------------------
+     1. prFinish writes g.wuduOn the moment a child finishes the
+        wudu practice, with a comment saying it is "so the prayer
+        hall can say you have wudu". Nothing ever read it. The
+        prayer corner offered the salah tracker and said nothing
+        about wudu at all.
+
+     2. g.ibadah counts every wudu, miswak and salah the child has
+        walked through, and when they last did it. It was written
+        on every finish and shown nowhere: not in Progress, which
+        is the screen a parent opens, and not in Rewards.
+
+     3. The Build tab was one scrolling card holding mosques, the
+        madrasah, the playground and the town. A child who wanted
+        a lamp post scrolled past forty-seven mosques to reach it.
+
+     The standing rule this block must not break: THE ENERGY AND
+     FOOD GATE NEVER TOUCHES WORSHIP. So the wudu line is a
+     reminder and an offer, never a lock. A child who says they
+     have wudu, or who did it at the tap without tapping anything
+     here, walks straight through.
+     ============================================================ -->
+<style>
+  .gfx-wudu { display:flex; align-items:center; gap:9px; padding:9px 11px; border-radius:12px;
+              border:1.5px solid var(--line); background:var(--bg); margin-bottom:10px;
+              font-size:12.5px; line-height:1.4; }
+  .gfx-wudu .em { font-size:17px; flex:none; }
+  .gfx-wudu.have { border-color:#a7d3b6; background:#eef8f1; color:#20603c; }
+  @media (prefers-color-scheme:dark){ .gfx-wudu.have { background:#16291e; color:#bfe4cd; } }
+  .gfx-wudu .sp { flex:1; }
+  .gfx-ib { display:flex; align-items:center; gap:10px; padding:8px 0;
+            border-bottom:1px solid var(--line); }
+  .gfx-ib:last-child { border-bottom:0; }
+  .gfx-ib .em { font-size:20px; width:26px; text-align:center; flex:none; }
+  .gfx-ib .nm { font-weight:800; font-size:13.5px; }
+  .gfx-ib .sp { flex:1; }
+  .gfx-ib .ct { font-weight:800; font-size:13.5px; color:var(--qaida-green); white-space:nowrap; }
+
+  .gfx-subtabs { display:flex; gap:6px; flex-wrap:wrap; margin:-2px 0 12px; }
+  .gfx-subtabs button { font:inherit; font-size:12.5px; font-weight:800; padding:7px 12px;
+                        border-radius:999px; border:1.5px solid var(--line);
+                        background:var(--bg); color:inherit; cursor:pointer; min-height:36px; }
+  .gfx-subtabs button[aria-pressed="true"] { background:var(--qaida-green); color:#fff;
+                                             border-color:var(--qaida-green); }
+  body.kid .gfx-subtabs button { font-size:14px; padding:10px 15px; min-height:52px; }
+</style>
+<script>
+"use strict";
+
+/* ============================================================
+   1. Wudu, where praying happens
+   ============================================================ */
+
+function gfxToday() {
+  return (typeof duaToday === "function") ? duaToday() : new Date().toDateString();
+}
+
+function gfxHasWudu() {
+  const g = gState();
+  return !!g.wuduOn && g.wuduOn === gfxToday();
+}
+
+/* A child may well have done wudu at the tap without walking through
+   the practice. Saying so is a tap, and it sets the same flag the
+   practice does — it is a reminder, not a gate, and treating the
+   child as truthful is the only honest way to do this. */
+window.gfxSayWudu = function () {
+  const g = gState();
+  g.wuduOn = gfxToday();
+  llSave();
+  if (typeof Snd === "object" && Snd.right) Snd.right();
+  toast("Noted — may Allah accept it");
+  render();
+};
+
+function gfxWuduLine() {
+  if (gfxHasWudu()) {
+    return '<div class="gfx-wudu have"><span class="em">✓</span>' +
+      "<span>You have wudu today.</span></div>";
+  }
+  /* the wudu practice lives in a room, and that room may not be built */
+  const roomId = (typeof prRoomFor === "function") ? prRoomFor("wudu") : null;
+  const built = roomId && typeof planHas === "function" && planHas(roomId);
+  const go = built
+    ? '<button class="btn" onclick="planGoAndDo(\'' + roomId + "','learnwudu')\">" +
+      "Do wudu</button>"
+    : "";
+  return '<div class="gfx-wudu"><span class="em">🚿</span>' +
+    "<span>Have you made wudu?</span><span class=\"sp\"></span>" + go +
+    '<button class="btn" onclick="gfxSayWudu()">Yes</button></div>';
+}
+
+/* the prayer corner card */
+if (typeof planDoCard === "function") {
+  const planDoCardGfx = planDoCard;
+  planDoCard = function () {
+    const html = planDoCardGfx.apply(this, arguments);
+    if (role !== "student") return html;
+    return html;
+  };
+}
+
+/* The salah panel is where a prayer is actually ticked, so that is
+   where the question belongs. */
+if (typeof salahPanel === "function") {
+  const salahPanelGfx = salahPanel;
+  salahPanel = function () {
+    const html = salahPanelGfx.apply(this, arguments);
+    return html.replace("</h3>", "</h3>") .replace(
+      /(<div class="card"[^>]*>)/, "$1" + gfxWuduLine());
+  };
+}
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   2. The practice log, where somebody looks at it
+   ============================================================ */
+
+function gfxIbadahRows() {
+  const g = gState();
+  const log = g.ibadah || {};
+  const today = gfxToday();
+  const ids = ["wudu", "miswak", "salah"];
+  const any = ids.some(id => (log[id] || {}).count);
+
+  if (!any) {
+    return '<p class="note">Nothing walked through yet. Go into the house or the masjid, ' +
+      "find the room, and do it a step at a time.</p>";
+  }
+
+  return ids.map(id => {
+    const p = (typeof PRACTICE === "object" && PRACTICE[id]) || { em: "•", name: id };
+    const rec = log[id] || { count: 0, last: "" };
+    const when = !rec.count ? "not yet"
+      : rec.last === today ? "done today"
+      : "last done " + esc(rec.last);
+    return '<div class="gfx-ib"><span class="em">' + p.em + "</span>" +
+      '<span><span class="nm">' + esc(p.name) + "</span>" +
+      '<div class="note">' + when + "</div></span>" +
+      '<span class="sp"></span><span class="ct">' +
+      (rec.count ? rec.count + (rec.count === 1 ? " time" : " times") : "—") +
+      "</span></div>";
+  }).join("");
+}
+
+function gfxIbadahCard(forParent) {
+  return '<div class="card" style="margin-top:16px">' +
+    '<h3 class="card-title">Practising the ibadah</h3>' +
+    '<p class="note" style="margin:-4px 0 10px">' +
+    (forParent
+      ? "Walked through step by step in the garden — wudu, the miswak and salah."
+      : "Every time you walked through it properly, a step at a time.") +
+    "</p>" + gfxIbadahRows() +
+    '<p class="note" style="margin-top:10px">This counts the times it was walked through ' +
+    "in the app. It does not and cannot know what was done away from it.</p></div>";
+}
+
+if (typeof studentProgress === "function") {
+  const studentProgressGfx = studentProgress;
+  studentProgress = function () {
+    return studentProgressGfx.apply(this, arguments) + gfxIbadahCard(role === "parent");
+  };
+  if (typeof PAGES === "object") {
+    PAGES.progress = () => (role === "student" || role === "parent")
+      ? studentProgress() : pageProgress();
+  }
+}
+
+if (typeof studentRewards === "function") {
+  const studentRewardsGfx = studentRewards;
+  studentRewards = function () {
+    const html = studentRewardsGfx.apply(this, arguments);
+    /* before the closing callout, so the badges still come first */
+    const at = html.lastIndexOf('<div class="callout"');
+    const card = gfxIbadahCard(role === "parent");
+    return at > -1 ? html.slice(0, at) + card + html.slice(at) : html + card;
+  };
+  if (typeof PAGES === "object") PAGES.rewards = studentRewards;
+}
+</script>
+
+<script>
+"use strict";
+
+/* ============================================================
+   3. The Build tab, in four rooms instead of one corridor
+   ------------------------------------------------------------
+   The panel is built as one long string of HTML with four
+   <h3 class="card-title"> headings in it. Rather than rewrite the
+   catalogues — mosquePicker and improveSection both splice
+   themselves into that same string — the sections are cut apart
+   at their headings and only the chosen one is kept.
+
+   Cutting a string of HTML is normally a bad idea. It is safe
+   here precisely because every section ends where the next
+   heading begins, and the headings are fixed text written in this
+   file. If a heading is renamed, the section quietly stops being
+   found, so the fallback is "show everything", which is exactly
+   what the tab did before.
+   ============================================================ */
+
+const GFX_BUILD = [
+  { id: "mosques", label: "🕌 Mosques",   heads: ["Mosques", "Mosques of the world"] },
+  { id: "school",  label: "🏫 Madrasah",  heads: ["Madrasah"] },
+  { id: "play",    label: "🛝 Playground", heads: ["Playground"] },
+  { id: "town",    label: "🏘 Your town", heads: ["Your town"] },
+];
+
+/* "What you have built" is the upgrade list for the house, the mosques
+   AND the madrasah, so it belongs to no single sub-tab. It stays above
+   them, which also means the thing a child most often wants — improve
+   what I already have — is the first thing on the tab rather than
+   something found by scrolling. */
+const GFX_OWNED_HEAD = "What you have built";
+
+/* which sub-tab is open; not saved, because it is a view not a choice */
+let gfxBuildTab = "mosques";
+window.gfxPickBuild = function (id) { gfxBuildTab = id; render(); };
+
+/* every heading in the panel, in the order they appear */
+function gfxHeadIndex(html) {
+  const out = [];
+  const re = /<h3 class="card-title"[^>]*>([^<]*)<\/h3>/g;
+  let m;
+  while ((m = re.exec(html))) out.push({ at: m.index, text: m[1].trim() });
+  return out;
+}
+
+/* one named section, from its heading to the next one */
+function gfxSliceHead(html, head) {
+  const heads = gfxHeadIndex(html);
+  const at = heads.findIndex(h => h.text === head);
+  if (at < 0) return "";
+  const end = at + 1 < heads.length ? heads[at + 1].at : html.length;
+  return html.slice(heads[at].at, end);
+}
+
+function gfxSliceBuild(html) {
+  const heads = gfxHeadIndex(html);
+  if (heads.length < 2) return null;
+
+  const want = GFX_BUILD.find(s => s.id === gfxBuildTab) || GFX_BUILD[0];
+  const start = heads.findIndex(h => want.heads.indexOf(h.text) > -1);
+  if (start < 0) return null;
+
+  /* up to the next heading that belongs to a DIFFERENT section —
+     "Mosques of the world" sits under the mosques tab with
+     "Improve what you have", so a section can own more than one */
+  let end = html.length;
+  for (let i = start + 1; i < heads.length; i++) {
+    if (want.heads.indexOf(heads[i].text) === -1) { end = heads[i].at; break; }
+  }
+  return html.slice(heads[start].at, end);
+}
+
+const pageGardenGfx = pageGarden;
+pageGarden = function () {
+  let html = pageGardenGfx.apply(this, arguments);
+  if (Garden.tab !== "build" || Garden.inside || role !== "student") return html;
+
+  /* the build panel is the card that holds the Mosques heading */
+  const cardAt = html.lastIndexOf('<div class="card">',
+    html.indexOf('<h3 class="card-title">Mosques'));
+  if (cardAt < 0) return html;
+  const cardEnd = html.indexOf("</div>", html.lastIndexOf("</div>"));
+  const panelStart = html.indexOf(">", cardAt) + 1;
+
+  /* everything from the first heading to the end of that card */
+  const inner = html.slice(panelStart);
+  const closeAt = inner.lastIndexOf("</div>");
+  if (closeAt < 0) return html;
+  const body = inner.slice(0, closeAt);
+
+  const one = gfxSliceBuild(body);
+  if (one == null) return html;          // headings moved — show it all, as before
+
+  /* anything before the first heading is the panel's own intro and
+     belongs to the mosques section it was written for */
+  const firstHead = body.indexOf('<h3 class="card-title"');
+  const lead = gfxBuildTab === "mosques" && firstHead > 0 ? body.slice(0, firstHead) : "";
+
+  const owned = gfxSliceHead(body, GFX_OWNED_HEAD);
+
+  const tabs = '<div class="gfx-subtabs">' + GFX_BUILD.map(s =>
+    '<button aria-pressed="' + (s.id === gfxBuildTab) + '" ' +
+    'onclick="gfxPickBuild(\'' + s.id + '\')">' + s.label + "</button>").join("") +
+    "</div>";
+
+  return html.slice(0, panelStart) + owned + tabs + lead + one +
+         inner.slice(closeAt);
+};
+PAGES.garden = pageGarden;
+
+render();
+</script>
