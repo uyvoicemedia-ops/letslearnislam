@@ -17,8 +17,11 @@ the garden; this file is the short operational version.
 - `tools/llinsert.py <block> TAG` — backs up, strips a prior copy by marker, inserts before
   `</body>`. Idempotent; refuses a block with unbalanced `<script>` tags.
 - `tools/llcheck.py` — `node --check` per block, duplicate lexical globals, assign-to-const.
-- `tools/testdb.sh` — applies the seven migrations to postgres:16 in Docker, then 91 RLS
-  assertions. Needs Docker Desktop running (`open -a Docker`, then ~20 seconds).
+- `tools/testdb.sh` — applies the eight migrations to postgres:16 in Docker, then 91 RLS
+  assertions. Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
+  `supabase/test/0000_supabase_stub.sql` imitates Supabase, including pgcrypto living in an
+  `extensions` schema. **When the test database and the real one differ, the test is wrong:
+  fix the stub, then prove it fails without the fix.**
 
 ## Hard rules learned the hard way
 
@@ -38,6 +41,15 @@ the garden; this file is the short operational version.
 - `PAGES.garden` holds its own reference: reassigning `pageGarden` alone does nothing, you
   must also reassign `PAGES.garden`. Same for `PAGES.dash`. ~18 chained wrappers — patching an
   early one is patching dead code.
+- **On Supabase, pgcrypto is in the `extensions` schema, not `public`.** Our security-definer
+  functions pin `search_path = public, pg_temp`, so inside them `crypt()` and `gen_salt()` do
+  not resolve — child PIN sign-in died with `function crypt(text, text) does not exist`.
+  Migration 0008 adds `extensions` to every such function's path. Any new security-definer
+  function that hashes needs `extensions` in its `set search_path` or `extensions.crypt(...)`.
+  Plain Postgres hides this, which is why 91 green assertions missed it.
+- **Never put the `service_role` or a `secret` key in the app.** The client takes the project
+  URL and the legacy `anon` key only. No key or password goes in the repo, a log or a commit;
+  the seed with real emails (0004) is run from a copy outside the repo (`~/ll-local/`).
 - **A function reference captured in an `onclick` does not follow a later reassignment.**
   But `onclick="mark(this,'p')"` resolves through `window` at call time, so reassigning
   `window.mark` IS enough — the two cases behave differently.
@@ -125,7 +137,18 @@ Persistent test artefacts, not bugs:
 test mode, the LAN relay round-tripping, and both quiz screens measured in a real 390px
 iframe.
 
-**Nothing has ever run against a real Supabase project, or against GoCardless — not even
-sandbox.** Every client-side integration was proved against hand-built fixtures. That catches
-shape and ordering bugs and cannot catch an RLS surprise or a provider's actual behaviour.
-Google and Facebook sign-in are untested by definition.
+**First real Supabase project connected (project "letslearn", London).** Migrations 0001-0008
+applied in the SQL Editor, the "no public table without RLS" check passed, anonymous sign-in
+on, Confirm email off, Site URL and Redirect URL `http://localhost:8765`, app connected via
+"This device only". Admin sign-in and the child PIN flow (QAIDA1) work.
+
+First real-service bug, found within minutes: the pgcrypto search_path problem above. The
+fixture-based tests could never have caught it; the stub now reproduces it.
+
+Dashboard layout has moved: *Confirm email* is under Authentication → Sign In / Providers →
+User Signups, and keys are under Project Settings → API Keys with a Legacy tab (the app wants
+the legacy `anon` key). `supabase/SETUP.md` is updated.
+
+**Still never run against GoCardless, not even sandbox,** and everything in the client that
+touches the school beyond sign-in is still only proved against fixtures. Google and Facebook
+sign-in are untested by definition.
