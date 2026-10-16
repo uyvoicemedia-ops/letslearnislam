@@ -1,0 +1,138 @@
+<!-- ============================================================
+     TESTSTU — a student you can try the garden with
+     ------------------------------------------------------------
+     Migration 0011 adds profiles.is_test and test_student_create().
+     This block is the client half:
+
+       * an admin presses "Create a test student" on the Classes
+         page and is told the class code and PIN to sign in with;
+       * when that student signs in, test mode (unlimited coins,
+         full rest and food — the TESTMODE block) switches on by
+         itself, and a badge says plainly that this is a test
+         account.
+
+     No coins are written anywhere. Test mode keeps the fake balance
+     on the device and puts the real one aside (g.deedsReal), so the
+     points table stays a record of real children.
+
+     If 0011 has not been applied, nothing here breaks: the profile
+     query fails quietly, the admin button explains what is missing.
+     ============================================================ -->
+<style>
+  .ts-badge { position:fixed; left:50%; bottom:14px; transform:translateX(-50%); z-index:900;
+      background:#f6d64a; color:#4a3c05; border:1.5px solid #e0bd2e; border-radius:99px;
+      padding:6px 15px; font-weight:800; font-size:12.5px; box-shadow:0 4px 14px rgba(0,0,0,.18);
+      pointer-events:none; white-space:nowrap; }
+  .ts-card { background:var(--card); border:1.5px dashed var(--line); border-radius:15px;
+      padding:15px 16px; margin-top:18px; }
+  .ts-card h3 { margin:0 0 4px; font-size:16px; }
+  .ts-card .kv { display:flex; gap:18px; flex-wrap:wrap; margin:10px 0; }
+  .ts-card .kv b { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .ts-card .kv span { font-family:ui-monospace,Menlo,monospace; font-weight:800; font-size:17px; letter-spacing:.1em; }
+</style>
+<script>
+"use strict";
+
+const TS = { isTest: false, checked: "", on: false, info: null, err: "", busy: false };
+
+function tsLive() {
+  try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; }
+}
+
+/* Ask whether THIS profile is a test account. Tolerant on purpose: a
+   project without 0011 has no such column, and that must not break
+   sign-in. */
+async function tsCheck() {
+  if (!tsLive() || TS.checked === LLC.profile.id) return;
+  TS.checked = LLC.profile.id;
+  TS.isTest = false;
+  try {
+    const { data, error } = await LLC.sb.from("profiles").select("is_test")
+      .eq("id", LLC.profile.id).maybeSingle();
+    if (!error && data && data.is_test === true) TS.isTest = true;
+  } catch (e) {}
+  if (typeof render === "function") render();
+}
+
+if (typeof llcLoadProfile === "function") {
+  const llcLoadProfileTS = llcLoadProfile;
+  llcLoadProfile = async function () {
+    const ok = await llcLoadProfileTS.apply(this, arguments);
+    TS.checked = ""; TS.on = false; TS.isTest = false;
+    if (ok) tsCheck();
+    return ok;
+  };
+}
+
+function tsBadge() {
+  const want = tsLive() && TS.isTest && LLC.profile.role === "student";
+  let el = document.getElementById("tsBadge");
+  if (!want) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "tsBadge"; el.className = "ts-badge"; el.setAttribute("role", "status");
+    el.textContent = "TEST ACCOUNT · unlimited coins · not a real child";
+    document.body.appendChild(el);
+  }
+  /* Switch test mode on once the garden state exists. llUnlimited puts
+     the real balance aside before pinning the fake one. */
+  if (!TS.on && typeof llUnlimited === "function" && typeof gState === "function") {
+    try { if (gState()) { TS.on = true; llUnlimited(true); } } catch (e) {}
+  }
+}
+
+if (typeof render === "function") {
+  const renderTS = render;
+  render = function () {
+    const out = renderTS.apply(this, arguments);
+    try { tsBadge(); } catch (e) {}
+    return out;
+  };
+}
+
+/* ---------- the admin's button ---------- */
+
+window.tsCreate = async function () {
+  if (!tsLive() || TS.busy) return;
+  TS.busy = true; TS.err = ""; render();
+  try {
+    const { data, error } = await LLC.sb.rpc("test_student_create");
+    if (error) throw error;
+    if (data && data.error) throw new Error(data.error === "not_admin" ? "Only an admin can do that." : data.error);
+    TS.info = data;
+  } catch (e) {
+    const m = (e && e.message) || "";
+    TS.err = /could not find|does not exist|schema cache/i.test(m)
+      ? "The test student is not set up on this project yet. Apply migration 0011 first (SETUP.md)."
+      : m || "That did not work.";
+  }
+  TS.busy = false; render();
+};
+
+function tsCard() {
+  if (!tsLive() || LLC.profile.role !== "admin") return "";
+  const i = TS.info;
+  return '<div class="ts-card"><h3>Test student</h3>' +
+    '<p class="note" style="margin:0">A pupil with unlimited coins, rest and food, for trying the garden. ' +
+    "Nothing it does is written to the points record, and it sits in a class of its own.</p>" +
+    (i && i.ok
+      ? '<div class="kv"><div><b>Class code</b><span>' + esc(i.join_code) + "</span></div>" +
+        "<div><b>Pupil</b><span style=\"letter-spacing:0;font-family:inherit\">Test Student</span></div>" +
+        "<div><b>PIN</b><span>" + esc(i.pin) + "</span></div></div>" +
+        '<p class="note" style="margin:0">Sign out, choose <strong>I have a class code</strong>, type the ' +
+        "code, tap Test Student and enter the PIN. Test mode switches on by itself.</p>"
+      : '<p style="margin:10px 0 0"><button class="btn primary" onclick="tsCreate()"' + (TS.busy ? " disabled" : "") +
+        ">Create a test student</button></p>") +
+    (TS.err ? '<p class="sc-err">' + esc(TS.err) + "</p>" : "") + "</div>";
+}
+
+if (typeof pageClassesSched === "function") {
+  const pageClassesTS = pageClassesSched;
+  pageClassesSched = function () {
+    const html = pageClassesTS.apply(this, arguments);
+    return html + tsCard();
+  };
+  if (typeof PAGES === "object") PAGES.classes = pageClassesSched;
+}
+if (tsLive()) tsCheck();
+</script>
