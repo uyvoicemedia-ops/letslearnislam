@@ -15,10 +15,35 @@ before moving on. Order matters: 0001 turns row-level security on, so between
 | `migrations/0003_rls.sql` | who may read and write what |
 | `migrations/0004_seed.sql` | Al-Noor Madrasah, so the app has something to show |
 | `migrations/0005_families.sql` | households, parents signing themselves up, class requests |
+| `migrations/0006_quiz_sets.sql` | quiz sets held by the school, and opt-in sharing |
+| `migrations/0007_fees.sql` | fee plans, Direct Debit mandates and charges (§7) |
+| `migrations/0008_pgcrypto_search_path.sql` | lets the PIN functions find `crypt()` on Supabase |
+
+The app needs **all eight**, 0001 to 0008. Skipping one does not fail at sign-up;
+it fails later, on whichever screen uses the missing piece.
 
 **Before running 0004, change the three email addresses in it** to ones you can
 receive at. They are how your admin, teacher and parent accounts get matched to
-the roster rows when you sign up.
+the roster rows when you sign up. Do this in a copy kept **outside the repo**
+(for example `~/ll-local/`) and paste that copy into the SQL Editor, so your real
+addresses are never committed.
+
+### Why 0008 exists
+
+Supabase installs extensions, pgcrypto included, into a schema called
+`extensions`, not `public`. Our security-definer functions pin
+`search_path = public, pg_temp` on purpose (see the comment in 0002), so inside
+them `crypt()` and `gen_salt()` do not exist, and a child's PIN sign-in fails with
+`function crypt(text, text) does not exist`. 0008 adds `extensions` to the path of
+every `public` security-definer function that calls them. It is safe to re-run.
+
+Plain Postgres puts pgcrypto in `public`, which is why this only showed up on a
+real project. `supabase/test/0000_supabase_stub.sql` now installs it into
+`extensions` as well, so `testdb.sh` catches the same mistake.
+
+If you add a security-definer function that uses `crypt()` or `gen_salt()`, either
+put `extensions` in its `set search_path` or schema-qualify the calls
+(`extensions.crypt(...)`).
 
 ## 2. Turn on anonymous sign-in
 
@@ -28,8 +53,10 @@ This is what lets a child have a session without an email. It is not a way in on
 its own: an anonymous user can read nothing until `claim_pupil` checks their
 class code and PIN and attaches the session to a pupil.
 
-While you are there, **Authentication → Providers → Email**: turn *Confirm email*
-off for now, or your own first sign-in will wait on an email.
+While you are there, turn *Confirm email* off for now, or your own first sign-in
+will wait on an email. In the current dashboard it is under
+**Authentication → Sign In / Providers → User Signups** (older dashboards had it
+under Providers → Email).
 
 ## 3. Google and Facebook sign-in
 
@@ -96,8 +123,13 @@ dropped, silently, and looks like the login "did nothing".
 
 Open the app, click **This device only** in the header, and paste:
 
-- **Project URL** — Settings → API → Project URL
-- **Anon public key** — Settings → API → `anon` `public`
+- **Project URL** — shown on the project's home page, and under the Connect button
+- **Anon public key** — **Project Settings → API Keys**, on the **Legacy API Keys**
+  tab, the one labelled `anon` `public`
+
+The dashboard now leads with the newer *publishable* and *secret* keys. The app
+expects the legacy `anon` key, so use that tab. Never paste the `service_role` or a
+`secret` key into the app: unlike the anon key, those bypass every rule in 0003.
 
 That key is meant to be public and ships in every Supabase web app. What protects
 the data is the rules in `0003_rls.sql`, not the secrecy of the key. Leave both
@@ -123,12 +155,23 @@ select set_pupil_pin('<pupil uuid>', '7391');
 
 ## Checking it yourself
 
-`./tools/testdb.sh` runs all five migrations against a throwaway Postgres in
+`./tools/testdb.sh` runs all eight migrations against a throwaway Postgres in
 Docker and then tries to break them — a child reading another child's garden, a
 teacher opening a class they do not teach, a player reading the answer key, a
 parent giving points to somebody else's child, a home parent enumerating a
 school, a child session trying to add a child, a parent approving their own
-request for a class. 74 assertions, and it needs to stay green.
+request for a class. 91 assertions, and it needs to stay green.
+
+It also checks that the Supabase rules hold on plain Postgres: pgcrypto sits in an
+`extensions` schema there, as on a real project.
+
+After the migrations, run this in the SQL Editor; it should return no rows
+(a public table without row-level security is open to anyone with the anon key):
+
+```sql
+select tablename from pg_tables
+where schemaname = 'public' and not rowsecurity;
+```
 
 It found two real holes when it was written, both the same shape: a `for all`
 policy meant for management also grants `select`, and permissive policies are
@@ -234,7 +277,9 @@ taken is somebody's grocery money until it is refunded.
 
 - No realtime yet. The quiz tables and scoring are in and tested; the live
   room needs the client half.
-- Nothing has run against a real project — only against Postgres in Docker.
+- Migrations 0001 to 0007, anonymous sign-in, admin sign-in and the child PIN flow
+  have now run against a real project (16 Oct 2026). Everything else here has only
+  run against Postgres in Docker.
   **Google and Facebook sign-in cannot be tested there at all**, because the
   provider handshake happens between the browser, the provider and your live
   Supabase project. That part is untested by definition until you do step 3.
