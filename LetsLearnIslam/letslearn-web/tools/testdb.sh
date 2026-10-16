@@ -45,16 +45,19 @@ run "0005 families"   "$ROOT/supabase/migrations/0005_families.sql"
 run "0006 quiz sets"  "$ROOT/supabase/migrations/0006_quiz_sets.sql"
 run "0007 fees"       "$ROOT/supabase/migrations/0007_fees.sql"
 run "0008 pgcrypto path" "$ROOT/supabase/migrations/0008_pgcrypto_search_path.sql"
+run "0009 class sessions" "$ROOT/supabase/migrations/0009_class_sessions.sql"
 
 echo "testing…"
-if out=$(docker exec -i $NAME psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres \
-           < "$ROOT/supabase/test/0100_rls_tests.sql" 2>&1); then
-  echo "$out" | sed 's/^/  /'
-else
-  # the failure is at the END, after all the passing notices
-  echo "$out" | sed 's/^/  /' | tail -25
-  exit 1
-fi
+for t in 0100_rls_tests 0110_sessions_tests; do
+  if out=$(docker exec -i $NAME psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres \
+             < "$ROOT/supabase/test/$t.sql" 2>&1); then
+    echo "$out" | sed 's/^/  /'
+  else
+    # the failure is at the END, after all the passing notices
+    echo "$out" | sed 's/^/  /' | tail -25
+    exit 1
+  fi
+done
 
 echo
 echo "all green"

@@ -17,8 +17,8 @@ the garden; this file is the short operational version.
 - `tools/llinsert.py <block> TAG` — backs up, strips a prior copy by marker, inserts before
   `</body>`. Idempotent; refuses a block with unbalanced `<script>` tags.
 - `tools/llcheck.py` — `node --check` per block, duplicate lexical globals, assign-to-const.
-- `tools/testdb.sh` — applies the eight migrations to postgres:16 in Docker, then 91 RLS
-  assertions. Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
+- `tools/testdb.sh` — applies the nine migrations to postgres:16 in Docker, then 184 RLS
+  assertions (91 in `0100_rls_tests.sql`, 93 in `0110_sessions_tests.sql`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
   `supabase/test/0000_supabase_stub.sql` imitates Supabase, including pgcrypto living in an
   `extensions` schema. **When the test database and the real one differ, the test is wrong:
   fix the stub, then prove it fails without the fix.**
@@ -47,6 +47,11 @@ the garden; this file is the short operational version.
   Migration 0008 adds `extensions` to every such function's path. Any new security-definer
   function that hashes needs `extensions` in its `set search_path` or `extensions.crypt(...)`.
   Plain Postgres hides this, which is why 91 green assertions missed it.
+- **`ll_teaches()` is not school-scoped for admins.** Its `or ll_role() = 'admin'` passes for a
+  class at ANY school, as do the `admins assign teachers` policy and any other
+  `ll_role() = 'admin'` without a `school_id` check. Harmless with one school, a cross-school
+  hole with two. 0009 avoids it with `ll_manages_class()`; the older ones still need their own
+  migration and a second school in `0100`. Class sessions' tests already build a second school.
 - **Never put the `service_role` or a `secret` key in the app.** The client takes the project
   URL and the legacy `anon` key only. No key or password goes in the repo, a log or a commit;
   the seed with real emails (0004) is run from a copy outside the repo (`~/ll-local/`).
@@ -76,6 +81,7 @@ the garden; this file is the short operational version.
 
 | Block | What it does |
 |---|---|
+| `SESS` | class sessions with a meeting link; new `sessions` page on every role's menu |
 | `SOLOQZ` | the practice quiz on the live quiz's coloured tiles, 2×2 |
 | `QZFX` | countdown, answer-distribution bars, points fly-up, rank arrows, 3-2-1 |
 | `PAY` | the fees and Direct Debit screens |

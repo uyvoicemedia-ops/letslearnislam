@@ -18,8 +18,9 @@ before moving on. Order matters: 0001 turns row-level security on, so between
 | `migrations/0006_quiz_sets.sql` | quiz sets held by the school, and opt-in sharing |
 | `migrations/0007_fees.sql` | fee plans, Direct Debit mandates and charges (§7) |
 | `migrations/0008_pgcrypto_search_path.sql` | lets the PIN functions find `crypt()` on Supabase |
+| `migrations/0009_class_sessions.sql` | online class sessions with a meeting link, and the approved-platform list |
 
-The app needs **all eight**, 0001 to 0008. Skipping one does not fail at sign-up;
+The app needs **all nine**, 0001 to 0009. Skipping one does not fail at sign-up;
 it fails later, on whichever screen uses the missing piece.
 
 **Before running 0004, change the three email addresses in it** to ones you can
@@ -155,12 +156,12 @@ select set_pupil_pin('<pupil uuid>', '7391');
 
 ## Checking it yourself
 
-`./tools/testdb.sh` runs all eight migrations against a throwaway Postgres in
+`./tools/testdb.sh` runs all nine migrations against a throwaway Postgres in
 Docker and then tries to break them — a child reading another child's garden, a
 teacher opening a class they do not teach, a player reading the answer key, a
 parent giving points to somebody else's child, a home parent enumerating a
 school, a child session trying to add a child, a parent approving their own
-request for a class. 91 assertions, and it needs to stay green.
+request for a class. 184 assertions, and it needs to stay green.
 
 It also checks that the Supabase rules hold on plain Postgres: pgcrypto sits in an
 `extensions` schema there, as on a real project.
@@ -178,6 +179,29 @@ policy meant for management also grants `select`, and permissive policies are
 OR'd together, so one careless management rule quietly opened every child in the
 school to every teacher. That is not visible from inside the app, which is why
 the tests exist.
+
+## Class sessions and meeting links
+
+Teachers (and admins) put a dated session on a class and attach the link to an
+online meeting; the class's pupils, their parents and the staff press **Join**.
+It is under **Class sessions** on every role's menu. Migration 0009 is the whole
+backend.
+
+- **Only people who run the class write.** A teacher of the class, or an admin of
+  the same school. A pupil or a parent cannot, even from the console.
+- **Only people connected to the class read.** An enrolled pupil, a parent of one,
+  that class's teachers, the school's admins. Not another school, not another class,
+  not an anonymous session.
+- **Links come from an approved list.** `school_link_hosts` starts as `zoom.us`,
+  `meet.google.com`, `teams.microsoft.com`, `teams.live.com`. A subdomain of one
+  (`us02web.zoom.us`) is accepted, a lookalike (`zoom.us.evil.example`,
+  `https://zoom.us@evil.example`) is not. An admin edits the list on the Class
+  sessions page, under **Approved meeting platforms**. http and https both pass the
+  format check; only the approved hosts get through the second.
+- A school made after 0009 gets the starting list automatically.
+
+Join opens the link in a new tab with `rel="noopener noreferrer"`, and only when the
+link is a plain http(s) address.
 
 ## 7. Fees by Direct Debit
 
