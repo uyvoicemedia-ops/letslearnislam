@@ -44,6 +44,7 @@ run "0004 seed"       "$ROOT/supabase/migrations/0004_seed.sql"
 run "0005 families"   "$ROOT/supabase/migrations/0005_families.sql"
 run "0006 quiz sets"  "$ROOT/supabase/migrations/0006_quiz_sets.sql"
 run "0007 fees"       "$ROOT/supabase/migrations/0007_fees.sql"
+run "0008 pgcrypto path" "$ROOT/supabase/migrations/0008_pgcrypto_search_path.sql"
 
 echo "testing…"
 if out=$(docker exec -i $NAME psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres \
