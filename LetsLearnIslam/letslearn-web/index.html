@@ -33680,5 +33680,598 @@ if (typeof PAGES === "object") PAGES.sessions = pageSessions;
 if (sessLive() && !SESS.loaded) { sessPull().then(() => render(), () => {}); }
 </script>
 <!-- SESS-BLOCK-END -->
+<!-- SCHED-BLOCK-START --><!-- ============================================================
+     SCHED — the Classes page and the weekly Timetable
+     ------------------------------------------------------------
+     Both were "Not drawn yet" stubs (pageSimple). This block draws
+     them, for all four roles, off migration 0010.
+
+     Classes
+       admin    every class: room, join code, teachers, pupils; create
+                a class, move a pupil between classes, put a teacher on
+                or off. Pupils with no class are listed so none is lost.
+       teacher  their own classes and who is in them.
+       parent / pupil   "my class": teacher, room, next lesson.
+
+     Timetable
+       the recurring week, wall-clock times. A teacher sees the whole
+       school's week (so they can see who has a room) with their own
+       lessons marked; a pupil or parent sees only their class. Only an
+       admin edits, and the database refuses a double-booked class,
+       room or teacher, so a clash is explained rather than saved.
+
+     It does not replace Class sessions (SESS): those are one-off,
+     dated, and carry a meeting link. This is the standing pattern.
+
+     Not connected: both pages show clearly labelled prototype data,
+     never anything that could be mistaken for the school's own.
+     ============================================================ -->
+<style>
+  .sc-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }
+  .sc-bar select, .sc-form select, .sc-form input, .sc-mini select {
+      font:inherit; padding:7px 10px; border-radius:10px; border:1.5px solid var(--line);
+      background:var(--bg); color:inherit; }
+  .sc-seg { display:inline-flex; border:1.5px solid var(--line); border-radius:11px; overflow:hidden; }
+  .sc-seg button { font:inherit; font-size:13px; font-weight:700; padding:7px 13px; border:0;
+      background:var(--card); color:var(--muted); cursor:pointer; }
+  .sc-seg button.on { background:var(--islam-blue); color:#fff; }
+  .sc-demo { margin:0 0 14px; }
+  .sc-err { font-size:12.5px; font-weight:700; color:#c9483a; margin:8px 0; }
+
+  /* ---- classes ---- */
+  .sc-classes { display:grid; grid-template-columns:repeat(auto-fill, minmax(290px, 1fr)); gap:14px; }
+  .sc-class { background:var(--card); border:1.5px solid var(--line); border-radius:15px;
+      padding:15px 16px; border-top:5px solid var(--cc, var(--islam-blue)); }
+  .sc-class h3 { margin:0; font-size:17px; }
+  .sc-class .meta { font-size:12.5px; color:var(--muted); margin:3px 0 10px; }
+  .sc-code { display:inline-flex; align-items:center; gap:7px; font-family:ui-monospace,Menlo,monospace;
+      font-weight:800; letter-spacing:.12em; padding:4px 10px; border-radius:9px;
+      background:var(--bg); border:1.5px dashed var(--line); font-size:13px; }
+  .sc-code button { border:0; background:none; cursor:pointer; font-size:12px; color:var(--muted); padding:0; }
+  .sc-chips { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+  .sc-chip { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:99px;
+      font-size:12.5px; border:1.5px solid var(--line); background:var(--bg); }
+  .sc-chip button { border:0; background:none; color:#c9483a; font-weight:800; cursor:pointer; padding:0; }
+  .sc-pupils { list-style:none; margin:8px 0 0; padding:0; border-top:1px solid var(--line); }
+  .sc-pupils li { display:flex; align-items:center; justify-content:space-between; gap:8px;
+      padding:6px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+  .sc-pupils li span { min-width:0; overflow-wrap:anywhere; }
+  .sc-mini select { font-size:12px; padding:3px 6px; max-width:130px; }
+  .sc-next { font-size:12.5px; margin-top:10px; padding:8px 10px; border-radius:10px;
+      background:var(--bg); border:1.5px solid var(--line); }
+  .sc-form { background:var(--card); border:1.5px solid var(--line); border-radius:13px;
+      padding:14px 16px; margin:0 0 14px; }
+  .sc-form h3 { margin:0 0 8px; font-size:15px; }
+  .sc-form .grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; }
+  .sc-form label { display:block; font-size:12px; font-weight:700; margin:6px 0 3px; }
+  .sc-form input, .sc-form select { width:100%; box-sizing:border-box; }
+  .sc-form .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+
+  /* ---- timetable grid ---- */
+  .tt-grid { display:grid; grid-template-columns:44px repeat(var(--days), minmax(0,1fr)); gap:0;
+      background:var(--card); border:1.5px solid var(--line); border-radius:14px; overflow:hidden; }
+  .tt-head { padding:9px 4px; text-align:center; font-weight:800; font-size:12.5px;
+      border-bottom:1.5px solid var(--line); background:var(--bg); }
+  .tt-head.today { color:#fff; background:var(--islam-blue); }
+  .tt-gutter { position:relative; border-right:1px solid var(--line); }
+  .tt-gutter span { position:absolute; right:5px; font-size:10.5px; color:var(--muted); transform:translateY(-50%); }
+  .tt-col { position:relative; border-right:1px solid var(--line);
+      background-image:repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hr) - 1px),
+        var(--line) calc(var(--hr) - 1px), var(--line) var(--hr)); }
+  .tt-col:last-child { border-right:0; }
+  .tt-col.today { background-color:rgba(46,107,191,.06); }
+  .tt-slot { position:absolute; box-sizing:border-box; overflow:hidden;
+      border-radius:9px; padding:4px 6px; font-size:11.5px; line-height:1.3; color:#fff;
+      background:var(--cc); border:2px solid transparent; text-align:left; font-family:inherit; }
+  .tt-slot b { display:block; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tt-slot.mine { border-color:#f6d64a; box-shadow:0 0 0 2px rgba(246,214,74,.5); }
+  .tt-slot.dim { opacity:.45; }
+  .tt-slot.live { animation:ttpulse 2s ease-in-out infinite; }
+  button.tt-slot { cursor:pointer; }
+  @keyframes ttpulse { 50% { box-shadow:0 0 0 4px rgba(46,107,191,.35); } }
+  @media (prefers-reduced-motion:reduce){ .tt-slot.live { animation:none; } }
+  .tt-agenda { display:none; }
+  .tt-aday { font-size:12.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase;
+      color:var(--muted); margin:16px 0 7px; }
+  .tt-aday.today { color:var(--islam-blue); }
+  .tt-arow { display:flex; gap:12px; align-items:center; padding:11px 13px; margin-bottom:8px;
+      border-radius:12px; background:var(--card); border:1.5px solid var(--line);
+      border-left:6px solid var(--cc); width:100%; box-sizing:border-box; font:inherit; color:inherit;
+      text-align:left; }
+  .tt-arow.mine { background:#fdf7e7; }
+  .tt-arow .t { font-weight:800; width:70px; flex:none; font-size:14px; }
+  .tt-arow .n { font-weight:800; display:block; }
+  .tt-arow .s { font-size:12.5px; color:var(--muted); }
+  @media (max-width:760px) {
+    .tt-grid { display:none; }
+    .tt-agenda { display:block; }
+  }
+  @media (prefers-color-scheme:dark){ .tt-arow.mine { background:#2a2414; } }
+</style>
+<script>
+"use strict";
+
+const SCHED = {
+  loaded: false, busy: false, err: "",
+  classes: [], teachersOf: {}, staff: [], pupils: [], enrol: [], slots: [],
+  view: "all",        // timetable: "all" | "mine"
+  room: "",           // timetable room filter
+  clsForm: null,      // { name, room } while "New class" is open
+  slotForm: null,     // { id, class_id, weekday, start, end, room }
+};
+
+const SC_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const SC_COLOURS = ["#2e6bbf", "#2f8f6f", "#b5651d", "#8a4fb0", "#c0485a", "#3a8fa8", "#7a7a1f", "#5a6bd6"];
+
+function scLive() {
+  try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; }
+}
+function scRole() { return scLive() ? LLC.profile.role : null; }
+function scIsAdmin() { return scRole() === "admin"; }
+function scIsStaff() { return scRole() === "admin" || scRole() === "teacher"; }
+function scColour(id) {
+  const i = SCHED.classes.findIndex(c => c.id === id);
+  return SC_COLOURS[(i < 0 ? 0 : i) % SC_COLOURS.length];
+}
+function scHM(t) { return String(t || "").slice(0, 5); }
+function scMin(t) { const p = scHM(t).split(":"); return (+p[0]) * 60 + (+p[1]); }
+function scClass(id) { return SCHED.classes.find(c => c.id === id) || null; }
+function scRoomOf(s) {
+  const c = scClass(s.class_id);
+  return s.room || (c && c.room) || "";
+}
+function scTeacherNames(classId) {
+  return (SCHED.teachersOf[classId] || []).map(t => t.name).join(", ");
+}
+function scMine() {
+  if (!scLive()) return [];
+  return SCHED.classes.filter(c => (SCHED.teachersOf[c.id] || []).some(t => t.id === LLC.profile.id))
+    .map(c => c.id);
+}
+
+/* ============================================================
+   Reading what is there
+   ============================================================ */
+
+async function scPull() {
+  if (!scLive()) return false;
+  SCHED.err = "";
+  try {
+    const sb = LLC.sb;
+    const q = async (p) => { const r = await p; if (r.error) throw r.error; return r.data || []; };
+    SCHED.classes = await q(sb.from("classes").select("id, name, room, join_code").order("name"));
+    const ct = await q(sb.from("class_teachers").select("class_id, teacher_id"));
+    SCHED.staff = await q(sb.from("profiles").select("id, full_name, role")
+      .in("role", ["teacher", "admin"]).order("full_name"));
+    SCHED.teachersOf = {};
+    ct.forEach(r => {
+      const p = SCHED.staff.find(x => x.id === r.teacher_id);
+      if (!p) return;
+      (SCHED.teachersOf[r.class_id] = SCHED.teachersOf[r.class_id] || []).push({ id: p.id, name: p.full_name });
+    });
+    SCHED.enrol = await q(sb.from("enrolments").select("class_id, pupil_id"));
+    SCHED.pupils = scRole() === "parent" || scRole() === "student" ? [] :
+      await q(sb.from("profiles").select("id, full_name").eq("role", "student").order("full_name"));
+    SCHED.slots = await q(sb.from("timetable_slots")
+      .select("id, class_id, weekday, starts_at, ends_at, room").order("weekday").order("starts_at"));
+    SCHED.loaded = true;
+    return true;
+  } catch (e) {
+    SCHED.err = (e && e.message) || "could not read the school";
+    return false;
+  }
+}
+
+if (typeof llcPull === "function") {
+  const llcPullSched = llcPull;
+  llcPull = async function () {
+    const out = await llcPullSched.apply(this, arguments);
+    try { if (scLive()) { await scPull(); if (typeof render === "function") render(); } }
+    catch (e) {}
+    return out;
+  };
+}
+
+/* The prototype's own sample week, shown only when nothing is connected. */
+function scDemo() {
+  const cl = (typeof DB === "object" && DB.classes) ? DB.classes : [];
+  SCHED.classes = cl.map(c => ({ id: c.id, name: c.name, room: c.room, join_code: "" }));
+  SCHED.teachersOf = {};
+  cl.forEach(c => { SCHED.teachersOf[c.id] = [{ id: "demo-" + c.id, name: c.teacher }]; });
+  SCHED.slots = [];
+  const plan = [[0, 1, "16:00", "17:00"], [0, 2, "16:00", "17:00"], [1, 3, "16:00", "17:00"],
+                [1, 4, "17:00", "18:00"], [2, 0, "16:30", "17:30"], [3, 5, "10:00", "12:00"],
+                [3, 6, "10:00", "12:00"], [2, 2, "17:30", "18:30"], [3, 1, "16:00", "17:00"]];
+  plan.forEach((p, i) => { if (cl[p[0]]) SCHED.slots.push({ id: "d" + i, class_id: cl[p[0]].id,
+    weekday: p[1] + 1, starts_at: p[2], ends_at: p[3], room: null }); });
+  SCHED.enrol = []; SCHED.pupils = [];
+}
+const SC_DEMO_NOTE = '<div class="callout sc-demo"><strong>Prototype data.</strong> This is a ' +
+  "sample, not your school. Connect this device and sign in to see the real thing.</div>";
+
+/* ============================================================
+   Classes
+   ============================================================ */
+
+function scNextLesson(classId) {
+  const now = new Date();
+  const dow = (now.getDay() + 6) % 7 + 1, mins = now.getHours() * 60 + now.getMinutes();
+  const mine = SCHED.slots.filter(s => s.class_id === classId);
+  if (!mine.length) return "";
+  let best = null, bestAt = 1e9;
+  mine.forEach(s => {
+    let d = s.weekday - dow;
+    if (d < 0 || (d === 0 && scMin(s.ends_at) <= mins)) d += 7;
+    const at = d * 1440 + scMin(s.starts_at);
+    if (at < bestAt) { bestAt = at; best = s; }
+  });
+  if (!best) return "";
+  const when = best.weekday === dow && scMin(best.starts_at) <= mins ? "on now"
+    : best.weekday === dow ? "today" : SC_DAYS[best.weekday - 1];
+  return "Next lesson: <strong>" + esc(when) + " " + esc(scHM(best.starts_at)) + "–" +
+         esc(scHM(best.ends_at)) + "</strong>" + (scRoomOf(best) ? " · " + esc(scRoomOf(best)) : "");
+}
+
+function scClassCard(c) {
+  const admin = scIsAdmin(), staff = scIsStaff();
+  const pupils = SCHED.enrol.filter(e => e.class_id === c.id)
+    .map(e => SCHED.pupils.find(p => p.id === e.pupil_id)).filter(Boolean);
+  const teachers = SCHED.teachersOf[c.id] || [];
+  const others = SCHED.staff.filter(s => !teachers.some(t => t.id === s.id));
+
+  const chips = teachers.map(t => '<span class="sc-chip">' + esc(t.name) +
+    (admin ? '<button title="Take off this class" aria-label="Remove ' + esc(t.name) +
+      '" onclick="scTeacher(\'' + esc(c.id) + "','" + esc(t.id) + "',false)\">×</button>" : "") + "</span>").join("") ||
+    '<span class="note">No teacher yet</span>';
+
+  const addT = admin && others.length
+    ? '<span class="sc-mini"><select onchange="if(this.value){scTeacher(\'' + esc(c.id) +
+      '\',this.value,true)}"><option value="">+ teacher</option>' +
+      others.map(s => '<option value="' + esc(s.id) + '">' + esc(s.full_name) + "</option>").join("") +
+      "</select></span>" : "";
+
+  const moveOpts = (cur) => SCHED.classes.filter(x => x.id !== cur).map(x =>
+    '<option value="' + esc(x.id) + '">' + esc(x.name) + "</option>").join("");
+  const list = pupils.length
+    ? '<ul class="sc-pupils">' + pupils.map(p => "<li><span>" + esc(p.full_name) + "</span>" +
+      (admin ? '<span class="sc-mini"><select aria-label="Move ' + esc(p.full_name) +
+        '" onchange="if(this.value){scMove(\'' + esc(p.id) + '\',this.value)}"><option value="">Move to…</option>' +
+        moveOpts(c.id) + "</select></span>" : "") + "</li>").join("") + "</ul>"
+    : '<p class="note" style="margin:8px 0 0">' + (staff ? "Nobody in this class yet." : "") + "</p>";
+
+  const next = scNextLesson(c.id);
+  return '<div class="sc-class" style="--cc:' + scColour(c.id) + '"><h3>' + esc(c.name) + "</h3>" +
+    '<div class="meta">' + esc(c.room && c.room !== "—" ? c.room : "No room set") +
+    (staff ? " · " + pupils.length + " pupil" + (pupils.length === 1 ? "" : "s") : "") + "</div>" +
+    (staff && c.join_code ? '<span class="sc-code" title="What children type to find this class">' +
+      esc(c.join_code) + '<button onclick="scCopy(\'' + esc(c.join_code) + '\')" aria-label="Copy code">copy</button></span>' : "") +
+    '<div class="sc-chips">' + chips + addT + "</div>" +
+    (staff ? list : "") +
+    (next ? '<div class="sc-next">' + next + "</div>" : "") + "</div>";
+}
+
+function scClassForm() {
+  const f = SCHED.clsForm;
+  if (!f) return "";
+  return '<div class="sc-form"><h3>New class</h3><div class="grid3">' +
+    '<div><label for="scCName">Name</label><input id="scCName" maxlength="60" value="' + esc(f.name) +
+    '" placeholder="Tajweed 1" oninput="SCHED.clsForm.name=this.value"></div>' +
+    '<div><label for="scCRoom">Room <span class="note">(optional)</span></label><input id="scCRoom" maxlength="40" value="' +
+    esc(f.room) + '" placeholder="Room 4" oninput="SCHED.clsForm.room=this.value"></div></div>' +
+    (SCHED.err ? '<p class="sc-err">' + esc(SCHED.err) + "</p>" : "") +
+    '<div class="row"><button class="btn primary" onclick="scClassCreate()"' + (SCHED.busy ? " disabled" : "") +
+    '>Create class</button><button class="btn" onclick="SCHED.clsForm=null;SCHED.err=\'\';render()">Cancel</button></div></div>';
+}
+
+function scUnassigned() {
+  if (!scIsAdmin()) return "";
+  const un = SCHED.pupils.filter(p => !SCHED.enrol.some(e => e.pupil_id === p.id));
+  if (!un.length) return "";
+  return '<h2 class="section">Not in a class</h2><div class="card" style="padding:6px 16px"><ul class="sc-pupils" style="border:0">' +
+    un.map(p => "<li><span>" + esc(p.full_name) + '</span><span class="sc-mini"><select aria-label="Put ' +
+      esc(p.full_name) + ' in a class" onchange="if(this.value){scMove(\'' + esc(p.id) +
+      '\',this.value)}"><option value="">Put in…</option>' +
+      SCHED.classes.map(x => '<option value="' + esc(x.id) + '">' + esc(x.name) + "</option>").join("") +
+      "</select></span></li>").join("") + "</ul></div>";
+}
+
+function pageClassesSched() {
+  const role6 = scRole();
+  const title = role6 === "parent" || role6 === "student" ? "My class"
+    : role6 === "teacher" ? "My classes" : "Classes";
+  if (!scLive()) {
+    scDemo();
+    return "<h1>" + title + '</h1><p class="sub">Who teaches whom, and where</p>' + SC_DEMO_NOTE +
+      '<div class="sc-classes">' + SCHED.classes.map(scClassCard).join("") + "</div>";
+  }
+  if (!SCHED.loaded) {
+    return "<h1>" + title + '</h1><p class="sub">Loading…</p>' +
+      (SCHED.err ? '<p class="sc-err">' + esc(SCHED.err) + "</p>" : "");
+  }
+  let list = SCHED.classes;
+  if (role6 === "teacher") { const m = scMine(); list = list.filter(c => m.indexOf(c.id) >= 0); }
+  if (role6 === "parent" || role6 === "student") {
+    const ids = SCHED.enrol.map(e => e.class_id);
+    list = list.filter(c => ids.indexOf(c.id) >= 0);
+  }
+  const add = scIsAdmin() && !SCHED.clsForm
+    ? '<p><button class="btn primary" onclick="SCHED.clsForm={name:\'\',room:\'\'};SCHED.err=\'\';render()">+ New class</button></p>' : "";
+  const sub = scIsAdmin() ? SCHED.classes.length + " classes · " + SCHED.pupils.length + " pupils"
+    : "Who teaches whom, and where";
+  return "<h1>" + title + '</h1><p class="sub">' + esc(sub) + "</p>" + add + scClassForm() +
+    (SCHED.err && !SCHED.clsForm ? '<p class="sc-err">' + esc(SCHED.err) + "</p>" : "") +
+    (list.length ? '<div class="sc-classes">' + list.map(scClassCard).join("") + "</div>"
+      : '<div class="callout">' + (role6 === "teacher" ? "You are not on a class yet. An admin can add you."
+        : role6 === "admin" ? "No classes yet. Create the first one." : "No class yet. Ask the madrasah.") + "</div>") +
+    scUnassigned();
+}
+
+/* The database says no with a code; say it in words a person can act on. */
+function scSay(e, fallback) {
+  const code = e && e.code, hint = (e && e.hint) ? " (" + e.hint + ")" : "";
+  const msg = (e && e.message) || "";
+  if (code === "23P01") return msg.charAt(0).toUpperCase() + msg.slice(1) + hint + ".";
+  if (code === "23514") return "Check the times: a lesson must end after it starts and run no more than eight hours.";
+  if (code === "42501") return "Only an admin can change this.";
+  if (code === "23505") return "That class already has a lesson starting at that time on that day.";
+  return msg || fallback || "That did not save.";
+}
+function scFnError(d) {
+  const m = { not_admin: "Only an admin can do that.", bad_name: "Give the class a name (up to 60 characters).",
+    no_such_pupil: "That pupil is not in your school.", no_such_class: "That class is not in your school.",
+    no_such_teacher: "That person is not staff at your school.", no_code: "Could not make a join code. Try again." };
+  return d && d.error ? (m[d.error] || d.error) : "";
+}
+
+async function scRpc(name, args) {
+  if (!scLive() || SCHED.busy) return;
+  SCHED.busy = true; SCHED.err = "";
+  try {
+    const { data, error } = await LLC.sb.rpc(name, args);
+    if (error) throw error;
+    if (data && data.error) { SCHED.err = scFnError(data); }
+    else { await scPull(); }
+    return data;
+  } catch (e) { SCHED.err = scSay(e); }
+  finally { SCHED.busy = false; render(); }
+}
+window.scMove = (pupil, cls) => scRpc("class_move_pupil", { p_pupil: pupil, p_class: cls });
+window.scTeacher = (cls, teacher, on) => scRpc("class_set_teacher", { p_class: cls, p_teacher: teacher, p_on: on });
+window.scClassCreate = async function () {
+  const f = SCHED.clsForm;
+  if (!f) return;
+  if (!(f.name || "").trim()) { SCHED.err = "Give the class a name."; render(); return; }
+  const d = await scRpc("class_create", { p_name: f.name, p_room: f.room || null });
+  if (d && d.ok) { SCHED.clsForm = null; render(); }
+};
+window.scCopy = function (code) {
+  try { navigator.clipboard.writeText(code); if (typeof toast === "function") toast("Copied " + code); } catch (e) {}
+};
+
+/* ============================================================
+   Timetable
+   ============================================================ */
+
+function scVisibleSlots() {
+  let rows = SCHED.slots.slice();
+  if (SCHED.view === "mine" && scRole() === "teacher") {
+    const m = scMine(); rows = rows.filter(s => m.indexOf(s.class_id) >= 0);
+  }
+  if (SCHED.room) rows = rows.filter(s => scRoomOf(s).toLowerCase() === SCHED.room.toLowerCase());
+  return rows;
+}
+
+function scSlotLabel(s) {
+  const c = scClass(s.class_id);
+  return (c ? c.name : "Class") + ", " + SC_DAYS[s.weekday - 1] + " " + scHM(s.starts_at) + " to " + scHM(s.ends_at);
+}
+
+/* Lessons that overlap in time (different classes, rooms and teachers) sit
+   side by side in lanes instead of painting over each other. Within a run of
+   overlapping lessons every lane gets the same width. */
+function scLanes(day) {
+  const rows = day.slice().sort((x, y) => scMin(x.starts_at) - scMin(y.starts_at) || scMin(y.ends_at) - scMin(x.ends_at));
+  const out = new Map();
+  let cluster = [], clusterEnd = -1;
+  const flush = () => {
+    const n = cluster.reduce((m, c) => Math.max(m, c.lane + 1), 1);
+    cluster.forEach(c => out.set(c.s.id, { lane: c.lane, of: n }));
+    cluster = []; clusterEnd = -1;
+  };
+  rows.forEach(s => {
+    const a = scMin(s.starts_at), b = scMin(s.ends_at);
+    if (cluster.length && a >= clusterEnd) flush();
+    const taken = cluster.filter(c => scMin(c.s.ends_at) > a).map(c => c.lane);
+    let lane = 0; while (taken.indexOf(lane) >= 0) lane++;
+    cluster.push({ s, lane });
+    clusterEnd = Math.max(clusterEnd, b);
+  });
+  if (cluster.length) flush();
+  return out;
+}
+
+function scTimetableGrid(rows) {
+  const used = [...new Set(rows.map(s => s.weekday))];
+  const lastDay = Math.max(5, ...used, 5);
+  const dayList = []; for (let d = 1; d <= (used.some(x => x > 5) ? 7 : lastDay); d++) dayList.push(d);
+  const lo = Math.min(15 * 60, ...rows.map(s => scMin(s.starts_at)));
+  const hi = Math.max(19 * 60, ...rows.map(s => scMin(s.ends_at)));
+  const start = Math.floor(lo / 60) * 60, end = Math.ceil(hi / 60) * 60;
+  const PX = 1.1, HR = 60 * PX, H = (end - start) * PX + 10;
+  const now = new Date(), today = (now.getDay() + 6) % 7 + 1, nowM = now.getHours() * 60 + now.getMinutes();
+  const mine = scRole() === "teacher" ? scMine() : [];
+  const edit = scIsAdmin();
+
+  let html = '<div class="tt-grid" style="--days:' + dayList.length + ';--hr:' + HR + 'px">' +
+    '<div class="tt-head"></div>' + dayList.map(d => '<div class="tt-head' + (d === today ? " today" : "") +
+      '">' + esc(SC_DAYS[d - 1].slice(0, 3)) + "</div>").join("");
+  let gut = ""; for (let m = start; m <= end; m += 60) gut += '<span style="top:' + ((m - start) * PX) + 'px">' +
+    String(m / 60).padStart(2, "0") + ":00</span>";
+  html += '<div class="tt-gutter" style="height:' + H + 'px">' + gut + "</div>";
+  dayList.forEach(d => {
+    html += '<div class="tt-col' + (d === today ? " today" : "") + '" style="height:' + H + 'px">';
+    const dayRows = rows.filter(s => s.weekday === d), lanes = scLanes(dayRows);
+    dayRows.forEach(s => {
+      const a = scMin(s.starts_at), b = scMin(s.ends_at), c = scClass(s.class_id);
+      const ln = lanes.get(s.id) || { lane: 0, of: 1 };
+      const isMine = mine.indexOf(s.class_id) >= 0;
+      const live = d === today && nowM >= a && nowM < b;
+      const cls = "tt-slot" + (isMine ? " mine" : "") + (live ? " live" : "") +
+        (SCHED.view === "all" && mine.length && !isMine ? " dim" : "");
+      const inner = "<b>" + esc(c ? c.name : "Class") + "</b>" + esc(scHM(s.starts_at)) + "–" + esc(scHM(s.ends_at)) +
+        (b - a >= 50 && scRoomOf(s) ? "<br>" + esc(scRoomOf(s)) : "") +
+        (b - a >= 90 && scTeacherNames(s.class_id) ? "<br>" + esc(scTeacherNames(s.class_id)) : "");
+      const style = "top:" + ((a - start) * PX) + "px;height:" + Math.max(24, (b - a) * PX - 2) + "px;--cc:" + scColour(s.class_id) +
+        ";left:calc(" + (ln.lane * 100 / ln.of) + "% + 3px);width:calc(" + (100 / ln.of) + "% - 6px)";
+      html += edit && scLive()
+        ? '<button class="' + cls + '" style="' + style + '" aria-label="Edit ' + esc(scSlotLabel(s)) +
+          '" onclick="scSlotEdit(\'' + esc(s.id) + '\')">' + inner + "</button>"
+        : '<div class="' + cls + '" style="' + style + '" title="' + esc(scSlotLabel(s)) + '">' + inner + "</div>";
+    });
+    html += "</div>";
+  });
+  return html + "</div>";
+}
+
+function scTimetableAgenda(rows) {
+  const now = new Date(), today = (now.getDay() + 6) % 7 + 1;
+  const mine = scRole() === "teacher" ? scMine() : [];
+  const edit = scIsAdmin() && scLive();
+  let html = '<div class="tt-agenda">';
+  for (let d = 1; d <= 7; d++) {
+    const day = rows.filter(s => s.weekday === d);
+    if (!day.length) continue;
+    html += '<div class="tt-aday' + (d === today ? " today" : "") + '">' + esc(SC_DAYS[d - 1]) +
+      (d === today ? " · today" : "") + "</div>";
+    day.forEach(s => {
+      const c = scClass(s.class_id), isMine = mine.indexOf(s.class_id) >= 0;
+      const inner = '<span class="t">' + esc(scHM(s.starts_at)) + "<br><small>" + esc(scHM(s.ends_at)) + "</small></span>" +
+        '<span><span class="n">' + esc(c ? c.name : "Class") + '</span><span class="s">' +
+        esc([scRoomOf(s), scTeacherNames(s.class_id)].filter(Boolean).join(" · ")) + "</span></span>";
+      html += edit
+        ? '<button class="tt-arow' + (isMine ? " mine" : "") + '" style="--cc:' + scColour(s.class_id) +
+          '" onclick="scSlotEdit(\'' + esc(s.id) + '\')" aria-label="Edit ' + esc(scSlotLabel(s)) + '">' + inner + "</button>"
+        : '<div class="tt-arow' + (isMine ? " mine" : "") + '" style="--cc:' + scColour(s.class_id) + '">' + inner + "</div>";
+    });
+  }
+  if (!rows.length) html += '<div class="callout">No lessons.</div>';
+  return html + "</div>";
+}
+
+function scSlotForm() {
+  const f = SCHED.slotForm;
+  if (!f) return "";
+  return '<div class="sc-form"><h3>' + (f.id ? "Edit lesson" : "New lesson") + '</h3><div class="grid3">' +
+    '<div><label for="scSClass">Class</label><select id="scSClass" onchange="SCHED.slotForm.class_id=this.value">' +
+    SCHED.classes.map(c => '<option value="' + esc(c.id) + '"' + (c.id === f.class_id ? " selected" : "") + ">" +
+      esc(c.name) + "</option>").join("") + "</select></div>" +
+    '<div><label for="scSDay">Day</label><select id="scSDay" onchange="SCHED.slotForm.weekday=+this.value">' +
+    SC_DAYS.map((d, i) => '<option value="' + (i + 1) + '"' + (f.weekday === i + 1 ? " selected" : "") + ">" + d + "</option>").join("") +
+    "</select></div>" +
+    '<div><label for="scSStart">Starts</label><input id="scSStart" type="time" value="' + esc(f.start) + '" oninput="SCHED.slotForm.start=this.value"></div>' +
+    '<div><label for="scSEnd">Ends</label><input id="scSEnd" type="time" value="' + esc(f.end) + '" oninput="SCHED.slotForm.end=this.value"></div>' +
+    '<div><label for="scSRoom">Room <span class="note">(blank = the class’s room)</span></label><input id="scSRoom" maxlength="40" value="' +
+    esc(f.room) + '" oninput="SCHED.slotForm.room=this.value"></div></div>' +
+    (SCHED.err ? '<p class="sc-err">' + esc(SCHED.err) + "</p>" : "") +
+    '<div class="row"><button class="btn primary" onclick="scSlotSave()"' + (SCHED.busy ? " disabled" : "") + ">Save</button>" +
+    (f.id ? '<button class="btn" onclick="scSlotDelete()">Delete</button>' : "") +
+    '<button class="btn" onclick="SCHED.slotForm=null;SCHED.err=\'\';render()">Cancel</button></div></div>';
+}
+
+function pageTimetableSched() {
+  const live = scLive();
+  const title = "Timetable";
+  if (!live) {
+    scDemo();
+    return "<h1>" + title + '</h1><p class="sub">The week at the madrasah</p>' + SC_DEMO_NOTE +
+      scTimetableGrid(SCHED.slots) + scTimetableAgenda(SCHED.slots);
+  }
+  if (!SCHED.loaded) {
+    return "<h1>" + title + '</h1><p class="sub">Loading…</p>' +
+      (SCHED.err ? '<p class="sc-err">' + esc(SCHED.err) + "</p>" : "");
+  }
+  const rows = scVisibleSlots();
+  const rooms = [...new Set(SCHED.slots.map(scRoomOf).filter(Boolean))].sort();
+  const role6 = scRole();
+  const bar = '<div class="sc-bar">' +
+    (role6 === "teacher" ? '<span class="sc-seg" role="group" aria-label="Whose week"><button class="' +
+      (SCHED.view === "all" ? "on" : "") + '" onclick="SCHED.view=\'all\';render()">Whole school</button><button class="' +
+      (SCHED.view === "mine" ? "on" : "") + '" onclick="SCHED.view=\'mine\';render()">Mine</button></span>' : "") +
+    (scIsStaff() && rooms.length > 1 ? '<select aria-label="Room" onchange="SCHED.room=this.value;render()"><option value="">All rooms</option>' +
+      rooms.map(r => '<option' + (SCHED.room === r ? " selected" : "") + ">" + esc(r) + "</option>").join("") + "</select>" : "") +
+    (scIsAdmin() && !SCHED.slotForm ? '<button class="btn primary" onclick="scSlotNew()"' +
+      (SCHED.classes.length ? "" : " disabled") + ">+ New lesson</button>" : "") + "</div>";
+  const sub = role6 === "teacher" ? "Your lessons are outlined in gold"
+    : role6 === "admin" ? "Click a lesson to edit it" : "Your class’s week";
+  const empty = !SCHED.slots.length
+    ? '<div class="callout">' + (scIsAdmin() ? "No lessons yet. Add the first one." : "No lessons have been set yet.") + "</div>" : "";
+  return "<h1>" + title + '</h1><p class="sub">' + esc(sub) + "</p>" + bar + scSlotForm() +
+    (SCHED.err && !SCHED.slotForm ? '<p class="sc-err">' + esc(SCHED.err) + "</p>" : "") +
+    (empty || scTimetableGrid(rows) + scTimetableAgenda(rows));
+}
+
+window.scSlotNew = function () {
+  SCHED.err = "";
+  SCHED.slotForm = { id: "", class_id: (SCHED.classes[0] || {}).id || "", weekday: 1, start: "16:00", end: "17:00", room: "" };
+  render();
+};
+window.scSlotEdit = function (id) {
+  const s = SCHED.slots.find(x => x.id === id);
+  if (!s) return;
+  SCHED.err = "";
+  SCHED.slotForm = { id: s.id, class_id: s.class_id, weekday: s.weekday, start: scHM(s.starts_at),
+                     end: scHM(s.ends_at), room: s.room || "" };
+  render();
+};
+window.scSlotSave = async function () {
+  const f = SCHED.slotForm;
+  if (!f || SCHED.busy || !scLive()) return;
+  SCHED.err = "";
+  if (!f.class_id) SCHED.err = "Choose a class.";
+  else if (!f.start || !f.end) SCHED.err = "Set both times.";
+  else if (f.end <= f.start) SCHED.err = "A lesson must end after it starts.";
+  if (SCHED.err) { render(); return; }
+  SCHED.busy = true; render();
+  try {
+    const row = { class_id: f.class_id, weekday: f.weekday, starts_at: f.start, ends_at: f.end,
+                  room: (f.room || "").trim() || null };
+    const { error } = f.id ? await LLC.sb.from("timetable_slots").update(row).eq("id", f.id)
+                           : await LLC.sb.from("timetable_slots").insert(row);
+    if (error) throw error;
+    SCHED.slotForm = null;
+    await scPull();
+  } catch (e) { SCHED.err = scSay(e); }
+  SCHED.busy = false; render();
+};
+window.scSlotDelete = async function () {
+  const f = SCHED.slotForm;
+  if (!f || !f.id || SCHED.busy || !confirm("Delete this lesson?")) return;
+  SCHED.busy = true; SCHED.err = "";
+  try {
+    const { error } = await LLC.sb.from("timetable_slots").delete().eq("id", f.id);
+    if (error) throw error;
+    SCHED.slotForm = null;
+    await scPull();
+  } catch (e) { SCHED.err = scSay(e); }
+  SCHED.busy = false; render();
+};
+
+/* ---------- wire in: replace the stubs, and give everyone a way in ---------- */
+
+if (typeof NAV === "object") {
+  [["parent", "My class"], ["student", "My class"]].forEach(([r, label]) => {
+    const first = NAV[r] && NAV[r][0] && NAV[r][0][1];
+    if (!first) return;
+    if (!first.some(x => x[0] === "classes")) first.push(["classes", label, "🏫"]);
+    if (!first.some(x => x[0] === "timetable")) first.push(["timetable", "Timetable", "🗓"]);
+  });
+}
+if (typeof PAGES === "object") {
+  PAGES.classes = pageClassesSched;
+  PAGES.timetable = pageTimetableSched;
+}
+if (scLive() && !SCHED.loaded) { scPull().then(() => render(), () => {}); }
+</script>
+<!-- SCHED-BLOCK-END -->
 </body>
 </html>
