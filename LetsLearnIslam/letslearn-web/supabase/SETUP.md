@@ -19,8 +19,9 @@ before moving on. Order matters: 0001 turns row-level security on, so between
 | `migrations/0007_fees.sql` | fee plans, Direct Debit mandates and charges (§7) |
 | `migrations/0008_pgcrypto_search_path.sql` | lets the PIN functions find `crypt()` on Supabase |
 | `migrations/0009_class_sessions.sql` | online class sessions with a meeting link, and the approved-platform list |
+| `migrations/0010_timetable_and_classes.sql` | the weekly timetable (no double-booked class, room or teacher), and admin functions to create a class, move a pupil, assign a teacher |
 
-The app needs **all nine**, 0001 to 0009. Skipping one does not fail at sign-up;
+The app needs **all ten**, 0001 to 0010. Skipping one does not fail at sign-up;
 it fails later, on whichever screen uses the missing piece.
 
 **Before running 0004, change the three email addresses in it** to ones you can
@@ -156,12 +157,12 @@ select set_pupil_pin('<pupil uuid>', '7391');
 
 ## Checking it yourself
 
-`./tools/testdb.sh` runs all nine migrations against a throwaway Postgres in
+`./tools/testdb.sh` runs all ten migrations against a throwaway Postgres in
 Docker and then tries to break them — a child reading another child's garden, a
 teacher opening a class they do not teach, a player reading the answer key, a
 parent giving points to somebody else's child, a home parent enumerating a
 school, a child session trying to add a child, a parent approving their own
-request for a class. 184 assertions, and it needs to stay green.
+request for a class. 235 assertions, and it needs to stay green.
 
 It also checks that the Supabase rules hold on plain Postgres: pgcrypto sits in an
 `extensions` schema there, as on a real project.
@@ -202,6 +203,23 @@ backend.
 
 Join opens the link in a new tab with `rel="noopener noreferrer"`, and only when the
 link is a plain http(s) address.
+
+## Classes and the timetable
+
+**Classes** and **Timetable** are on every role's menu (parents and pupils get a
+read-only "My class" and their class's week).
+
+- **Only an admin edits the timetable.** Teachers see the whole school's week, with
+  their own lessons outlined, because choosing a room means seeing who has it. Pupils
+  and parents see only their own class.
+- **The database refuses a clash.** The same class, the same room (any case, any
+  padding) or the same teacher in two lessons that overlap. Back-to-back is fine.
+  Rooms are per school.
+- Times are wall-clock (`time`), not timestamps: 4pm stays 4pm when the clocks change.
+- **Creating a class, moving a pupil and assigning a teacher go through three admin
+  functions** (`class_create`, `class_move_pupil`, `class_set_teacher`), each checking
+  the school. They exist because the older policies they would otherwise use are not
+  school-scoped for admins (see `docs/build-notes.md`).
 
 ## 7. Fees by Direct Debit
 
