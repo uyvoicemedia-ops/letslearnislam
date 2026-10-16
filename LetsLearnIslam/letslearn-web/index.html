@@ -33236,5 +33236,449 @@ quizTouchCount = function () {
 };
 </script>
 <!-- QZFX-BLOCK-END -->
+<!-- SESS-BLOCK-START --><!-- ============================================================
+     SESS — class sessions with a meeting link
+     ------------------------------------------------------------
+     A teacher puts a dated session on a class and attaches the
+     link to an online meeting. The class's pupils, their parents,
+     the class's teachers and the school's admins see it and press
+     Join.
+
+     This is a NEW page, not the Timetable. The Timetable stub is
+     meant to be the recurring weekly grid per room; a session is a
+     one-off, dated, and has to reach parents and pupils, who have
+     no Timetable entry.
+
+     Who may do what is decided by migration 0009, not here. This
+     block hides what you cannot use, but the database is the
+     lock: a pupil who opens the console and calls insert still gets
+     nothing.
+
+     What this block is NOT allowed to do:
+
+       * open a link that is not http or https. sessSafeUrl() is the
+         only way a link reaches an href, and the database refuses
+         anything else on the way in as well.
+       * open a link without rel="noopener noreferrer". The meeting
+         page must not get a handle on this window or learn where
+         the child came from.
+       * let a child or parent write. Pupils and parents get no form,
+         and the policies say no even if they find one.
+
+     Not connected: the screen says so, and shows nothing that could
+     be mistaken for the school's real sessions.
+     ============================================================ -->
+<style>
+  .ss-day { font-size:12.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase;
+            color:var(--muted); margin:18px 0 8px; }
+  .ss-day.today { color:var(--islam-blue); }
+  .ss-card { display:flex; align-items:center; gap:13px; padding:13px 15px; margin-bottom:9px;
+             border-radius:13px; border:1.5px solid var(--line); background:var(--card); }
+  .ss-card.live { border-color:#a7d3b6; background:#eef8f1; }
+  .ss-card.done { opacity:.62; }
+  .ss-time { flex:none; width:74px; text-align:center; font-weight:800; font-size:15px;
+             line-height:1.25; }
+  .ss-time small { display:block; font-weight:600; font-size:11.5px; color:var(--muted); }
+  .ss-body { flex:1; min-width:0; }
+  .ss-body .n { font-weight:800; font-size:15px; display:block; overflow-wrap:anywhere; }
+  .ss-body .s { font-size:12.5px; color:var(--muted); overflow-wrap:anywhere; }
+  .ss-act { flex:none; display:flex; flex-direction:column; align-items:stretch; gap:6px; }
+  .ss-act .btn { text-align:center; text-decoration:none; white-space:nowrap; }
+  .ss-edit { display:flex; gap:6px; justify-content:flex-end; }
+  .ss-edit button { font:inherit; font-size:12px; padding:3px 9px; border-radius:8px;
+                    border:1.5px solid var(--line); background:var(--bg); color:inherit; cursor:pointer; }
+  .ss-form { background:var(--card); border:1.5px solid var(--line); border-radius:13px;
+             padding:15px 17px; margin:14px 0; }
+  .ss-form h3 { margin:0 0 10px; font-size:15px; }
+  .ss-form label { display:block; font-size:12.5px; font-weight:700; margin:10px 0 4px; }
+  .ss-form select, .ss-form input { font:inherit; padding:8px 10px; border-radius:10px; width:100%;
+      box-sizing:border-box; border:1.5px solid var(--line); background:var(--bg); color:inherit; }
+  .ss-form .two { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .ss-form .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+  .ss-err { font-size:12.5px; font-weight:700; color:#c9483a; margin-top:10px; }
+  .ss-hosts { display:flex; flex-wrap:wrap; gap:7px; margin:8px 0; }
+  .ss-hosts span { display:inline-flex; align-items:center; gap:6px; padding:4px 10px;
+                   border-radius:99px; border:1.5px solid var(--line); background:var(--card);
+                   font-size:12.5px; }
+  .ss-hosts button { border:0; background:none; color:#c9483a; font-weight:800; cursor:pointer;
+                     font-size:14px; padding:0; }
+  @media (max-width:520px) {
+    .ss-card { flex-wrap:wrap; }
+    .ss-time { width:auto; text-align:left; }
+    .ss-act { flex-direction:row; width:100%; }
+    .ss-act .btn { flex:1; }
+    .ss-form .two { grid-template-columns:1fr; }
+  }
+  @media (prefers-color-scheme:dark){ .ss-card.live { background:#16291e; } }
+</style>
+<script>
+"use strict";
+
+const SESS = {
+  loaded: false, busy: false, err: "",
+  rows: [],          // class_sessions the database let this person see
+  classes: [],       // classes they may name on a session, id → name
+  mine: [],          // classes they may WRITE to (staff only)
+  hosts: [],         // approved meeting platforms (staff only)
+  form: null,        // { id, class_id, title, date, start, end, link } while open
+  hostDraft: "",
+  tick: 0,
+};
+
+function sessLive() {
+  try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; }
+}
+function sessStaff() {
+  return sessLive() && (LLC.profile.role === "teacher" || LLC.profile.role === "admin");
+}
+
+/* The only way a link reaches an href. Anything that is not a plain
+   http(s) address with no username in it comes back as "" and gets no
+   button. new URL() also understands the tricks a regex would miss
+   (a backslash read as a slash, an @ read as userinfo). */
+function sessSafeUrl(link) {
+  if (!link || typeof link !== "string") return "";
+  let u;
+  try { u = new URL(link.trim()); } catch (e) { return ""; }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return "";
+  if (u.username || u.password) return "";
+  return u.href;
+}
+function sessHost(link) {
+  try { return new URL(link).hostname.replace(/^www\./, ""); } catch (e) { return ""; }
+}
+function sessHostOk(link) {
+  const h = sessHost(link).toLowerCase();
+  return SESS.hosts.some(x => h === x || h.endsWith("." + x));
+}
+
+/* ============================================================
+   Reading what is there
+   ============================================================ */
+
+async function sessPull() {
+  if (!sessLive()) return false;
+  SESS.err = "";
+  try {
+    const since = new Date(Date.now() - 30 * 864e5).toISOString();
+    const { data, error } = await LLC.sb.from("class_sessions")
+      .select("id, class_id, title, starts_at, ends_at, link, created_by")
+      .gte("starts_at", since).order("starts_at", { ascending: true }).limit(300);
+    if (error) throw error;
+    SESS.rows = data || [];
+
+    const { data: cls } = await LLC.sb.from("classes").select("id, name, room").order("name");
+    SESS.classes = cls || [];
+
+    if (sessStaff()) {
+      const role6 = LLC.profile.role;
+      if (role6 === "admin") {
+        SESS.mine = SESS.classes.map(c => c.id);
+      } else {
+        const { data: ct } = await LLC.sb.from("class_teachers")
+          .select("class_id").eq("teacher_id", LLC.profile.id);
+        SESS.mine = (ct || []).map(r => r.class_id);
+      }
+      const { data: hs } = await LLC.sb.from("school_link_hosts").select("host").order("host");
+      SESS.hosts = (hs || []).map(r => r.host);
+    }
+    SESS.loaded = true;
+    return true;
+  } catch (e) {
+    SESS.err = (e && e.message) || "could not read the sessions";
+    return false;
+  }
+}
+
+if (typeof llcPull === "function") {
+  const llcPullSess = llcPull;
+  llcPull = async function () {
+    const out = await llcPullSess.apply(this, arguments);
+    try { if (sessLive()) { await sessPull(); if (typeof render === "function") render(); } }
+    catch (e) {}
+    return out;
+  };
+}
+
+/* ============================================================
+   Showing it
+   ============================================================ */
+
+function sessClassName(id) {
+  const c = SESS.classes.find(x => x.id === id);
+  return c ? c.name + (c.room ? " · " + c.room : "") : "";
+}
+function sessTime(iso) {
+  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+function sessDayKey(iso) {
+  const d = new Date(iso);
+  return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+}
+function sessDayLabel(iso) {
+  const d = new Date(iso), now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const that = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((that - today) / 864e5);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+}
+
+function sessCard(s) {
+  const now = Date.now(), st = new Date(s.starts_at).getTime(), en = new Date(s.ends_at).getTime();
+  const live = now >= st - 10 * 6e4 && now <= en;
+  const done = now > en;
+  const href = sessSafeUrl(s.link);
+  const can = sessStaff() && SESS.mine.indexOf(s.class_id) >= 0;
+
+  let act = "";
+  if (href && !done) {
+    /* rel is not optional: noopener stops the meeting page reaching back
+       into this window, noreferrer stops it learning where the child
+       came from. */
+    act += '<a class="btn primary" href="' + esc(href) + '" target="_blank" ' +
+           'rel="noopener noreferrer">Join</a>';
+  } else if (!href && !done) {
+    act += '<span class="note">Link not added yet</span>';
+  }
+  if (can) {
+    act += '<div class="ss-edit"><button onclick="sessEdit(\'' + esc(s.id) + '\')">Edit</button>' +
+           '<button onclick="sessDelete(\'' + esc(s.id) + '\')">Delete</button></div>';
+  }
+
+  return '<div class="ss-card' + (live ? " live" : "") + (done ? " done" : "") + '">' +
+    '<div class="ss-time">' + esc(sessTime(s.starts_at)) +
+    "<small>to " + esc(sessTime(s.ends_at)) + "</small></div>" +
+    '<div class="ss-body"><span class="n">' + esc(s.title) + "</span>" +
+    '<span class="s">' + esc(sessClassName(s.class_id)) +
+    (href ? " · " + esc(sessHost(href)) : "") +
+    (live ? " · on now" : "") + "</span></div>" +
+    (act ? '<div class="ss-act">' + act + "</div>" : "") + "</div>";
+}
+
+function sessList() {
+  if (!SESS.rows.length) {
+    return '<div class="callout">No sessions yet.' +
+      (sessStaff() ? " Add one above for a class you teach." : "") + "</div>";
+  }
+  const now = Date.now();
+  const upcoming = SESS.rows.filter(s => new Date(s.ends_at).getTime() >= now - 36e5);
+  const earlier = SESS.rows.filter(s => new Date(s.ends_at).getTime() < now - 36e5).reverse();
+
+  let html = "", last = "";
+  upcoming.forEach(s => {
+    const k = sessDayKey(s.starts_at);
+    if (k !== last) {
+      const lab = sessDayLabel(s.starts_at);
+      html += '<div class="ss-day' + (lab === "Today" ? " today" : "") + '">' + esc(lab) + "</div>";
+      last = k;
+    }
+    html += sessCard(s);
+  });
+  if (!upcoming.length) html += '<div class="callout">Nothing coming up.</div>';
+
+  if (earlier.length) {
+    html += '<details style="margin-top:18px"><summary class="note" style="cursor:pointer">' +
+      "Earlier (" + earlier.length + ")</summary>" +
+      earlier.map(s => '<div class="ss-day">' + esc(sessDayLabel(s.starts_at)) + "</div>" +
+        sessCard(s)).join("") + "</details>";
+  }
+  return html;
+}
+
+function sessForm() {
+  const f = SESS.form;
+  if (!f) return "";
+  const opts = SESS.classes.filter(c => SESS.mine.indexOf(c.id) >= 0)
+    .map(c => '<option value="' + esc(c.id) + '"' + (c.id === f.class_id ? " selected" : "") + ">" +
+      esc(c.name) + "</option>").join("");
+  return '<div class="ss-form"><h3>' + (f.id ? "Edit session" : "New session") + "</h3>" +
+    '<label for="ssClass">Class</label>' +
+    '<select id="ssClass" onchange="SESS.form.class_id=this.value">' + opts + "</select>" +
+    '<label for="ssTitle">Title</label>' +
+    '<input id="ssTitle" maxlength="120" value="' + esc(f.title) + '" placeholder="Qaida 1 — live lesson" ' +
+    'oninput="SESS.form.title=this.value">' +
+    '<div class="two"><div><label for="ssDate">Date</label>' +
+    '<input id="ssDate" type="date" value="' + esc(f.date) + '" oninput="SESS.form.date=this.value"></div>' +
+    '<div><label for="ssStart">Starts</label>' +
+    '<input id="ssStart" type="time" value="' + esc(f.start) + '" oninput="SESS.form.start=this.value"></div>' +
+    '<div><label for="ssEnd">Ends</label>' +
+    '<input id="ssEnd" type="time" value="' + esc(f.end) + '" oninput="SESS.form.end=this.value"></div></div>' +
+    '<label for="ssLink">Meeting link <span class="note">(optional — you can add it later)</span></label>' +
+    '<input id="ssLink" inputmode="url" autocomplete="off" value="' + esc(f.link) + '" ' +
+    'placeholder="https://zoom.us/j/…" oninput="SESS.form.link=this.value">' +
+    '<p class="note" style="margin:6px 0 0">Your school allows links from: ' +
+    esc(SESS.hosts.join(", ") || "no platform yet — ask an admin to add one") + ".</p>" +
+    (SESS.err ? '<p class="ss-err">' + esc(SESS.err) + "</p>" : "") +
+    '<div class="row"><button class="btn primary" onclick="sessSave()"' + (SESS.busy ? " disabled" : "") +
+    ">Save</button>" +
+    '<button class="btn" onclick="sessClose()">Cancel</button></div></div>';
+}
+
+function sessHostsAdmin() {
+  if (!sessLive() || LLC.profile.role !== "admin") return "";
+  return '<h2 class="section">Approved meeting platforms</h2>' +
+    '<p class="note" style="margin:0 0 4px">Teachers can only attach links from these. ' +
+    "A subdomain of one (such as us02web.zoom.us) is fine; a lookalike is not.</p>" +
+    '<div class="ss-hosts">' +
+    SESS.hosts.map(h => "<span>" + esc(h) + '<button title="Remove" aria-label="Remove ' + esc(h) +
+      '" onclick="sessHostRemove(\'' + esc(h) + '\')">×</button></span>').join("") + "</div>" +
+    '<div style="display:flex;gap:8px;max-width:420px">' +
+    '<input id="ssHost" placeholder="whereby.com" autocomplete="off" ' +
+    'style="flex:1;font:inherit;padding:8px 10px;border-radius:10px;border:1.5px solid var(--line);' +
+    'background:var(--bg);color:inherit">' +
+    '<button class="btn" onclick="sessHostAdd()">Add</button></div>';
+}
+
+function pageSessions() {
+  const head = "<h1>Class sessions</h1>";
+  if (!sessLive()) {
+    return head + '<p class="sub">Online lessons, with the link to join</p>' +
+      '<div class="callout"><strong>Not connected to a school.</strong> Sessions are kept in your ' +
+      "school’s database, so there is nothing to show here until this device is connected " +
+      "and you are signed in. Nothing on this page is real until then.</div>";
+  }
+  if (!SESS.loaded) {
+    return head + '<p class="sub">Loading…</p>' +
+      (SESS.err ? '<p class="ss-err">' + esc(SESS.err) + "</p>" : "");
+  }
+  const staff = sessStaff();
+  const add = staff && !SESS.form
+    ? '<p><button class="btn primary" onclick="sessNew()"' +
+      (SESS.mine.length ? "" : " disabled") + ">+ New session</button>" +
+      (SESS.mine.length ? "" : ' <span class="note">You do not teach a class yet.</span>') + "</p>"
+    : "";
+  return head + '<p class="sub">Online lessons, with the link to join</p>' +
+    add + sessForm() +
+    (SESS.err && !SESS.form ? '<p class="ss-err">' + esc(SESS.err) + "</p>" : "") +
+    sessList() + sessHostsAdmin();
+}
+
+/* ============================================================
+   Doing things
+   ============================================================ */
+
+function sessPad(n) { return String(n).padStart(2, "0"); }
+function sessYMD(d) { return d.getFullYear() + "-" + sessPad(d.getMonth() + 1) + "-" + sessPad(d.getDate()); }
+function sessHM(d)  { return sessPad(d.getHours()) + ":" + sessPad(d.getMinutes()); }
+
+window.sessNew = function () {
+  SESS.err = "";
+  const d = new Date(Date.now() + 864e5);
+  SESS.form = { id: "", class_id: SESS.mine[0] || "", title: "", date: sessYMD(d),
+                start: "16:00", end: "17:00", link: "" };
+  render();
+};
+window.sessEdit = function (id) {
+  const s = SESS.rows.find(x => x.id === id);
+  if (!s) return;
+  SESS.err = "";
+  const a = new Date(s.starts_at), b = new Date(s.ends_at);
+  SESS.form = { id: s.id, class_id: s.class_id, title: s.title, date: sessYMD(a),
+                start: sessHM(a), end: sessHM(b), link: s.link || "" };
+  render();
+};
+window.sessClose = function () { SESS.form = null; SESS.err = ""; render(); };
+
+/* The database is the authority, and says no with a code. This turns
+   the codes into sentences a teacher can act on. */
+function sessSay(error) {
+  const code = error && error.code, msg = (error && error.message) || "";
+  if (code === "42501") return "You can only set sessions for a class you teach.";
+  if (/not approved/.test(msg)) return "That meeting platform is not approved by your school. " +
+    "An admin can add it to the list.";
+  if (code === "23514") return "Check the link and the times. The link must be a web address " +
+    "(https://…), the session must end after it starts, and last no more than eight hours.";
+  return msg || "That did not save.";
+}
+
+window.sessSave = async function () {
+  const f = SESS.form;
+  if (!f || SESS.busy || !sessLive()) return;
+  SESS.err = "";
+  const title = (f.title || "").trim();
+  const link = (f.link || "").trim();
+  if (!f.class_id) SESS.err = "Choose a class.";
+  else if (!title) SESS.err = "Give the session a title.";
+  else if (!f.date || !f.start || !f.end) SESS.err = "Set the date and both times.";
+  else if (link && !sessSafeUrl(link)) SESS.err = "The link must start with https:// (or http://).";
+  else if (link && !sessHostOk(link)) SESS.err = "That meeting platform is not approved by your school. " +
+    "Approved: " + (SESS.hosts.join(", ") || "none yet") + ".";
+  const a = new Date(f.date + "T" + f.start), b = new Date(f.date + "T" + f.end);
+  if (!SESS.err && (isNaN(a) || isNaN(b) || b <= a)) SESS.err = "The session must end after it starts.";
+  if (SESS.err) { render(); return; }
+
+  SESS.busy = true; render();
+  try {
+    const row = { class_id: f.class_id, title, starts_at: a.toISOString(),
+                  ends_at: b.toISOString(), link: link ? sessSafeUrl(link) : null };
+    const q = f.id
+      ? LLC.sb.from("class_sessions").update(row).eq("id", f.id)
+      : LLC.sb.from("class_sessions").insert(row);
+    const { error } = await q;
+    if (error) throw error;
+    SESS.form = null;
+    await sessPull();
+  } catch (e) {
+    SESS.err = sessSay(e);
+  }
+  SESS.busy = false; render();
+};
+
+window.sessDelete = async function (id) {
+  if (!sessLive() || SESS.busy) return;
+  const s = SESS.rows.find(x => x.id === id);
+  if (!s || !confirm("Delete “" + s.title + "”?")) return;
+  SESS.busy = true; SESS.err = "";
+  try {
+    const { error } = await LLC.sb.from("class_sessions").delete().eq("id", id);
+    if (error) throw error;
+    await sessPull();
+  } catch (e) { SESS.err = sessSay(e); }
+  SESS.busy = false; render();
+};
+
+window.sessHostAdd = async function () {
+  const el = document.getElementById("ssHost");
+  const host = (el && el.value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  if (!host) return;
+  SESS.err = "";
+  try {
+    const { error } = await LLC.sb.from("school_link_hosts")
+      .insert({ school_id: LLC.profile.school_id, host });
+    if (error) throw error;
+    await sessPull();
+  } catch (e) {
+    SESS.err = (e && e.code === "23514")
+      ? "That is not a web address like zoom.us." : sessSay(e);
+  }
+  render();
+};
+window.sessHostRemove = async function (host) {
+  if (!confirm("Stop allowing links from " + host + "? Sessions already saved keep their link.")) return;
+  SESS.err = "";
+  try {
+    const { error } = await LLC.sb.from("school_link_hosts")
+      .delete().eq("school_id", LLC.profile.school_id).eq("host", host);
+    if (error) throw error;
+    await sessPull();
+  } catch (e) { SESS.err = sessSay(e); }
+  render();
+};
+
+/* ---------- on the menu, for everyone ---------- */
+
+if (typeof NAV === "object") {
+  Object.keys(NAV).forEach(r => {
+    const first = NAV[r] && NAV[r][0] && NAV[r][0][1];
+    if (first && !first.some(x => x[0] === "sessions")) first.push(["sessions", "Class sessions", "📅"]);
+  });
+}
+if (typeof PAGES === "object") PAGES.sessions = pageSessions;
+
+if (sessLive() && !SESS.loaded) { sessPull().then(() => render(), () => {}); }
+</script>
+<!-- SESS-BLOCK-END -->
 </body>
 </html>
