@@ -20,8 +20,9 @@ before moving on. Order matters: 0001 turns row-level security on, so between
 | `migrations/0008_pgcrypto_search_path.sql` | lets the PIN functions find `crypt()` on Supabase |
 | `migrations/0009_class_sessions.sql` | online class sessions with a meeting link, and the approved-platform list |
 | `migrations/0010_timetable_and_classes.sql` | the weekly timetable (no double-booked class, room or teacher), and admin functions to create a class, move a pupil, assign a teacher |
+| `migrations/0011_test_student.sql` | a flagged Test Student account, for trying the garden |
 
-The app needs **all ten**, 0001 to 0010. Skipping one does not fail at sign-up;
+The app needs **all eleven**, 0001 to 0011. Skipping one does not fail at sign-up;
 it fails later, on whichever screen uses the missing piece.
 
 **Before running 0004, change the three email addresses in it** to ones you can
@@ -157,12 +158,12 @@ select set_pupil_pin('<pupil uuid>', '7391');
 
 ## Checking it yourself
 
-`./tools/testdb.sh` runs all ten migrations against a throwaway Postgres in
+`./tools/testdb.sh` runs all eleven migrations against a throwaway Postgres in
 Docker and then tries to break them — a child reading another child's garden, a
 teacher opening a class they do not teach, a player reading the answer key, a
 parent giving points to somebody else's child, a home parent enumerating a
 school, a child session trying to add a child, a parent approving their own
-request for a class. 235 assertions, and it needs to stay green.
+request for a class. 256 assertions, and it needs to stay green.
 
 It also checks that the Supabase rules hold on plain Postgres: pgcrypto sits in an
 `extensions` schema there, as on a real project.
@@ -220,6 +221,19 @@ read-only "My class" and their class's week).
   functions** (`class_create`, `class_move_pupil`, `class_set_teacher`), each checking
   the school. They exist because the older policies they would otherwise use are not
   school-scoped for admins (see `docs/build-notes.md`).
+
+## A test student for the garden
+
+As an admin, open **Classes** and press **Create a test student** (migration 0011).
+It makes **Test Student** in a **Test Class** of its own and shows you the class code
+and PIN (**1234**). Sign out, choose **I have a class code**, type the code, tap Test
+Student and enter the PIN.
+
+Test mode then switches on by itself — unlimited coins, rest and food — and a badge
+says **TEST ACCOUNT**. The coins are the device's, not the database's: nothing is written
+to `points`, so the record of real children stays real. Calling it again returns the
+same student. Do not put a real child in the Test Class, and change the PIN if the
+project is ever shared (`select set_pupil_pin('<id>', '7391');`).
 
 ## 7. Fees by Direct Debit
 

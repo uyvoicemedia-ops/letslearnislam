@@ -17,9 +17,9 @@ the garden; this file is the short operational version.
 - `tools/llinsert.py <block> TAG` — backs up, strips a prior copy by marker, inserts before
   `</body>`. Idempotent; refuses a block with unbalanced `<script>` tags.
 - `tools/llcheck.py` — `node --check` per block, duplicate lexical globals, assign-to-const.
-- `tools/testdb.sh` — applies the ten migrations to postgres:16 in Docker, then 235 RLS
-  assertions (91 in `0100_rls_tests.sql`, 93 in `0110_sessions_tests.sql`, 51 in
-  `0120_timetable_tests.sql`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
+- `tools/testdb.sh` — applies the eleven migrations to postgres:16 in Docker, then 256 RLS
+  assertions (91 in `0100`, 93 in `0110_sessions`, 51 in `0120_timetable`, 21 in
+  `0130_test_student`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
   `supabase/test/0000_supabase_stub.sql` imitates Supabase, including pgcrypto living in an
   `extensions` schema. **When the test database and the real one differ, the test is wrong:
   fix the stub, then prove it fails without the fix.**
@@ -53,6 +53,9 @@ the garden; this file is the short operational version.
   `ll_role() = 'admin'` without a `school_id` check. Harmless with one school, a cross-school
   hole with two. 0009 avoids it with `ll_manages_class()`; the older ones still need their own
   migration and a second school in `0100`. Class sessions' tests already build a second school.
+- **`profiles` has COLUMN-level select grants (0001, 0005) so the PIN hash can never be read.**
+  A new column on `profiles` is invisible to the app until you `grant select (col)` — the symptom
+  is "permission denied for table profiles", not a missing column.
 - **A statement cannot see its own volatile function's writes.** In a test, `perform
   t_assert(f() ->> 'ok' and (select … from t) = x)` reads `t` from the snapshot taken before
   `f()` ran. Call the function first, then assert in a second statement.
@@ -91,6 +94,7 @@ the garden; this file is the short operational version.
 
 | Block | What it does |
 |---|---|
+| `TESTSTU` | test student: admin button on Classes, badge, auto test mode for `is_test` pupils |
 | `SCHED` | the Classes and Timetable pages (were `pageSimple` stubs); lanes for overlapping lessons |
 | `SESS` | class sessions with a meeting link; new `sessions` page on every role's menu |
 | `SOLOQZ` | the practice quiz on the live quiz's coloured tiles, 2×2 |
