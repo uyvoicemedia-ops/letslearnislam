@@ -1,0 +1,529 @@
+<!-- ============================================================
+     INTPOL — the inside of the house, mosque and madrasah, repainted
+     ------------------------------------------------------------
+     The floor-plan view (planFrame) draws every floor, wall and
+     label inline, and it has been wrapped five times since — walking,
+     errands, the side panel, lighting. Each wrapper captured the one
+     below it, so a later block cannot swap the original drawing out.
+
+     So this block does the one thing the architecture allows. It lets
+     the whole existing chain run — the walking, the duas, the errands,
+     the panel refresh all happen exactly as before — but hands it a
+     canvas context that swallows every call, so its picture is thrown
+     away. Then it paints the room itself, on the real canvas, from the
+     same state, reusing the same helpers for furniture, fixtures, the
+     character, lamp pools and room corners.
+
+     If the new painter ever throws, it is switched off after a few
+     failures and the original picture is drawn instead. A prettier
+     room is not worth a blank canvas.
+
+     What is new, all drawn from state that already existed:
+       * floors with a material — wood planks with joints, tile,
+         carpet with a border, prayer rows, plain concrete;
+       * walls with a lower panel, a dado rail, skirting, a picture
+         rail and a lit top cap; arched windows on the back walls;
+       * daylight (or moonlight) falling through them on the floor;
+       * a soft shadow where each wall meets the floor;
+       * locked rooms as a frosted patch with a proper card, which
+         says what it costs, or what the building needs first;
+       * a soft vignette over the whole view.
+
+     Nothing here changes what is stored, bought or walked.
+     ============================================================ -->
+<script>
+"use strict";
+
+const IP = { on: true, fails: 0, hatch: 0 };
+
+/* A context that accepts any call and any property and does nothing.
+   The original chain draws into this. */
+const IP_NULL = (function () {
+  const f = function () {};
+  const p = new Proxy(f, {
+    get: (t, k) => (k === Symbol.toPrimitive ? () => 0 : p),
+    set: () => true, apply: () => p, construct: () => p,
+  });
+  return p;
+})();
+
+function ipHash(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) / 4294967295;
+}
+
+const IP_MAT = {
+  // house
+  hall: "tile", kitchen: "tile", toilet: "tile", carpark: "concrete",
+  living: "wood", bedroom: "wood", reading: "carpet", prayer: "prayer",
+  // masjid
+  mhall: "tile", musalla: "prayer", halaqa: "carpet", mwomen: "prayer",
+  wudu: "tile", mlib: "carpet", mstore: "concrete", mimam: "carpet",
+  // madrasah
+  shall: "tile", class1: "wood", class2: "wood", class3: "wood",
+  slib: "carpet", soffice: "carpet", swudu: "tile", shead: "carpet",
+};
+// which rooms get a window on their back wall
+const IP_WINDOW = { living: 1, bedroom: 1, reading: 1, prayer: 1, kitchen: 1, hall: 0,
+  musalla: 1, halaqa: 1, mwomen: 1, mlib: 1, mimam: 1, class1: 1, class2: 1, class3: 1,
+  slib: 1, shead: 1, soffice: 1 };
+
+function ipRoomShape(r, W, H) {
+  const P = (u, v) => isoPt(u, v, W, H);
+  return { a: P(r.u, r.v), b: P(r.u + r.w, r.v), e: P(r.u + r.w, r.v + r.d), f: P(r.u, r.v + r.d) };
+}
+function ipPath(c, pts) {
+  c.beginPath();
+  pts.forEach((p, i) => c[i ? "lineTo" : "moveTo"](p.x, p.y));
+  c.closePath();
+}
+// a rectangle on the floor, in tile coordinates
+function ipQuad(c, u0, v0, u1, v1, W, H) {
+  ipPath(c, [isoPt(u0, v0, W, H), isoPt(u1, v0, W, H), isoPt(u1, v1, W, H), isoPt(u0, v1, W, H)]);
+}
+
+/* ---------------- floors ---------------- */
+
+function ipFloor(c, r, W, H, night, shade) {
+  const mat = IP_MAT[r.id] || "wood";
+  const s = ipRoomShape(r, W, H);
+  const base = shade(r.floor);
+  c.save();
+  ipPath(c, [s.a, s.b, s.e, s.f]);
+  c.fillStyle = base; c.fill();
+  c.clip();
+
+  const L = night ? 0.05 : 0.11;           // how much lighter a "light" plank is
+  const D = night ? 0.1 : 0.07;
+  const line = night ? "rgba(0,0,0,.28)" : "rgba(60,40,20,.16)";
+  c.lineWidth = 1;
+
+  if (mat === "wood") {
+    const rows = Math.max(2, Math.round(r.d / 0.36)), step = r.d / rows;
+    for (let k = 0; k < rows; k++) {
+      const v0 = r.v + k * step, v1 = v0 + step;
+      const tone = ipHash(r.id + "r" + k);
+      ipQuad(c, r.u, v0, r.u + r.w, v1, W, H);
+      c.fillStyle = tone > 0.5 ? "rgba(255,240,210," + (L * (tone - 0.4)) + ")"
+                               : "rgba(60,35,15," + (D * (0.6 - tone)) + ")";
+      c.fill();
+      c.strokeStyle = line;
+      c.beginPath();
+      const p0 = isoPt(r.u, v1, W, H), p1 = isoPt(r.u + r.w, v1, W, H);
+      c.moveTo(p0.x, p0.y); c.lineTo(p1.x, p1.y); c.stroke();
+      // butt joints, staggered row to row
+      let u = r.u + 0.5 + ipHash(r.id + "j" + k) * 1.2;
+      while (u < r.u + r.w - 0.2) {
+        const q0 = isoPt(u, v0, W, H), q1 = isoPt(u, v1, W, H);
+        c.beginPath(); c.moveTo(q0.x, q0.y); c.lineTo(q1.x, q1.y); c.stroke();
+        u += 1.3 + ipHash(r.id + "w" + k + ":" + u.toFixed(1)) * 0.9;
+      }
+    }
+  } else if (mat === "tile") {
+    const n = 0.55;
+    const nu = Math.max(1, Math.round(r.w / n)), nv = Math.max(1, Math.round(r.d / n));
+    const du = r.w / nu, dv = r.d / nv;
+    for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) {
+      if ((i + j) % 2) continue;
+      ipQuad(c, r.u + i * du, r.v + j * dv, r.u + (i + 1) * du, r.v + (j + 1) * dv, W, H);
+      c.fillStyle = night ? "rgba(255,255,255,.05)" : "rgba(255,255,255,.26)"; c.fill();
+    }
+    c.strokeStyle = night ? "rgba(0,0,0,.25)" : "rgba(60,70,70,.13)";
+    for (let i = 1; i < nu; i++) {
+      const p0 = isoPt(r.u + i * du, r.v, W, H), p1 = isoPt(r.u + i * du, r.v + r.d, W, H);
+      c.beginPath(); c.moveTo(p0.x, p0.y); c.lineTo(p1.x, p1.y); c.stroke();
+    }
+    for (let j = 1; j < nv; j++) {
+      const p0 = isoPt(r.u, r.v + j * dv, W, H), p1 = isoPt(r.u + r.w, r.v + j * dv, W, H);
+      c.beginPath(); c.moveTo(p0.x, p0.y); c.lineTo(p1.x, p1.y); c.stroke();
+    }
+  } else if (mat === "carpet" || mat === "prayer") {
+    // a border set in from the walls, then a second fine line inside it
+    [[0.2, night ? "rgba(255,225,160,.30)" : "rgba(255,255,255,.55)", 2.2],
+     [0.34, night ? "rgba(255,225,160,.18)" : "rgba(255,255,255,.32)", 1.2]].forEach(([i, col, lw]) => {
+      ipQuad(c, r.u + i, r.v + i, r.u + r.w - i, r.v + r.d - i, W, H);
+      c.strokeStyle = col; c.lineWidth = lw; c.stroke();
+    });
+    if (mat === "prayer") {
+      // rows to stand in: pale and shaded bands running across the room
+      const rows = Math.max(3, Math.round((r.d - 0.7) / 0.62)), step = (r.d - 0.7) / rows;
+      for (let k = 0; k < rows; k++) {
+        if (k % 2) continue;
+        ipQuad(c, r.u + 0.45, r.v + 0.35 + k * step, r.u + r.w - 0.45, r.v + 0.35 + (k + 1) * step, W, H);
+        c.fillStyle = night ? "rgba(255,255,255,.05)" : "rgba(255,255,255,.2)"; c.fill();
+      }
+    } else {
+      ipQuad(c, r.u + 0.4, r.v + 0.4, r.u + r.w - 0.4, r.v + r.d - 0.4, W, H);
+      c.fillStyle = night ? "rgba(255,255,255,.035)" : "rgba(255,255,255,.14)"; c.fill();
+    }
+  } else {
+    // concrete: flecks and one expansion joint
+    for (let k = 0; k < 26; k++) {
+      const u = r.u + ipHash(r.id + "fu" + k) * r.w, v = r.v + ipHash(r.id + "fv" + k) * r.d;
+      const p = isoPt(u, v, W, H);
+      c.fillStyle = "rgba(0,0,0,.07)"; c.fillRect(p.x, p.y, 2, 1);
+    }
+    c.strokeStyle = line;
+    const p0 = isoPt(r.u + r.w / 2, r.v, W, H), p1 = isoPt(r.u + r.w / 2, r.v + r.d, W, H);
+    c.beginPath(); c.moveTo(p0.x, p0.y); c.lineTo(p1.x, p1.y); c.stroke();
+  }
+  c.restore();
+}
+
+// a soft shadow where each wall meets the floor
+function ipWallShadow(c, r, W, H, night) {
+  const P = (u, v) => isoPt(u, v, W, H);
+  const dark = night ? "rgba(0,4,16," : "rgba(45,30,15,";
+  const depth = 0.55;
+  const back = [P(r.u, r.v), P(r.u + r.w, r.v), P(r.u + r.w, r.v + depth), P(r.u, r.v + depth)];
+  let g = c.createLinearGradient(P(r.u, r.v).x, P(r.u, r.v).y, P(r.u, r.v + depth).x, P(r.u, r.v + depth).y);
+  g.addColorStop(0, dark + (night ? ".45)" : ".30)")); g.addColorStop(1, dark + "0)");
+  c.fillStyle = g; ipPath(c, back); c.fill();
+  const left = [P(r.u, r.v), P(r.u + depth, r.v), P(r.u + depth, r.v + r.d), P(r.u, r.v + r.d)];
+  g = c.createLinearGradient(P(r.u, r.v).x, P(r.u, r.v).y, P(r.u + depth, r.v).x, P(r.u + depth, r.v).y);
+  g.addColorStop(0, dark + (night ? ".4)" : ".26)")); g.addColorStop(1, dark + "0)");
+  c.fillStyle = g; ipPath(c, left); c.fill();
+}
+
+// daylight (or moonlight) through the back window, lying on the floor
+function ipWindowLight(c, r, W, H, night, u0) {
+  const P = (u, v) => isoPt(u, v, W, H);
+  const wdt = 0.95, throwV = Math.min(1.7, r.d - 0.2), shift = 0.9;
+  const pts = [P(u0, r.v + 0.12), P(u0 + wdt, r.v + 0.12),
+               P(u0 + wdt + shift, r.v + 0.12 + throwV), P(u0 + shift, r.v + 0.12 + throwV)];
+  const a = P(u0, r.v + 0.12), b = P(u0 + shift, r.v + 0.12 + throwV);
+  const g = c.createLinearGradient(a.x, a.y, b.x, b.y);
+  g.addColorStop(0, night ? "rgba(170,200,255,.20)" : "rgba(255,246,205,.26)");
+  g.addColorStop(1, night ? "rgba(170,200,255,0)" : "rgba(255,246,205,0)");
+  c.save();
+  ipQuad(c, r.u, r.v, r.u + r.w, r.v + r.d, W, H); c.clip();
+  c.fillStyle = g; ipPath(c, pts); c.fill();
+  c.restore();
+}
+
+/* ---------------- walls ---------------- */
+
+const IP_WALL_TINT = {
+  hall: "#f0e7d6", living: "#f6e6cf", kitchen: "#e2eef1", reading: "#eee4f2", bedroom: "#e6eef6",
+  toilet: "#dcf0f0", prayer: "#e2f0e7", carpark: "#e8e8e3",
+  mhall: "#f1e8d7", musalla: "#e6efe6", halaqa: "#f3ead5", mwomen: "#f4e7e6", wudu: "#dcf0f0",
+  mlib: "#f0e9dc", mstore: "#eaeae4", mimam: "#efe8da",
+  shall: "#f2ead9", class1: "#f5eddc", class2: "#f1ecdf", class3: "#f6efd9", slib: "#f0e9dc",
+  soffice: "#eaeae4", swudu: "#dcf0f0", shead: "#efe6d6",
+};
+const IP_WH = 1.15, IP_WT = 0.14;
+
+function ipWallRun(c, uu, vv, ww, dd, base, W, H, night) {
+  const col = night ? mqShade(base, 0.36) : base;
+  // the wall itself, with clearer light and shade than before
+  isoBox(c, uu, vv, ww, dd, IP_WH, W, H, mqShade(col, 1.14), mqShade(col, .97), mqShade(col, .84));
+  // a lower panel, a shade deeper, standing a hair proud
+  const pan = night ? mqShade(base, 0.3) : mqShade(base, .88);
+  isoBoxAt(c, uu - 0.01, vv - 0.01, ww + 0.02, dd + 0.02, 0.42, 0, W, H,
+    mqShade(pan, 1.08), mqShade(pan, .97), mqShade(pan, .85));
+  // the dado rail on top of the panel
+  const rail = night ? mqShade(base, 0.34) : mqShade(base, .78);
+  isoBoxAt(c, uu - 0.02, vv - 0.02, ww + 0.04, dd + 0.04, 0.035, 0.42, W, H,
+    mqShade(rail, 1.12), mqShade(rail, .98), mqShade(rail, .86));
+  // skirting
+  const sk = night ? mqShade(base, 0.28) : mqShade(base, .68);
+  isoBoxAt(c, uu - 0.02, vv - 0.02, ww + 0.04, dd + 0.04, 0.09, 0, W, H,
+    mqShade(sk, 1.08), mqShade(sk, .96), mqShade(sk, .84));
+  // a picture rail, and a pale cap along the very top
+  const pr = night ? mqShade(base, 0.32) : mqShade(base, .84);
+  isoBoxAt(c, uu - 0.012, vv - 0.012, ww + 0.024, dd + 0.024, 0.045, IP_WH - 0.24, W, H,
+    mqShade(pr, 1.08), mqShade(pr, .97), mqShade(pr, .87));
+  const cap = night ? mqShade(base, 0.5) : mqShade(base, 1.04);
+  isoBoxAt(c, uu - 0.025, vv - 0.025, ww + 0.05, dd + 0.05, 0.05, IP_WH - 0.045, W, H,
+    mqShade(cap, 1.1), mqShade(cap, .96), mqShade(cap, .86));
+}
+
+// an arched window set into a back wall
+function ipWindow(c, u0, vFace, w, W, H, night, glass) {
+  const P = (u, h) => { const p = isoPt(u, vFace, W, H); return { x: p.x, y: p.y - isoH(h) }; };
+  const h0 = 0.5, h1 = 0.98, hArch = 0.1;
+  const a = P(u0, h0), b = P(u0 + w, h0), d = P(u0 + w, h1 - hArch), e = P(u0 + w / 2, h1), f = P(u0, h1 - hArch);
+  // frame
+  const grow = (p, k) => ({ x: p.x + k.x, y: p.y + k.y });
+  const frame = night ? "#3a3346" : "#cbb48a";
+  c.save();
+  c.fillStyle = frame;
+  c.beginPath();
+  c.moveTo(a.x - 3, a.y + 2); c.lineTo(f.x - 3, f.y); c.quadraticCurveTo(e.x - 3, e.y - 5, e.x, e.y - 4);
+  c.quadraticCurveTo(e.x + 3, e.y - 5, d.x + 3, d.y); c.lineTo(b.x + 3, b.y + 2); c.closePath(); c.fill();
+  // glass, brighter at the top
+  const g = c.createLinearGradient(0, e.y, 0, a.y);
+  if (night) { g.addColorStop(0, "#27375c"); g.addColorStop(1, "#16213d"); }
+  else { g.addColorStop(0, glass[0]); g.addColorStop(1, glass[1]); }
+  c.fillStyle = g;
+  c.beginPath();
+  c.moveTo(a.x, a.y); c.lineTo(f.x, f.y); c.quadraticCurveTo(e.x, e.y - 3, e.x, e.y - 1);
+  c.quadraticCurveTo(e.x, e.y - 3, d.x, d.y); c.lineTo(b.x, b.y); c.closePath(); c.fill();
+  // a glint, and the mullions
+  c.strokeStyle = night ? "rgba(255,255,255,.12)" : "rgba(255,255,255,.7)"; c.lineWidth = 1.6;
+  c.beginPath(); c.moveTo(a.x + (b.x - a.x) * 0.22, a.y + (b.y - a.y) * 0.22 - 4);
+  c.lineTo(a.x + (b.x - a.x) * 0.22 + (f.x - a.x) * 0.0, f.y + 6 + (a.y - f.y) * 0.1); c.stroke();
+  c.strokeStyle = frame; c.lineWidth = 2.2;
+  c.beginPath(); c.moveTo(e.x, e.y); c.lineTo((a.x + b.x) / 2, (a.y + b.y) / 2); c.stroke();
+  const m = { x: (a.x + f.x) / 2, y: (a.y + f.y) / 2 }, m2 = { x: (b.x + d.x) / 2, y: (b.y + d.y) / 2 };
+  c.beginPath(); c.moveTo(m.x, m.y); c.lineTo(m2.x, m2.y); c.stroke();
+  // sill
+  c.fillStyle = night ? "#2c2638" : "#b79d72";
+  c.fillRect(Math.min(a.x, b.x) - 4, a.y, Math.abs(b.x - a.x) + 8, 4);
+  c.restore();
+}
+
+/* ---------------- the card on a locked room ---------------- */
+
+function ipRoundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  if (c.roundRect) c.roundRect(x, y, w, h, r);
+  else c.rect(x, y, w, h);
+}
+
+function ipLockedCard(c, r, W, H, t, night) {
+  const g = gState(), zz = Math.min(0.92, isoScale() * 0.82);
+  const m = isoPt(r.u + r.w / 2, r.v + r.d / 2, W, H);
+  const needs = typeof planRoomLocked === "function" && planRoomLocked(r);
+  const can = !needs && g.deeds >= r.cost;
+  const w = 112 * zz, h = (needs ? 50 : 42) * zz, x = m.x - w / 2, y = m.y - h / 2;
+  c.save();
+  c.shadowColor = "rgba(30,40,35,.28)"; c.shadowBlur = 12 * zz; c.shadowOffsetY = 4 * zz;
+  ipRoundRect(c, x, y, w, h, 13 * zz);
+  c.fillStyle = night ? "rgba(26,32,40,.86)" : "rgba(255,255,255,.92)"; c.fill();
+  c.shadowColor = "transparent";
+  c.lineWidth = can ? 2.4 : 1.6;
+  const pulse = can ? 0.55 + 0.45 * Math.sin(t * 3) : 0;
+  c.strokeStyle = can ? "rgba(38,150,110," + (0.6 + 0.4 * pulse) + ")"
+                      : night ? "rgba(255,255,255,.18)" : "rgba(60,75,70,.22)";
+  c.stroke();
+  c.textAlign = "center"; c.textBaseline = "middle";
+  c.font = Math.round(15 * zz) + "px system-ui";
+  c.fillStyle = "#000";
+  c.fillText(needs ? "🔒" : can ? "✨" : "🔒", x + 20 * zz, y + h / 2);
+  c.fillStyle = night ? "#f0e6cd" : "#24362d";
+  c.font = "800 " + Math.round(12 * zz) + "px ui-rounded, system-ui, sans-serif";
+  c.textAlign = "left";
+  c.fillText(r.name, x + 36 * zz, y + h * (needs ? 0.34 : 0.33));
+  c.font = "700 " + Math.round(10.5 * zz) + "px ui-rounded, system-ui, sans-serif";
+  c.fillStyle = night ? "rgba(240,230,205,.7)" : "rgba(40,60,50,.68)";
+  if (needs) {
+    const word = typeof planNeedWord === "function" ? planNeedWord(r) : "improve the building first";
+    const words = word.split(" "), mid = Math.ceil(words.length / 2);
+    c.fillText(words.slice(0, mid).join(" "), x + 36 * zz, y + h * 0.58);
+    c.fillText(words.slice(mid).join(" "), x + 36 * zz, y + h * 0.8);
+  } else {
+    c.fillText(r.cost + " 🌱" + (can ? " · tap Build" : ""), x + 36 * zz, y + h * 0.7);
+  }
+  c.restore();
+}
+
+/* ---------------- the whole picture ---------------- */
+
+function ipPaint(c, W, H, t) {
+  const g = gState(), night = skyIsNight(g.style.sky), ch = g.child, zz = isoScale();
+  const shade = (col) => night ? mqShade(col, 0.6) : col;
+  c.save();
+
+  // the page behind the house
+  const bg = c.createLinearGradient(0, 0, 0, H);
+  if (night) { bg.addColorStop(0, "#141c2b"); bg.addColorStop(1, "#27364a"); }
+  else { bg.addColorStop(0, "#e4ebf0"); bg.addColorStop(1, "#f6f4ee"); }
+  c.fillStyle = bg; c.fillRect(0, 0, W, H);
+
+  const rooms = PLAN.slice().sort((a, b) => (a.u + a.v) - (b.u + b.v));
+  const owned = rooms.filter(r => planHas(r.id));
+
+  // a soft shadow under the whole plan, so it sits on the page
+  owned.forEach(r => {
+    const s = ipRoomShape(r, W, H);
+    c.save();
+    c.translate(0, 10 * zz);
+    ipPath(c, [s.a, s.b, s.e, s.f]);
+    c.fillStyle = night ? "rgba(0,0,0,.22)" : "rgba(60,70,80,.1)"; c.fill();
+    c.restore();
+  });
+
+  // floors, and the frosted patch where a room is still to come
+  rooms.forEach(r => {
+    const s = ipRoomShape(r, W, H);
+    if (!planHas(r.id)) {
+      ipPath(c, [s.a, s.b, s.e, s.f]);
+      c.fillStyle = night ? "rgba(255,255,255,.05)" : "rgba(120,140,140,.11)"; c.fill();
+      c.save(); ipPath(c, [s.a, s.b, s.e, s.f]); c.clip();
+      c.strokeStyle = night ? "rgba(255,255,255,.06)" : "rgba(60,90,80,.09)"; c.lineWidth = 1.2;
+      const n = Math.round((r.w + r.d) / 0.45);
+      for (let k = 1; k < n; k++) {
+        const q = k * 0.45;
+        const p0 = isoPt(r.u + Math.min(q, r.w), r.v + Math.max(0, q - r.w), W, H);
+        const p1 = isoPt(r.u + Math.max(0, q - r.d), r.v + Math.min(q, r.d), W, H);
+        c.beginPath(); c.moveTo(p0.x, p0.y); c.lineTo(p1.x, p1.y); c.stroke();
+      }
+      c.restore();
+      c.save(); c.setLineDash([8, 7]); c.lineWidth = 2;
+      c.strokeStyle = night ? "rgba(255,225,160,.4)" : "rgba(50,90,78,.4)";
+      ipPath(c, [s.a, s.b, s.e, s.f]); c.stroke(); c.restore();
+      return;
+    }
+    ipFloor(c, r, W, H, night, shade);
+    ipWallShadow(c, r, W, H, night);
+  });
+
+  // light from the windows, and from the lamps
+  owned.forEach(r => {
+    if (IP_WINDOW[r.id]) ipWindowLight(c, r, W, H, night, ipWinU(r));
+    if (typeof planCorner === "function") planCorner(c, r, W, H, night);
+    if (typeof PLAN_LIGHTS === "object") {
+      (PLAN_LIGHTS[r.id] || []).forEach(([lu, lv, lr]) =>
+        planLightPool(c, r.u + lu, r.v + lv, lr, W, H,
+          night ? "rgba(255,206,120,0.3)" : "rgba(255,246,214,0.3)", night ? 0.3 : 0.34));
+    }
+  });
+
+  // walls, and the windows set into them
+  const glass = [["#cfeaf7", "#aedaf0"], ["#bfe9dc", "#9fd8c6"], ["#f6e3b8", "#efcf8c"]][g.style.window] || ["#cfeaf7", "#aedaf0"];
+  owned.forEach(r => {
+    const tint = IP_WALL_TINT[r.id] || "#f0e7d6";
+    const dr = planDoor(r);
+    const gapOnBack = dr && !dr.above;
+    if (gapOnBack) {
+      const left = (dr.u - 0.45) - r.u;
+      if (left > 0.04) ipWallRun(c, r.u, r.v, left, IP_WT, tint, W, H, night);
+      const rs = dr.u + 0.45, right = (r.u + r.w) - rs;
+      if (right > 0.04) ipWallRun(c, rs, r.v, right, IP_WT, tint, W, H, night);
+    } else {
+      ipWallRun(c, r.u, r.v, r.w, IP_WT, tint, W, H, night);
+    }
+    ipWallRun(c, r.u, r.v, IP_WT, r.d, tint, W, H, night);
+    if (IP_WINDOW[r.id]) {
+      const u0 = ipWinU(r);
+      const inGap = gapOnBack && dr && u0 + 0.95 > dr.u - 0.5 && u0 < dr.u + 0.5;
+      if (!inGap) ipWindow(c, u0, r.v + IP_WT, 0.95, W, H, night, glass);
+    }
+  });
+
+  // fixtures, bought furniture and the child, nearest last
+  const things = [];
+  owned.forEach(r => planFixtures(r, night).forEach(f => things.push(f)));
+  (g.planFurn || []).forEach((it, i) => things.push({ u: it.u, v: it.v, kind: "furn", it, i }));
+  things.push({ u: ch.pu, v: ch.pv, kind: "me" });
+  things.sort((a, b) => (a.u + a.v) - (b.u + b.v));
+  things.forEach(f => {
+    if (f.kind === "me") {
+      const p = isoPt(ch.pu, ch.pv, W, H);
+      c.save();
+      c.fillStyle = night ? "rgba(0,0,0,.3)" : "rgba(40,30,20,.18)";
+      c.beginPath(); c.ellipse(p.x, p.y + 1 * zz, 17 * zz, 7 * zz, 0, 0, Math.PI * 2); c.fill();
+      c.restore();
+      gardenChild(c, p.x, p.y, 42 * zz, t);
+      return;
+    }
+    if (f.kind === "furn") {
+      const p = isoPt(f.it.u, f.it.v, W, H);
+      c.save();
+      c.fillStyle = night ? "rgba(0,0,0,.28)" : "rgba(40,30,20,.14)";
+      c.beginPath(); c.ellipse(p.x, p.y + 2 * zz, 20 * zz, 8 * zz, 0, 0, Math.PI * 2); c.fill();
+      c.restore();
+      IB.item(c, f.it.type, f.it.u, f.it.v, W, H, t, night, f.it.lvl);
+      if (Garden.selected === f.i) {
+        c.save(); c.strokeStyle = "rgba(38,140,115,.95)"; c.lineWidth = 3; c.setLineDash([6, 5]);
+        c.beginPath(); c.ellipse(p.x, p.y, 22 * zz, 11 * zz, 0, 0, Math.PI * 2); c.stroke();
+        c.setLineDash([]); c.restore();
+      }
+      return;
+    }
+    f.draw(c, W, H, t, night);
+  });
+
+  // locked rooms get their card on top of everything
+  rooms.forEach(r => { if (!planHas(r.id)) ipLockedCard(c, r, W, H, t, night); });
+
+  // the names of the rooms you have
+  c.save();
+  c.textAlign = "left"; c.textBaseline = "middle";
+  c.font = "800 " + Math.round(11 * zz) + "px ui-rounded, system-ui, sans-serif";
+  const pad = 6 * zz, hgt = 16 * zz;
+  owned.forEach(r => {
+    const nm = isoPt(r.u + 0.42, r.v + r.d - 0.28, W, H);
+    const label = r.em + " " + r.name, tw = c.measureText(label).width;
+    c.fillStyle = night ? "rgba(18,22,28,.6)" : "rgba(255,255,255,.78)";
+    ipRoundRect(c, nm.x - pad, nm.y - hgt / 2, tw + pad * 2, hgt, hgt / 2); c.fill();
+    c.fillStyle = night ? "rgba(255,255,255,.82)" : "rgba(40,50,45,.78)";
+    c.fillText(label, nm.x, nm.y);
+  });
+  c.textBaseline = "alphabetic";
+  c.restore();
+
+  // the front door, on the hallway's near edge
+  const ex = planExitAt();
+  const dp = isoPt(ex.u, ex.v, W, H);
+  const dw = ISO.tw * 0.22 * zz, dtop = isoH(1.05);
+  const door = ["#6b4a2a", "#2f6fae", "#8a6a1e"][g.style.door] || "#6b4a2a";
+  c.save();
+  c.fillStyle = "rgba(0,0,0,.18)";
+  c.beginPath(); c.ellipse(dp.x, dp.y + 3 * zz, dw * 1.5, ISO.th * 0.16 * zz, 0, 0, Math.PI * 2); c.fill();
+  const quad = (k, fill) => {
+    c.fillStyle = fill; c.beginPath();
+    c.moveTo(dp.x - dw - k, dp.y - ISO.th * 0.11 * zz + k);
+    c.lineTo(dp.x - dw - k, dp.y - dtop - k);
+    c.lineTo(dp.x + dw + k, dp.y - dtop + ISO.th * 0.22 * zz - k);
+    c.lineTo(dp.x + dw + k, dp.y + ISO.th * 0.11 * zz + k);
+    c.closePath(); c.fill();
+  };
+  quad(3, night ? "#2c2a38" : "#e8dcc2");          // the frame
+  quad(0, door);
+  c.strokeStyle = "rgba(0,0,0,.2)"; c.lineWidth = 1.6;
+  c.beginPath(); c.moveTo(dp.x, dp.y - dtop + ISO.th * 0.11 * zz); c.lineTo(dp.x, dp.y); c.stroke();
+  c.fillStyle = "#e0b64a";
+  c.beginPath(); c.arc(dp.x + dw * 0.55, dp.y - dtop * 0.45, 3.2 * zz, 0, Math.PI * 2); c.fill();
+  c.globalAlpha = 0.6 + 0.4 * Math.sin(t * 2.4);
+  c.textAlign = "center"; c.font = "800 " + Math.round(12 * zz) + "px ui-rounded, system-ui, sans-serif";
+  c.fillStyle = night ? "#ffe1a0" : "#25493c";
+  c.fillText("↓ the way out", dp.x, dp.y + 26 * zz);
+  c.restore();
+
+  if (Garden.placing && Garden.isoHover) {
+    const p = isoPt(Garden.isoHover.u, Garden.isoHover.v, W, H);
+    c.save(); c.globalAlpha = 0.5 + 0.25 * Math.sin(t * 4); c.fillStyle = "#2f9e8f";
+    c.beginPath();
+    c.moveTo(p.x, p.y - ISO.th * 0.5 * zz); c.lineTo(p.x + ISO.tw * 0.5 * zz, p.y);
+    c.lineTo(p.x, p.y + ISO.th * 0.5 * zz); c.lineTo(p.x - ISO.tw * 0.5 * zz, p.y);
+    c.closePath(); c.fill(); c.restore();
+  }
+
+  // a soft vignette, so the eye stays on the house
+  const vg = c.createRadialGradient(W / 2, H * 0.46, Math.min(W, H) * 0.34, W / 2, H * 0.46, Math.max(W, H) * 0.78);
+  vg.addColorStop(0, "rgba(30,25,20,0)");
+  vg.addColorStop(1, night ? "rgba(0,0,10,.4)" : "rgba(60,50,40,.16)");
+  c.fillStyle = vg; c.fillRect(0, 0, W, H);
+  c.restore();
+}
+
+// where a room's back window sits, clear of the doorway
+function ipWinU(r) {
+  const dr = typeof planDoor === "function" ? planDoor(r) : null;
+  let u0 = r.u + r.w * 0.58;
+  if (dr && !dr.above && u0 + 0.95 > dr.u - 0.5 && u0 < dr.u + 0.5) u0 = r.u + Math.max(0.35, r.w * 0.18);
+  return Math.min(u0, r.u + r.w - 1.15);
+}
+
+/* ---------------- wiring ---------------- */
+
+const planFrameIP = planFrame;
+planFrame = function (c, W, H, t) {
+  if (!IP.on || IP.fails > 3) return planFrameIP(c, W, H, t);
+  // the original chain moves the child, asks for duas, runs errands and
+  // refreshes the panel; its picture goes nowhere
+  planFrameIP(IP_NULL, W, H, t);
+  try {
+    ipPaint(c, W, H, t);
+  } catch (e) {
+    IP.fails++;
+    try { c.restore(); } catch (e2) {}
+    if (IP.fails === 1 && typeof console !== "undefined") console.warn("INTPOL fell back:", e);
+    planFrameIP(c, W, H, t);
+  }
+};
+window.ipToggle = function (on) { IP.on = on !== false; IP.fails = 0; if (typeof render === "function") render(); return IP.on; };
+</script>
