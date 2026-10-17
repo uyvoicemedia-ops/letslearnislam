@@ -10,7 +10,11 @@ browser. This does three things instead:
   * binds every interface, and prints the address the children should type;
   * relays quiz messages between whatever devices are connected, over plain
     HTTP long-polling — no websockets, no npm, nothing to install;
-  * sends no-cache headers, so a reload really does pick up new code.
+  * sends no-cache headers, so a reload really does pick up new code;
+  * answers HTTP Range requests, because Safari and iOS will not play audio or
+    video from a server that cannot (it asks for bytes 0-1 first, gets a whole
+    file back with a 200, and gives up). Recordings in audio/ are also allowed
+    to be cached, since they do not change while a lesson is running.
 
 Standard library only. Stop it with Ctrl-C.
 """
@@ -18,10 +22,12 @@ import json, os, re, socket, sys, threading, time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+ROOT = os.path.abspath(os.environ.get("LL_ROOT") or
+                       os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
 
 ROOM_RE = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
+RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 HOLD = 25.0          # how long a poll waits for something to happen
 KEEP = 400           # messages remembered per room
 IDLE = 2 * 3600      # a silent room is forgotten after two hours
@@ -47,12 +53,22 @@ def _sweep():
 class Handler(SimpleHTTPRequestHandler):
     server_version = "LetsLearn/1.0"
 
+    # Python's table has no .m4a at all in some versions and calls it
+    # audio/mp4a-latm in others; browsers want audio/mp4.
+    extensions_map = dict(SimpleHTTPRequestHandler.extensions_map)
+    extensions_map.update({".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".ogg": "audio/ogg",
+                           ".wav": "audio/wav"})
+
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=ROOT, **kw)
 
     # --- keep the browser honest about our constantly-changing one file ---
     def end_headers(self):
-        self.send_header("Cache-Control", "no-store, must-revalidate")
+        if (self.path or "").startswith("/audio/"):
+            self.send_header("Cache-Control", "public, max-age=3600")
+        else:
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+        self.send_header("Accept-Ranges", "bytes")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "content-type")
         super().end_headers()
@@ -85,7 +101,61 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path.startswith("/api/quiz/"):
             self._poll(u)
             return
+        rng = self.headers.get("Range")
+        if rng and self._serve_range(rng):
+            return
         super().do_GET()
+
+    def _serve_range(self, header):
+        """One byte range of a real file: 206, or 416 if it is out of bounds.
+
+        Returns False to fall through to the ordinary full response — for a
+        path that is not a file, or a range form we do not handle (several
+        ranges at once), which RFC 9110 allows a server to ignore."""
+        m = RANGE_RE.match(header.strip())
+        path = self.translate_path(self.path)
+        if not m or not os.path.isfile(path):
+            return False
+        size = os.path.getsize(path)
+        a, b = m.group(1), m.group(2)
+        if a == "" and b == "":
+            return False
+        if a == "":                              # the last N bytes
+            n = int(b)
+            if n == 0:
+                return self._unsatisfiable(size)
+            start, end = max(0, size - n), size - 1
+        else:
+            start = int(a)
+            end = min(int(b), size - 1) if b != "" else size - 1
+        if start >= size or start > end:
+            return self._unsatisfiable(size)
+        length = end - start + 1
+        self.send_response(206)
+        self.send_header("Content-Type", self.guess_type(path))
+        self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+        self.send_header("Content-Length", str(length))
+        self.end_headers()
+        try:
+            with open(path, "rb") as f:
+                f.seek(start)
+                left = length
+                while left > 0:
+                    chunk = f.read(min(65536, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        return True
+
+    def _unsatisfiable(self, size):
+        self.send_response(416)
+        self.send_header("Content-Range", "bytes */%d" % size)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
 
     def do_POST(self):
         u = urlparse(self.path)
