@@ -36323,6 +36323,339 @@ if (typeof PAGES === "object") PAGES.pupilbooks = pagePupilBooks;
 if (bkLive() && !BK.loaded) bkPull().then(() => render(), () => {});
 </script>
 <!-- BOOKSEL-BLOCK-END -->
+<!-- HWK-BLOCK-START --><!-- ============================================================
+     HWK — set, hand in and mark homework
+     ------------------------------------------------------------
+     The Homework screen could only count. "Set new homework" and "Mark"
+     were placeholder buttons with no action. This block makes them work,
+     on migration 0015.
+
+       teacher / admin  set a piece for a class (a title, what to do, an
+                        optional practice to link, a due date), edit or
+                        delete it, see who has handed in, and mark each
+                        piece with a score and a short note.
+       pupil            sees what is set, hands it in (finishing a linked
+                        practice does it automatically; otherwise "I have
+                        done it"), and reads the teacher's mark and note.
+       parent           sees the same for their child, and cannot hand in.
+
+     Everything is written through database functions that check the class
+     (homework_set / update / delete / hand_in / mark), not by writing the
+     tables, so a teacher can only touch their own classes' homework and a
+     pupil can only hand in to their own class.
+
+     A child's practice already handed work in by writing a submission from
+     the client (the LIVE block). That write no longer works once 0015 is
+     applied, because nobody writes the table directly any more, so it is
+     redone here through homework_hand_in. Before 0015 the old write still
+     does the job, and nothing here breaks.
+
+     Not connected: the Homework screen is the labelled prototype it was.
+     ============================================================ -->
+<style>
+  .hk-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }
+  .hk-bar select { font:inherit; padding:8px 12px; border-radius:11px; border:1.5px solid var(--line); background:var(--card); color:inherit; }
+  .hk-row td { vertical-align:top; }
+  .hk-row .d { font-size:12.5px; color:var(--muted); margin-top:2px; max-width:420px; overflow-wrap:anywhere; }
+  .hk-acts { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+  .hk-acts .btn { padding:6px 12px; font-size:13px; min-height:36px; }
+  .hk-veil { position:fixed; inset:0; z-index:890; background:rgba(30,25,15,.42); display:flex; align-items:flex-start; justify-content:center; padding:18px; overflow:auto; }
+  .hk-box { background:var(--card); border-radius:20px; padding:18px 20px 22px; width:min(860px,100%); box-shadow:0 22px 56px rgba(30,20,5,.28); }
+  .hk-box h2 { margin:0 0 4px; font-size:21px; }
+  .hk-f label { display:block; font-size:12.5px; font-weight:700; margin:12px 0 4px; }
+  .hk-f input, .hk-f select, .hk-f textarea, .hk-mk input { font:inherit; padding:9px 11px; border-radius:10px; border:1.5px solid var(--line); background:var(--bg); color:inherit; width:100%; box-sizing:border-box; }
+  .hk-f textarea { min-height:78px; resize:vertical; }
+  .hk-f .two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .hk-mk { width:100%; border-collapse:collapse; margin-top:10px; }
+  .hk-mk th, .hk-mk td { padding:8px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; font-size:14px; }
+  .hk-mk th { font-size:12px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+  .hk-mk input.sc { width:78px; }
+  .hk-mk tr.none td { color:var(--muted); }
+  .hk-err { font-size:13px; font-weight:700; color:#c9483a; margin:10px 0; }
+  .hk-ok { font-size:13px; font-weight:700; color:#2a7a55; margin:10px 0; }
+  .hk-note { background:var(--bg); border-radius:10px; padding:6px 10px; font-size:13.5px; margin-top:4px; }
+  @media (max-width:640px) { .hk-f .two { grid-template-columns:1fr; } .hk-mk th:nth-child(4), .hk-mk td:nth-child(4) { display:none; } }
+</style>
+<script>
+"use strict";
+
+const HWK = { loaded: false, busy: false, err: "", ok: "", classes: [], mine: null, hw: [], subs: [], enrol: [], pupils: [],
+              filter: "", form: null, mark: "", marks: {}, markMsg: "" };
+
+function hkLive() { try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; } }
+const hkRole = () => (hkLive() ? LLC.profile.role : null);
+const hkStaff = () => hkRole() === "teacher" || hkRole() === "admin";
+const hkMine = () => hkRole() === "student" || hkRole() === "parent";
+
+const HK_MODULES = [["", "None: pupils tick \"I have done it\""], ["tracing", "Tracing"], ["mazes", "Letter maze"], ["quizzes", "Quiz"], ["sayitback", "Speaking"],
+                    ["reading", "Reading"], ["assessments", "Assessment"], ["colouring", "Colouring"], ["books", "Books"]];
+const hkModName = (id) => (HK_MODULES.find(m => m[0] === id) || [0, id || ""])[1];
+
+/* ---------------- dates ---------------- */
+const hkIso = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+const hkToday = () => hkIso(new Date());
+function hkDue(iso) {
+  if (!iso) return "No date";
+  const p = iso.split("-"), d = new Date(+p[0], +p[1] - 1, +p[2]);
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+const hkLate = (iso) => !!iso && iso < hkToday();
+
+/* ---------------- reading ---------------- */
+async function hkAll(make) {
+  let out = [], from = 0;
+  for (let i = 0; i < 25; i++) {
+    const { data, error } = await make().range(from, from + 999);
+    if (error) throw error;
+    out = out.concat(data || []);
+    if (!data || data.length < 1000) return out;
+    from += 1000;
+  }
+  return out;
+}
+async function hkPull() {
+  if (!hkLive()) return false;
+  HWK.err = "";
+  try {
+    const sb = LLC.sb, r = LLC.profile.role;
+    HWK.hw = await hkAll(() => sb.from("homework").select("id, class_id, title, details, module_id, due_on, created_at").order("due_on", { ascending: false, nullsFirst: false }));
+    HWK.subs = await hkAll(() => sb.from("submissions").select("homework_id, pupil_id, score, submitted_at, marked_at, feedback").order("submitted_at"));
+    const c = await sb.from("classes").select("id, name").order("name"); HWK.classes = c.data || [];
+    const en = await sb.from("enrolments").select("class_id, pupil_id"); HWK.enrol = en.data || [];
+    const pu = await sb.from("profiles").select("id, full_name").eq("role", "student").order("full_name"); HWK.pupils = pu.data || [];
+    HWK.mine = null;
+    if (r === "teacher") {
+      const ct = await sb.from("class_teachers").select("class_id").eq("teacher_id", LLC.profile.id);
+      HWK.mine = (ct.data || []).map(x => x.class_id);
+    } else if (r === "admin") HWK.mine = HWK.classes.map(x => x.id);
+    HWK.loaded = true;
+    return true;
+  } catch (e) { HWK.err = (e && e.message) || "could not read the homework"; return false; }
+}
+if (typeof llcPull === "function") {
+  const llcPullHwk = llcPull;
+  llcPull = async function () {
+    const out = await llcPullHwk.apply(this, arguments);
+    try { if (hkLive()) { await hkPull(); if (typeof render === "function") render(); } } catch (e) {}
+    return out;
+  };
+}
+
+const hkClass = (id) => (HWK.classes.find(c => c.id === id) || {}).name || "—";
+const hkName = (id) => (HWK.pupils.find(p => p.id === id) || {}).full_name || "A pupil";
+const hkPupilsOf = (cid) => HWK.enrol.filter(e => e.class_id === cid).map(e => e.pupil_id);
+const hkSubs = (hid) => HWK.subs.filter(s => s.homework_id === hid);
+
+function hkSay(d) {
+  const m = { not_allowed: "You can only do that for your own classes.", bad_title: "Give it a title (up to 120 characters).", bad_details: "What to do is too long (500 characters at most).",
+    bad_module: "That practice is not one the app knows.", bad_due: "Choose a due date from today onwards, within a year.", bad_score: "A score is a number from 0 to 100.",
+    bad_feedback: "The note is too long (300 characters at most).", not_handed_in: "That pupil has not handed this in yet.", already_marked: "This has been marked, so it can no longer be changed." };
+  return d && d.error ? (m[d.error] || d.error) : "";
+}
+async function hkCall(name, args) {
+  if (!hkLive() || HWK.busy) return null;
+  HWK.busy = true; HWK.err = ""; HWK.ok = "";
+  try {
+    const { data, error } = await LLC.sb.rpc(name, args);
+    if (error) throw error;
+    if (data && data.error) { HWK.err = hkSay(data); return data; }
+    return data;
+  } catch (e) { HWK.err = (e && e.message) || "That did not work."; return null; }
+  finally { HWK.busy = false; }
+}
+
+/* ============================================================
+   Teacher and admin
+   ============================================================ */
+
+function hkSetNew() {
+  const first = (HWK.mine || [])[0] || "";
+  HWK.form = { id: "", class_id: HWK.filter || first, title: "", details: "", module: "", due: "" };
+  HWK.err = ""; HWK.ok = ""; render();
+}
+window.hkNew = hkSetNew;
+window.hkEdit = function (id) {
+  const h = HWK.hw.find(x => x.id === id); if (!h) return;
+  HWK.form = { id: h.id, class_id: h.class_id, title: h.title, details: h.details || "", module: h.module_id || "", due: h.due_on || "" };
+  HWK.err = ""; HWK.ok = ""; render();
+};
+window.hkCancel = function () { HWK.form = null; HWK.mark = ""; HWK.err = ""; render(); };
+window.hkSave = async function () {
+  const f = HWK.form; if (!f) return;
+  if (!f.class_id) { HWK.err = "Choose a class."; return render(); }
+  if (!f.title.trim()) { HWK.err = "Give it a title."; return render(); }
+  const args = { p_title: f.title, p_details: f.details || null, p_module: f.module || null, p_due: f.due || null };
+  const d = f.id ? await hkCall("homework_update", Object.assign({ p_id: f.id }, args))
+                 : await hkCall("homework_set", Object.assign({ p_class: f.class_id }, args));
+  if (d && d.ok) { HWK.form = null; HWK.ok = f.id ? "Saved." : "Set. Pupils in that class can see it now."; await hkPull(); }
+  render();
+};
+window.hkDelete = async function (id) {
+  const h = HWK.hw.find(x => x.id === id); if (!h) return;
+  const n = hkSubs(id).length;
+  if (!confirm("Delete “" + h.title + "”?" + (n ? " This also removes " + n + " hand-in" + (n === 1 ? "" : "s") + " and any marks." : ""))) return;
+  const d = await hkCall("homework_delete", { p_id: id });
+  if (d && d.ok) { HWK.ok = "Deleted."; await hkPull(); }
+  render();
+};
+
+window.hkOpenMark = function (id) {
+  HWK.mark = id; HWK.err = ""; HWK.markMsg = ""; HWK.marks = {};
+  hkSubs(id).forEach(s => { HWK.marks[s.pupil_id] = { score: s.score == null ? "" : String(s.score), note: s.feedback || "" }; });
+  render();
+};
+window.hkMarkSet = (pid, k, v) => { (HWK.marks[pid] = HWK.marks[pid] || { score: "", note: "" })[k] = v; };
+window.hkSaveMark = async function (pid) {
+  const m = HWK.marks[pid] || { score: "", note: "" };
+  let score = null;
+  if (String(m.score).trim() !== "") { score = parseInt(m.score, 10); if (!(score >= 0 && score <= 100)) { HWK.err = hkSay({ error: "bad_score" }); return render(); } }
+  const d = await hkCall("homework_mark", { p_hw: HWK.mark, p_pupil: pid, p_score: score, p_feedback: m.note || null });
+  if (d && d.ok) { HWK.markMsg = "Marked " + hkName(pid) + "."; const keep = HWK.marks; await hkPull(); HWK.marks = keep; }
+  render();
+};
+
+function hkForm() {
+  const f = HWK.form; if (!f) return "";
+  const classes = (HWK.mine || []).map(id => '<option value="' + esc(id) + '"' + (id === f.class_id ? " selected" : "") + ">" + esc(hkClass(id)) + "</option>").join("");
+  return '<div class="hk-veil" onclick="if(event.target===this)hkCancel()"><div class="hk-box hk-f" role="dialog" aria-modal="true" aria-labelledby="hkH"><h2 id="hkH">' + (f.id ? "Edit homework" : "Set new homework") + "</h2>" +
+    '<label for="hkC">Class</label><select id="hkC"' + (f.id ? " disabled" : "") + ' onchange="HWK.form.class_id=this.value">' + classes + "</select>" +
+    '<label for="hkT">Title</label><input id="hkT" maxlength="120" value="' + esc(f.title) + '" placeholder="Read page 5" oninput="HWK.form.title=this.value">' +
+    '<label for="hkD">What to do <span class="note">(optional)</span></label><textarea id="hkD" maxlength="500" placeholder="Read it twice, out loud, to somebody at home." oninput="HWK.form.details=this.value">' + esc(f.details) + "</textarea>" +
+    '<div class="two"><div><label for="hkM">Practice to link</label><select id="hkM" onchange="HWK.form.module=this.value">' +
+    HK_MODULES.map(m => '<option value="' + esc(m[0]) + '"' + (m[0] === f.module ? " selected" : "") + ">" + esc(m[1]) + "</option>").join("") + "</select></div>" +
+    '<div><label for="hkU">Due <span class="note">(optional)</span></label><input id="hkU" type="date" min="' + hkToday() + '" value="' + esc(f.due) + '" oninput="HWK.form.due=this.value"></div></div>' +
+    '<p class="note" style="margin:8px 0 0">With a practice linked, finishing it hands the work in by itself. With none, the pupil presses “I have done it”.</p>' +
+    (HWK.err ? '<p class="hk-err" role="alert">' + esc(HWK.err) + "</p>" : "") +
+    '<div class="row" style="margin-top:14px;gap:8px"><button class="btn primary" onclick="hkSave()"' + (HWK.busy ? " disabled" : "") + ">" + (f.id ? "Save" : "Set it") + '</button><button class="btn" onclick="hkCancel()">Cancel</button></div></div></div>';
+}
+
+function hkMarkPanel() {
+  const h = HWK.hw.find(x => x.id === HWK.mark); if (!h) return "";
+  const subs = hkSubs(h.id), who = hkPupilsOf(h.class_id);
+  const rows = who.map(pid => {
+    const s = subs.find(x => x.pupil_id === pid), m = HWK.marks[pid] || { score: "", note: "" };
+    if (!s) return '<tr class="none"><td>' + esc(hkName(pid)) + '</td><td colspan="3">Not handed in</td><td></td></tr>';
+    return "<tr><td><strong>" + esc(hkName(pid)) + "</strong></td><td>" + (s.marked_at ? '<span class="pill blue">Marked</span>' : '<span class="pill green">Handed in</span>') +
+      '</td><td><input class="sc" inputmode="numeric" aria-label="Score for ' + esc(hkName(pid)) + '" value="' + esc(m.score) + '" placeholder="0-100" oninput="hkMarkSet(\'' + esc(pid) + '\',\'score\',this.value)"></td>' +
+      '<td><input maxlength="300" aria-label="Note for ' + esc(hkName(pid)) + '" value="' + esc(m.note) + '" placeholder="A short note for ' + esc(hkName(pid)) + '" oninput="hkMarkSet(\'' + esc(pid) + '\',\'note\',this.value)"></td>' +
+      '<td><button class="btn' + (s.marked_at ? "" : " primary") + '" onclick="hkSaveMark(\'' + esc(pid) + '\')"' + (HWK.busy ? " disabled" : "") + ">" + (s.marked_at ? "Update" : "Mark") + "</button></td></tr>";
+  }).join("");
+  return '<div class="hk-veil" onclick="if(event.target===this)hkCancel()"><div class="hk-box" role="dialog" aria-modal="true" aria-labelledby="hkMH"><h2 id="hkMH">Mark: ' + esc(h.title) + "</h2>" +
+    '<p class="note" style="margin:0">' + esc(hkClass(h.class_id)) + " · due " + esc(hkDue(h.due_on)) + ". The score is filled in from the practice when there was one; change it if you like. The note is shown to the pupil and their parent.</p>" +
+    (HWK.err ? '<p class="hk-err" role="alert">' + esc(HWK.err) + "</p>" : "") + (HWK.markMsg ? '<p class="hk-ok" role="status">' + esc(HWK.markMsg) + "</p>" : "") +
+    (who.length ? '<div style="overflow:auto"><table class="hk-mk"><thead><tr><th>Pupil</th><th>Status</th><th>Score</th><th>Note</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>"
+                : '<p class="note" style="margin-top:12px">Nobody is in this class yet.</p>') +
+    '<div class="row" style="margin-top:14px"><button class="btn" onclick="hkCancel()">Close</button></div></div></div>';
+}
+
+function pageHomeworkStaff() {
+  if (!HWK.loaded) return "<h1>Homework</h1><p class=\"sub\">Loading…</p>" + (HWK.err ? '<p class="hk-err">' + esc(HWK.err) + "</p>" : "");
+  const mine = HWK.mine || [];
+  const list = HWK.hw.filter(h => mine.indexOf(h.class_id) >= 0 && (!HWK.filter || h.class_id === HWK.filter));
+  const filt = mine.length > 1 ? '<label class="note" for="hkF">Class</label><select id="hkF" onchange="HWK.filter=this.value;render()"><option value="">All my classes</option>' +
+    mine.map(id => '<option value="' + esc(id) + '"' + (id === HWK.filter ? " selected" : "") + ">" + esc(hkClass(id)) + "</option>").join("") + "</select>" : "";
+  const rows = list.map(h => {
+    const subs = hkSubs(h.id), n = hkPupilsOf(h.class_id).length, marked = subs.filter(s => s.marked_at).length, waiting = subs.length - marked;
+    return '<tr class="hk-row"><td><strong>' + esc(h.title) + "</strong>" + (h.module_id ? ' <span class="pill grey">' + esc(hkModName(h.module_id)) + "</span>" : "") +
+      (h.details ? '<div class="d">' + esc(h.details) + "</div>" : "") + "</td><td>" + esc(hkClass(h.class_id)) + '</td><td class="' + (hkLate(h.due_on) ? "note" : "") + '">' + esc(hkDue(h.due_on)) + "</td>" +
+      '<td class="num">' + subs.length + "/" + n + '<div class="bar" style="width:64px;margin-left:auto;margin-top:4px"><i style="width:' + (n ? Math.round(subs.length / n * 100) : 0) + '%"></i></div></td><td class="num">' + marked + "</td>" +
+      '<td><div class="hk-acts">' + (waiting ? '<button class="btn primary" onclick="hkOpenMark(\'' + esc(h.id) + '\')">Mark ' + waiting + "</button>"
+        : subs.length ? '<button class="btn" onclick="hkOpenMark(\'' + esc(h.id) + '\')">View</button>' : "") +
+      '<button class="btn" onclick="hkEdit(\'' + esc(h.id) + '\')">Edit</button><button class="btn" onclick="hkDelete(\'' + esc(h.id) + '\')">Delete</button></div></td></tr>';
+  }).join("");
+  return "<h1>Homework</h1><p class=\"sub\">" + (hkRole() === "teacher" ? "Your classes only" : "Every class") + "</p>" +
+    '<div class="hk-bar no-print"><button class="btn primary" onclick="hkNew()"' + (mine.length ? "" : " disabled") + ">Set new homework</button>" + filt +
+    '<button class="btn" onclick="window.print()">🖨 Print sheets</button></div>' +
+    (HWK.err && !HWK.form && !HWK.mark ? '<p class="hk-err" role="alert">' + esc(HWK.err) + "</p>" : "") + (HWK.ok ? '<p class="hk-ok" role="status">' + esc(HWK.ok) + "</p>" : "") +
+    (!mine.length ? '<div class="callout">You are not on a class yet, so there is nothing to set homework for.</div>'
+      : list.length ? '<div class="card"><table><thead><tr><th>Task</th><th>Class</th><th>Due</th><th class="num">Handed in</th><th class="num">Marked</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>"
+      : '<div class="callout">No homework yet. Press <strong>Set new homework</strong> to set the first piece.</div>') +
+    hkForm() + hkMarkPanel();
+}
+
+/* ============================================================
+   Pupil and parent
+   ============================================================ */
+
+window.hkDone = async function (id) {
+  const d = await hkCall("homework_hand_in", { p_hw: id, p_score: null });
+  if (d && d.ok) {
+    if (typeof toast === "function") toast("Handed in. Well done!");
+    await hkPull();
+    if (LLC.submissions && !LLC.submissions.some(s => s.homework_id === id)) LLC.submissions.push({ homework_id: id, score: null, submitted_at: new Date().toISOString(), marked_at: null });
+  } else if (d && d.error && typeof toast === "function") toast(hkSay(d));
+  render();
+};
+window.hkDo = function (id) {
+  const h = HWK.hw.find(x => x.id === id); if (!h) return;
+  if (typeof HOMEWORK === "object" && !HOMEWORK.some(x => x.id === id)) HOMEWORK.push({ id, title: h.title, what: hkModName(h.module_id), due: hkDue(h.due_on), late: hkLate(h.due_on), mod: h.module_id, opts: {} });
+  if (typeof hwStart === "function") hwStart(id);
+};
+
+function hkStatus(h, s) {
+  if (s && s.marked_at) return '<span class="pill blue">Marked</span>';
+  if (s) return '<span class="pill green">Handed in</span>';
+  return hkLate(h.due_on) ? '<span class="pill red">Late</span>' : '<span class="pill gold">Not handed in</span>';
+}
+
+function pageHomeworkMine() {
+  if (!HWK.loaded) return "<h1>Homework</h1><p class=\"sub\">Loading…</p>";
+  const parent = hkRole() === "parent", kids = HWK.pupils;
+  const table = (pid) => {
+    const cls = HWK.enrol.filter(e => e.pupil_id === pid).map(e => e.class_id);
+    const list = HWK.hw.filter(h => cls.indexOf(h.class_id) >= 0);
+    if (!list.length) return '<div class="callout">' + (parent ? "Nothing has been set for " + esc(hkName(pid)) + " yet." : "Nothing has been set for you yet.") + "</div>";
+    return '<div class="card"><table><thead><tr><th>Task</th><th>Due</th><th>Status</th><th class="num">Mark</th><th class="num no-print"></th></tr></thead><tbody>' +
+      list.map(h => {
+        const s = HWK.subs.find(x => x.homework_id === h.id && x.pupil_id === pid);
+        const act = parent || (s && s.marked_at) ? "" : h.module_id
+          ? '<button class="btn ' + (s ? "" : "primary") + '" onclick="hkDo(\'' + esc(h.id) + '\')">' + (s ? "Do it again" : "Do it") + "</button>"
+          : s ? "" : '<button class="btn primary" onclick="hkDone(\'' + esc(h.id) + '\')">I have done it</button>';
+        return '<tr class="hk-row"><td><strong>' + esc(h.title) + "</strong>" + (h.details ? '<div class="d">' + esc(h.details) + "</div>" : "") +
+          '<div class="note">' + (h.module_id ? esc(hkModName(h.module_id)) : "Set by your teacher") + "</div>" +
+          (s && s.feedback ? '<div class="hk-note">💬 ' + esc(s.feedback) + "</div>" : "") + "</td><td>" + esc(hkDue(h.due_on)) + "</td><td>" + hkStatus(h, s) + '</td><td class="num">' +
+          (s && s.score != null ? esc(s.score) + "%" : "—") + '</td><td class="num no-print">' + act + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
+  };
+  const todo = (pid) => { const cls = HWK.enrol.filter(e => e.pupil_id === pid).map(e => e.class_id); return HWK.hw.filter(h => cls.indexOf(h.class_id) >= 0 && !HWK.subs.some(x => x.homework_id === h.id && x.pupil_id === pid)).length; };
+  if (!parent) {
+    const me = LLC.profile.id;
+    return "<h1>My homework</h1><p class=\"sub\">" + todo(me) + " still to do</p>" + (HWK.err ? '<p class="hk-err" role="alert">' + esc(HWK.err) + "</p>" : "") + table(me) +
+      '<div class="callout" style="margin-top:16px">Finishing a linked activity hands the work in by itself. Otherwise press “I have done it”. When your teacher marks it, you will see the mark and their note here.</div>';
+  }
+  return "<h1>Homework</h1><p class=\"sub\">Your child's homework</p>" + (kids.length ? kids.map(k => (kids.length > 1 ? "<h2 class=\"section\">" + esc(k.full_name) + "</h2>" : "") + table(k.id)).join("") : '<div class="callout">No children found.</div>');
+}
+
+/* ---------------- a practice that was linked to homework hands in properly ---------------- */
+if (typeof llRecord === "function") {
+  const llRecordHwk = llRecord;
+  llRecord = function (moduleId, score, label, letters) {
+    const out = llRecordHwk.apply(this, arguments);
+    try {
+      if (hkLive() && LLC.profile.role === "student" && typeof play === "object" && play && play.hw) {
+        const hw = play.hw, sc = Math.max(0, Math.min(100, Math.round((out && out.score) || score || 0)));
+        LLC.sb.rpc("homework_hand_in", { p_hw: hw, p_score: sc }).then((r) => {
+          if (r && r.data && r.data.ok) hkPull().then(() => { if (typeof render === "function") render(); });
+        }, () => {});
+      }
+    } catch (e) {}
+    return out;
+  };
+}
+
+/* ---------------- wire in ---------------- */
+if (typeof PAGES === "object" && PAGES.homework) {
+  const pageHomeworkBase = PAGES.homework;
+  PAGES.homework = function () {
+    if (!hkLive()) return pageHomeworkBase.apply(this, arguments);
+    if (hkStaff()) return pageHomeworkStaff();
+    if (hkMine()) return pageHomeworkMine();
+    return pageHomeworkBase.apply(this, arguments);
+  };
+}
+if (hkLive() && !HWK.loaded) hkPull().then(() => render(), () => {});
+</script>
+<!-- HWK-BLOCK-END -->
 <!-- GUIDE-BLOCK-START --><!-- ============================================================
      GUIDE — a short tour for each kind of person
      ------------------------------------------------------------
@@ -36525,13 +36858,18 @@ const GD_HELP = {
               "There is no button for an excused absence yet."],
     },
     "Homework": {
-      what: "What has been set, and who has handed it in.",
-      how: ["Each row is a piece of homework: its class, its due date, how many have handed it in, and how many are marked.",
-            "A child hands one in by doing the practice it is linked to. That is recorded for them automatically, with their score."],
-      tips: ["Homework appears here once it has been added to the school's records."],
-      watch: ["Setting homework and marking it from this screen is not built yet. The Assign to whole class and Mark buttons are placeholders and do nothing.",
-              "Until then, tell the class in person."],
-      see: "A pupil or parent sees the homework set for them, and whether it has been handed in.",
+      what: "Set homework for your classes, see who has handed it in, and mark it.",
+      how: ["Press Set new homework. Choose the class, give it a title, say what to do, and (if you like) link a practice and a due date. Press Set it.",
+            "Pupils in that class see it at once on their My homework page.",
+            "Each row shows how many have handed it in. When some are waiting, press Mark.",
+            "In the marking panel, give each pupil a score (it starts as their practice score) and a short note, then press Mark. They and their parent can read the note."],
+      tips: ["Link a practice (Tracing, Letter maze, Reading and so on) and finishing it hands the work in by itself. Link none, and the pupil presses I have done it.",
+             "You can Edit a piece or Delete it. You can update a mark later with Update.",
+             "A due date can be left empty."],
+      watch: ["Deleting a piece also removes everyone's hand-ins and marks. The screen tells you how many before it asks.",
+              "Once a piece is marked, the pupil can no longer change it.",
+              "You can set homework and mark it only for classes you teach."],
+      see: "A pupil or parent sees the homework, whether it is handed in, the mark and your note.",
     },
     "Quiz": {
       what: "Run a live quiz for the class, or make one of your own.",
@@ -36624,6 +36962,12 @@ const GD_HELP = {
       watch: ["A collection cannot be undone from here.",
               "This has not yet been tested with a GoCardless account. It needs your account connected first (see SETUP)."],
     },
+    "Homework": {
+      what: "Homework for every class: set it, see who has handed it in, and mark it.",
+      how: ["Press Set new homework and choose any class in the school.", "Press Mark on a row to give each pupil a score and a short note.", "Use the class menu to look at one class at a time."],
+      tips: ["Teachers can do the same for their own classes."],
+      watch: ["Deleting a piece removes everyone's hand-ins and marks too."],
+    },
     "Pupils' books": {
       what: "Choose which books each pupil has on their shelf, for any class.",
       how: ["Choose the class, then tick a box to give a pupil a book or untick to take it back.",
@@ -36640,6 +36984,12 @@ const GD_HELP = {
       tips: ["Your teacher gives you the books for your level. When you are ready for the next one, you will get it."],
       watch: [],
     },
+    "My homework": {
+      what: "The homework your teacher has set, and how you did.",
+      how: ["Tap Do it to start the activity. Finishing it hands your work in by itself.", "If there is no activity, do what your teacher said, then tap I have done it.", "When your teacher marks it, you will see your mark and a note from them."],
+      tips: ["You can do an activity again to try for a better mark, until your teacher has marked it."],
+      watch: [],
+    },
     "Class sessions": {
       what: "Your online lessons.",
       how: ["Find today's lesson. When your teacher has added a link there is a Join button.", "The name next to the button shows where it goes."],
@@ -36653,6 +37003,12 @@ const GD_HELP = {
       how: ["Find the lesson. When the teacher has added a link there is a Join button, with the address it goes to shown beside it."],
       tips: ["You see only your own child's class."],
       watch: [],
+    },
+    "Homework": {
+      what: "Your child's homework, and the marks and notes from their teacher.",
+      how: ["Each row is a piece of homework, whether it is handed in, and the mark.", "When a teacher has marked it, their note appears under the title."],
+      tips: [],
+      watch: ["Only your child can hand work in. You can see it but not change it."],
     },
     "Direct Debit": {
       what: "Paying fees by Direct Debit.",
@@ -36713,7 +37069,7 @@ const GD_TOURS = {
         show: "Class sessions", point: { text: "+ New session" }, try: { type: "choice", q: "Which meeting links can you attach?", options: ["Only platforms your school approved", "Any link at all", "None, only admins can"], right: 0,
           why: "An admin keeps the approved list. A link to anywhere else is refused, so a child is never sent somewhere unexpected." } },
       { id: "register", em: "✅", title: "Take the register", text: "Choose the class and the day, then tap P, L or A beside each child. Every tap is saved straight away.", show: "Attendance", point: { text: "All present" } },
-      { id: "homework", em: "📒", title: "Homework", text: "Homework shows what has been set and who has handed it in. Setting and marking homework from here is not built yet: the two buttons you can see are placeholders.", show: "Homework" },
+      { id: "homework", em: "📒", title: "Set and mark homework", text: "Press Set new homework, choose the class and what to do, and your pupils see it at once. When they hand it in, press Mark to give a score and a short note they can read.", show: "Homework", point: { text: "Set new homework" } },
       { id: "quiz", em: "🎮", title: "Run a live quiz", text: "Pick a set, share the code, and watch the class answer at once. The four deen quiz sets need a teacher to read them through before a class uses them.", show: "Quiz", point: { text: "Make a quiz of your own" } },
       { id: "hours", em: "⏱", title: "Your hours", text: "My hours shows your teaching hours for each week. The office builds them from the timetable and fixes any cover. Pay is not shown here, and nobody else can see your hours.",
         show: "My hours" },

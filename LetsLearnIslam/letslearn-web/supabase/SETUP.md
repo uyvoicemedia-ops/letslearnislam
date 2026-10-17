@@ -24,8 +24,9 @@ before moving on. Order matters: 0001 turns row-level security on, so between
 | `migrations/0012_teacher_hours.sql` | teacher hours (from the timetable), frozen rates, admin-only pay |
 | `migrations/0013_reports.sql` | report recipients and an append-only log of what was downloaded or printed |
 | `migrations/0014_pupil_books.sql` | which books each pupil has been given |
+| `migrations/0015_homework.sql` | setting, handing in and marking homework, through school-checked functions |
 
-The app needs **all fourteen**, 0001 to 0014. Skipping one does not fail at sign-up;
+The app needs **all fifteen**, 0001 to 0015. Skipping one does not fail at sign-up;
 it fails later, on whichever screen uses the missing piece.
 
 **Before running 0004, change the three email addresses in it** to ones you can
@@ -161,12 +162,12 @@ select set_pupil_pin('<pupil uuid>', '7391');
 
 ## Checking it yourself
 
-`./tools/testdb.sh` runs all fourteen migrations against a throwaway Postgres in
+`./tools/testdb.sh` runs all fifteen migrations against a throwaway Postgres in
 Docker and then tries to break them — a child reading another child's garden, a
 teacher opening a class they do not teach, a player reading the answer key, a
 parent giving points to somebody else's child, a home parent enumerating a
 school, a child session trying to add a child, a parent approving their own
-request for a class. 359 assertions, and it needs to stay green.
+request for a class. 413 assertions, and it needs to stay green.
 
 It also checks that the Supabase rules hold on plain Postgres: pgcrypto sits in an
 `extensions` schema there, as on a real project.
@@ -237,6 +238,23 @@ says **TEST ACCOUNT**. The coins are the device's, not the database's: nothing i
 to `points`, so the record of real children stays real. Calling it again returns the
 same student. Do not put a real child in the Test Class, and change the PIN if the
 project is ever shared (`select set_pupil_pin('<id>', '7391');`).
+
+## Homework
+
+On the **Homework** screen a teacher presses **Set new homework** (class, title, what to do,
+an optional practice to link, an optional due date), and pupils in that class see it at once on
+**My homework**. A pupil hands a piece in by finishing the linked practice (it hands in by itself,
+and keeps the better score), or by pressing **I have done it** when there is no practice. A teacher
+presses **Mark** on a row, gives each pupil a score (it starts as their practice score) and a short
+note, and the pupil and their parent can read both. Once marked, a pupil can no longer change it.
+Deleting a piece also removes everyone's hand-ins and marks; the screen says how many first.
+
+All of it goes through functions that check the class (`homework_set`, `homework_update`,
+`homework_delete`, `homework_hand_in`, `homework_mark`). 0015 also **replaces three old rules**:
+any teacher could update any submission, and an admin at one school could read and change another's
+homework. A child's re-do could not raise their score before; it can now. Until 0015 is applied to
+your project, the screens still work for pupils (the old hand-in path is unchanged) but staff cannot
+set or mark homework.
 
 ## Uploading a quiz, and giving pupils their books
 

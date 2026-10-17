@@ -39,8 +39,8 @@ Working and verified locally:
 - the live Kahoot-style quiz — room code, LAN relay, server-side scoring, podium
 - the solo practice quiz, now on the same coloured tiles as the live one
 - a sign-in gate with a child PIN flow
-- Supabase schema: 14 migrations, 359 RLS assertions green against Postgres in Docker
-  (0009 class sessions, 0010 timetable/classes, 0011 test student, 0012 teacher hours, 0013 reports and 0014 pupil books are written and tested but NOT yet applied to the real project)
+- Supabase schema: 15 migrations, 413 RLS assertions green against Postgres in Docker
+  (0009 class sessions, 0010 timetable/classes, 0011 test student, 0012 teacher hours, 0013 reports, 0014 pupil books and 0015 homework are written and tested but NOT yet applied to the real project)
 - every records screen reads the school when connected, and says so when it doesn't
 - fees by Direct Debit: schema, policies, edge function, parent and admin screens
 
@@ -69,8 +69,8 @@ Facebook sign-in are untested by definition, because the handshake needs a live 
 
 Guidance: every screen with help has a ? Help button, and the tours open the screen and ring the
 control by themselves. The wording is in `GD_HELP` / `GD_TOURS` (block `GUIDE`) and is written from
-what each screen really does. Homework setting and marking, and an excused-absence button, are NOT
-built; the help says so. Keep it true when those are built.
+what each screen really does. An excused-absence button is NOT built and the help says so.
+Homework setting and marking now exist (HWK block); keep the help true when screens change.
 
 Dua audio: play buttons are built and tested but there are **no recordings yet**. `python3
 tools/llaudio.py list` is the recording checklist (30 files); drop them in `letslearn-web/audio/`.

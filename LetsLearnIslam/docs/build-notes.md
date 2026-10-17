@@ -17,9 +17,9 @@ the garden; this file is the short operational version.
 - `tools/llinsert.py <block> TAG` — backs up, strips a prior copy by marker, inserts before
   `</body>`. Idempotent; refuses a block with unbalanced `<script>` tags.
 - `tools/llcheck.py` — `node --check` per block, duplicate lexical globals, assign-to-const.
-- `tools/testdb.sh` — applies the fourteen migrations to postgres:16 in Docker, then 359 RLS
+- `tools/testdb.sh` — applies the fifteen migrations to postgres:16 in Docker, then 413 RLS
   assertions (91 in `0100`, 93 in `0110_sessions`, 51 in `0120_timetable`, 21 in
-  `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`, 33 in `0160_books`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
+  `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`, 33 in `0160_books`, 54 in `0170_homework`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
   `supabase/test/0000_supabase_stub.sql` imitates Supabase, including pgcrypto living in an
   `extensions` schema. **When the test database and the real one differ, the test is wrong:
   fix the stub, then prove it fails without the fix.**
@@ -56,6 +56,15 @@ the garden; this file is the short operational version.
 - **`profiles` has COLUMN-level select grants (0001, 0005) so the PIN hash can never be read.**
   A new column on `profiles` is invisible to the app until you `grant select (col)` — the symptom
   is "permission denied for table profiles", not a missing column.
+- **Homework was a screen of placeholders, and the old rules were broader than they looked.** The
+  `Set new homework` / `Mark` buttons had no handler; `staff mark work` let ANY teacher update ANY
+  submission; the admin branch of `ll_teaches` let an admin at one school read and change another's
+  homework; a child's re-do upsert failed silently (a child has no UPDATE right). 0015 replaces all
+  three policies and routes every write through `homework_*` functions. The LIVE block's old hand-in
+  upsert still fires first and is harmless; HWK's `homework_hand_in` does the real work.
+- **Never store test state on `window.<name>` of something the app already defines.** A test that set
+  `window.me = 'p1'` overwrote the app's own `me()` and failed three assertions later with
+  `me is not a function`.
 - **An upload feeds the editor, it does not save.** QZUP builds `QA.draft` and opens `qaPaint()`; the
   teacher reads it and Saves, so `qaSave` still validates and the school sync still wraps it. A
   second way of writing to the quiz store would have meant a second set of rules to keep in step.
@@ -78,7 +87,7 @@ the garden; this file is the short operational version.
   `NAV`. The guide special-cases it. If another block does the same, add it there too.
 - **Help text is part of the product, and it must be true.** `GD_HELP` was written from what each
   screen really does, including what it does not. Reading the code first found that the teacher
-  Homework screen's "Assign to whole class" and "Mark" buttons are placeholders (no handler), that
+  Homework screen's "Assign to whole class" and "Mark" buttons were placeholders (no handler; now built, see HWK), that
   attendance's Clear only resets the buttons (it does not unsave), and that there is no excused
   button. An earlier tour step claimed teachers could "set homework" and that marked work reached
   the parent; it was false and has been corrected. When a screen changes, change its `GD_HELP`.
@@ -159,6 +168,7 @@ the garden; this file is the short operational version.
 
 | Block | What it does |
 |---|---|
+| `HWK` | set / hand in / mark homework for staff, pupils and parents (0015) |
 | `BOOKSEL` | the Pupils' books grid for staff; a pupil's shelf shows only the books they were given (0014) |
 | `QZUP` | upload a quiz from a CSV or a paste; hands it to the normal editor and `qaSave` |
 | `GUIDE` | a tour per role that opens each screen and rings the control by itself; "More about this"; a ? Help drawer on every screen with help (`GD_HELP`, richest for teachers); a Guide page; progress per device |
