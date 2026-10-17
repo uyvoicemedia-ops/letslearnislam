@@ -71,6 +71,10 @@ the garden; this file is the short operational version.
   likes/joins re-paying on every toggle, the unlimited-coins chip on every role). It cannot stop developer
   tools. Real fix = server-minted coins (ledger with a unique `(pupil, source, source_ref)`); design in the
   audit: G1 forgery-proof ledger, G2 server-held wallet and spending, G3 server inventory (not recommended).
+- **A safety net must say what it did NOT check.** `check-all.sh` prints SKIPPED in capitals and counts
+  skipped steps, and ends "that is not the same as everything being checked", because a green line after a
+  silent skip is how a hole ships. `livecheck.py` was validated against a stand-in PostgREST in three modes
+  (clean, leaky, an older project missing migrations) because the real project cannot be attacked from here.
 - **Test helpers must pass their arguments.** `const E = (f) => p.evaluate(f)` silently dropped the second
   argument, so `sleep(8)` became `Date.now() - undefined` = NaN and passed in isolation but not in the suite.
 - **`ll_teaches()` and "is this an admin?" are not school checks.** Reproduced: an admin at another school,
@@ -197,6 +201,12 @@ the garden; this file is the short operational version.
 - **Media queries measure the viewport, not the container.** An
   `<iframe src="/index.html" style="width:390px">` is the only honest way to test the phone
   layout — drive it with `frame.contentWindow.eval("…")`.
+
+## Before you commit
+
+`./tools/check-all.sh` (add `--quick` without Docker) runs llcheck, the recording-name check and every database
+test, and with `LL_URL` / `LL_ANON_KEY` set also checks the live project read-only. It stops at the first failure
+and says loudly what it skipped. `tools/livecheck.py` needs only the public key and refuses a service_role key.
 
 ## The blocks that matter, newest first
 

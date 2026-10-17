@@ -15,6 +15,10 @@ Git root is the **parent** directory (`repos/Claude-Repo`), not this folder. No 
 4. `docs/payments.md` — fees and Direct Debit. Read before touching anything money-shaped.
 5. `docs/mosque-research.md` — only if you are touching `MOSQUE_LIST` or `MQ_REAL`.
 
+## Checking your work
+
+`./tools/check-all.sh` is the one command (see `docs/build-notes.md`). Run it before every commit.
+
 ## The shape of the thing
 
 `letslearn-web/index.html` is one file, ~33,200 lines, 123 `<script>` blocks, no build step.

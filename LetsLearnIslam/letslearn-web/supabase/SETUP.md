@@ -241,6 +241,30 @@ to `points`, so the record of real children stays real. Calling it again returns
 same student. Do not put a real child in the Test Class, and change the PIN if the
 project is ever shared (`select set_pupil_pin('<id>', '7391');`).
 
+## Checking everything: one command
+
+```
+./tools/check-all.sh           # llcheck, the dua recording names, every migration and RLS test (Docker), and the live check
+./tools/check-all.sh --quick   # same, skipping the database tests (no Docker needed)
+```
+
+It stops at the first failure and tells you what to do. A step it skips is announced in capitals and counted,
+so "skipped" is never mistaken for "green". Exit codes: 10 llcheck, 20 database tests, 30 Docker not running,
+40 live check, 50 recording names.
+
+**The live check** (`tools/livecheck.py`) looks at your real project using ONLY the public anon key. It writes
+nothing, signs nobody in, prints no key or response, and refuses a service_role or secret key. It checks that with
+the public key every table shows nothing, the PIN columns cannot be selected and the security functions refuse an
+anonymous caller, and it tells you **which migrations are applied** (a missing table or function is reported as
+"NOT applied"). To use it, put the two values in your own shell for that run only, never in a file in the repo:
+
+```
+LL_URL=https://<your-ref>.supabase.co LL_ANON_KEY=<the legacy anon key> ./tools/check-all.sh
+```
+
+It cannot see permission-only migrations (0016, 0017) with the public key: confirm those with the query in the
+"Apply 0016" steps. A later version, with a test child and test staff signed in, can attack as each role.
+
 ## Forgotten passwords
 
 Adults (parents, teachers, admins) can reset their own password from the app: **Continue with an email,
