@@ -1,0 +1,164 @@
+<!-- ============================================================
+     ECONFIX — stop the cheapest ways of farming coins
+     ------------------------------------------------------------
+     An audit of the garden's coin economy found that the SMALL, honest
+     earners were out-earned many times over by a few uncapped ones:
+
+       * dhikr paid 10 coins every 33 taps with no limit (about 1,000 an
+         hour), against roughly 40 a day for ten minutes of practice;
+       * un-ticking a prayer gave back 6 coins but not the 20-coin bonus,
+         so tick / un-tick / tick paid the bonus again, 20 per two taps;
+       * "Bring them across" paid 3 coins per practice star AGAIN, on stars
+         that had already paid 4 each the moment the activity finished;
+       * sleeping paid up to 80 coins with no minimum and no limit;
+       * a club like paid the author again every time it was toggled, and
+         joining a group paid again on every rejoin;
+       * the unlimited-coins test chip is mounted for every role, so any
+         child could switch it on.
+
+     This is a CLIENT-SIDE patch for the lazy cases, which are the realistic
+     ones for a seven-year-old. It does not stop a determined child with the
+     browser's developer tools: the balance still lives on the device. The
+     real answer (coins minted and spent on the server) is a separate piece
+     of work, and everything here is written so it can be removed when that
+     arrives.
+
+     Every number is in EC, below. Nothing here touches test mode (it is
+     left alone on purpose) or what real children have already earned.
+     ============================================================ -->
+<script>
+"use strict";
+
+const EC = {
+  dhikrSets: 3,          // dhikr sets (33 taps) that pay in a day; later ones are still dhikr, just unpaid
+  dhikrCoins: 10,        // what the original pays per set: used only to take it back
+  salahEach: 6,          // per prayer, once a day
+  salahBonus: 20,        // all five, once a day
+  sleepMinHours: 6,      // a nap is not a night
+  sleepMaxCoins: 40,     // per night (was 80)
+  sleepGapHours: 20,     // at most one paid sleep in this many hours
+};
+
+/* "today" for these limits is London's calendar day, not the device's UTC date */
+function ecDay() {
+  try { return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" }); }
+  catch (e) { return new Date().toISOString().slice(0, 10); }
+}
+const ecTest = () => { try { return typeof tmOn === "function" && tmOn(); } catch (e) { return false; } };
+
+/* ---------------- dhikr: the first few sets a day pay ---------------- */
+if (typeof gardenDhikrTap === "function") {
+  const gardenDhikrTapEc = gardenDhikrTap;
+  gardenDhikrTap = function () {
+    const g = gardenState(), before = g.deeds;
+    const out = gardenDhikrTapEc.apply(this, arguments);
+    if (!ecTest() && g.deeds - before === EC.dhikrCoins) {            // this tap finished a set that was just paid
+      const d = ecDay();
+      if (!g.ecDhikr || g.ecDhikr.day !== d) g.ecDhikr = { day: d, n: 0 };
+      g.ecDhikr.n++;
+      if (g.ecDhikr.n > EC.dhikrSets) {
+        g.deeds -= EC.dhikrCoins;                                      // take back what the original just paid
+        if (typeof toast === "function") toast("Thirty-three. Well done! That is today's dhikr coins, but keep going for the reward of the dhikr itself.");
+      }
+      if (typeof llSave === "function") llSave();
+    }
+    return out;
+  };
+}
+
+/* ---------------- salah: each prayer and the bonus pay once a day ---------------- */
+salahTick = function (id) {
+  const g = gState(), list = salahToday(), d = ecDay();
+  if (!g.ecSalah || g.ecSalah.day !== d) g.ecSalah = { day: d, ids: {}, bonus: false };
+  const paid = g.ecSalah, at = list.indexOf(id);
+  if (at > -1) {
+    // an un-tick takes back that prayer's coins if they were paid; the bonus is never given back or paid twice
+    list.splice(at, 1);
+    if (paid.ids[id]) { g.deeds = Math.max(0, g.deeds - EC.salahEach); delete paid.ids[id]; }
+    Snd.back();
+  } else {
+    list.push(id);
+    if (!paid.ids[id]) { g.deeds += EC.salahEach; paid.ids[id] = 1; }
+    Snd.right();
+    if (list.length === 5 && !paid.bonus) {
+      g.deeds += EC.salahBonus; paid.bonus = true;
+      Snd.cheer(); confetti(26);
+      toast("All five today — " + EC.salahBonus + " extra coins");
+    }
+  }
+  llSave();
+  render();
+  coinPop();
+};
+
+/* ---------------- sleep: a night pays once, and not for a nap ---------------- */
+roomWake = function () {
+  const g = gState(), n = gNeeds();
+  if (!n.asleep) return;
+  duaAsk("wake", () => {
+    const hours = Math.max(0, (Date.now() - (n.sleptAt || Date.now())) / 3600e3);
+    n.asleep = false; n.sleptAt = null;
+    const gap = (Date.now() - (g.ecSleepAt || 0)) / 3600e3;
+    let coins = 0;
+    if (!ecTest() && hours >= EC.sleepMinHours && gap >= EC.sleepGapHours) {
+      coins = Math.min(EC.sleepMaxCoins, Math.round(hours * 8));
+      if (coins > 0) { g.deeds += coins; g.ecSleepAt = Date.now(); }
+    } else if (ecTest()) {
+      coins = Math.min(80, Math.round(hours * 8)); if (coins > 0) g.deeds += coins;
+    }
+    llSave(); Snd.cheer(); confetti(18);
+    toast(hours < 0.1 ? "Awake again"
+      : "Slept " + hoursWord(hours) + (coins ? " — +" + coins + " coins" : ""));
+    render();
+  });
+};
+
+/* ---------------- "Bring them across": practice stars have already paid ---------------- */
+if (typeof earnSources === "function") {
+  const earnSourcesEc = earnSources;
+  earnSources = function () {
+    return earnSourcesEc.apply(this, arguments).map(r =>
+      r.id === "stars" ? Object.assign({}, r, { owed: 0, note: "coins come as soon as you finish an activity" }) : r);
+  };
+}
+
+/* ---------------- the club: a like or a join pays once ---------------- */
+clubLike = function (id) {
+  const p = CLUB.posts.find(x => x.id === id), m = me();
+  if (m.role === "parent") { toast("Parents can read, but not like"); return; }
+  p.likes = p.likes || [];
+  CLUB.paidLikes = CLUB.paidLikes || {};
+  const at = p.likes.indexOf(m.id), key = id + ":" + m.id;
+  if (at > -1) p.likes.splice(at, 1);
+  else {
+    p.likes.push(m.id);
+    // pays the author the first time somebody else likes it, and never for liking your own
+    if (p.by.role === "student" && p.by.id !== m.id && !CLUB.paidLikes[key]) { CLUB.paidLikes[key] = 1; clubAward(p.by.id, 1); }
+  }
+  clubSave(); Snd.pop(); render();
+};
+
+clubJoin = function (id) {
+  const g = clubGroup(id), m = me();
+  CLUB.paidJoins = CLUB.paidJoins || {};
+  const at = g.members.indexOf(m.id), key = id + ":" + m.id;
+  if (at > -1) g.members.splice(at, 1);
+  else { g.members.push(m.id); if (!CLUB.paidJoins[key]) { CLUB.paidJoins[key] = 1; clubAward(m.id, 2); } }
+  clubSave(); Snd.pop(); render();
+};
+
+/* ---------------- the unlimited-coins chip is for people testing ---------------- */
+if (typeof tmMount === "function") {
+  const tmMountEc = tmMount;
+  tmMount = function () {
+    const out = tmMountEc.apply(this, arguments);
+    try {
+      const live = typeof llcLive === "function" && llcLive();
+      const realChild = live && LLC.profile && LLC.profile.role === "student" && !(typeof TS === "object" && TS.isTest);
+      const chip = document.getElementById("tmChip");
+      if (realChild && chip) chip.remove();                       // a real child connected to a school never sees it
+    } catch (e) {}
+    return out;
+  };
+}
+</script>

@@ -64,6 +64,15 @@ the garden; this file is the short operational version.
 - **Reset the admin password without email (owner only, SQL Editor):**
   `update auth.users set encrypted_password = crypt('NEW-LONG-PASSWORD', gen_salt('bf')) where email = '…';`
   then clear the editor. `crypt` resolves in the SQL Editor because pgcrypto is in `extensions` (see 0008).
+- **The coin economy is client-side, and that is the real problem.** `g.deeds` is saved on the device and
+  pushed inside the garden blob that loads back over the balance, so a child can edit it. ECONFIX only closes
+  the cheap exploits found by the audit (dhikr uncapped ~1,000/hour, salah tick/un-tick +20 per two taps,
+  "Bring them across" paying 3/star on stars that already paid 4/star, sleep up to 80 for any nap, club
+  likes/joins re-paying on every toggle, the unlimited-coins chip on every role). It cannot stop developer
+  tools. Real fix = server-minted coins (ledger with a unique `(pupil, source, source_ref)`); design in the
+  audit: G1 forgery-proof ledger, G2 server-held wallet and spending, G3 server inventory (not recommended).
+- **Test helpers must pass their arguments.** `const E = (f) => p.evaluate(f)` silently dropped the second
+  argument, so `sleep(8)` became `Date.now() - undefined` = NaN and passed in isolation but not in the suite.
 - **`ll_teaches()` and "is this an admin?" are not school checks.** Reproduced: an admin at another school,
   with only a class code (which `class_roster()` gives to anyone), INSERTed a `guardians` row linking
   themselves to our child and could then read the child's profile, practice, attendance, garden and
@@ -197,6 +206,7 @@ the garden; this file is the short operational version.
 | `HWK` | set / hand in / mark homework for staff, pupils and parents (0015) |
 | `BOOKSEL` | the Pupils' books grid for staff; a pupil's shelf shows only the books they were given (0014) |
 | `QZUP` | upload a quiz from a CSV or a paste; hands it to the normal editor and `qaSave` |
+| `ECONFIX` | client-side patch for the cheapest coin exploits (dhikr cap, salah once a day, no practice double-pay, sleep cap, club once, no test chip for real children); all numbers in `EC` |
 | `GUIDE` | a tour per role that opens each screen and rings the control by itself; "More about this"; a ? Help drawer on every screen with help (`GD_HELP`, richest for teachers); a Guide page; progress per device |
 | `OFFICE` | Teacher hours and Reports & email on real data (0012, 0013) |
 | `DUAAUDIO` | play button on every Arabic dua/step/dhikr/prayer name that has a recording; the eating-duas offer in the kitchen |
