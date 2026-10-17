@@ -49,5 +49,11 @@ language sql stable as $$
   select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
 $$;
 
+-- Supabase keeps one row per signed-in session here. The PIN reset deletes a child's.
+create table auth.sessions (
+  id      uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade
+);
+
 grant usage on schema auth to anon, authenticated, service_role;
 grant select on auth.users to anon, authenticated, service_role;
