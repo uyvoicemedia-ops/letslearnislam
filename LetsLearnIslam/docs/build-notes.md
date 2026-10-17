@@ -17,9 +17,9 @@ the garden; this file is the short operational version.
 - `tools/llinsert.py <block> TAG` — backs up, strips a prior copy by marker, inserts before
   `</body>`. Idempotent; refuses a block with unbalanced `<script>` tags.
 - `tools/llcheck.py` — `node --check` per block, duplicate lexical globals, assign-to-const.
-- `tools/testdb.sh` — applies the sixteen migrations to postgres:16 in Docker, then 445 RLS
+- `tools/testdb.sh` — applies the seventeen migrations to postgres:16 in Docker, then 475 RLS
   assertions (91 in `0100`, 93 in `0110_sessions`, 51 in `0120_timetable`, 21 in
-  `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`, 33 in `0160_books`, 54 in `0170_homework`, 32 in `0180_profiles_lockdown`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
+  `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`, 33 in `0160_books`, 54 in `0170_homework`, 32 in `0180_profiles_lockdown`, 30 in `0190_cross_school`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
   `supabase/test/0000_supabase_stub.sql` imitates Supabase, including pgcrypto living in an
   `extensions` schema. **When the test database and the real one differ, the test is wrong:
   fix the stub, then prove it fails without the fix.**
@@ -64,6 +64,14 @@ the garden; this file is the short operational version.
 - **Reset the admin password without email (owner only, SQL Editor):**
   `update auth.users set encrypted_password = crypt('NEW-LONG-PASSWORD', gen_salt('bf')) where email = '…';`
   then clear the editor. `crypt` resolves in the SQL Editor because pgcrypto is in `extensions` (see 0008).
+- **`ll_teaches()` and "is this an admin?" are not school checks.** Reproduced: an admin at another school,
+  with only a class code (which `class_roster()` gives to anyone), INSERTed a `guardians` row linking
+  themselves to our child and could then read the child's profile, practice, attendance, garden and
+  points. 0017 removes the direct-write rules on `guardians`, `class_teachers` and `enrolments` (the app
+  only ever writes them through definer functions), scopes the register to "you run this class AND the
+  pupil is in it", and moves `class_request_decide` / `ll_offered_to_me` / the request-reading rule to
+  `ll_manages_class` (school-scoped). **Any new policy that says `ll_role() = 'admin'` or `ll_teaches(...)`
+  with no school test is the same bug.**
 - **RLS limits ROWS, never COLUMNS, and Supabase grants signed-in users every privilege on a new table.**
   `profiles` had "edit your own name and avatar" (own row only) and "staff edit people", but nobody
   had revoked table-level UPDATE/INSERT, so a child could `update profiles set role = 'admin'` on
