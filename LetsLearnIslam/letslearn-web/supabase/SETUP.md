@@ -25,10 +25,11 @@ before moving on. Order matters: 0001 turns row-level security on, so between
 | `migrations/0013_reports.sql` | report recipients and an append-only log of what was downloaded or printed |
 | `migrations/0014_pupil_books.sql` | which books each pupil has been given |
 | `migrations/0015_homework.sql` | setting, handing in and marking homework, through school-checked functions |
+| `migrations/0018_pin_reset.sql` | forgot-my-PIN: a child asks, a teacher/parent/admin issues a temporary number (shown once, 7 days), the child chooses their own; easy PINs (1234, 0000…) refused; audit log |
 | `migrations/0017_cross_school.sql` | **security fix, apply with 0016:** one school can no longer reach into another (families, class teachers, enrolments, registers, class requests) |
 | `migrations/0016_profiles_lockdown.sql` | **security fix, apply first:** nobody can change their own role or PIN hash, or create a profile, from the app |
 
-The app needs **all seventeen**, 0001 to 0017. Skipping one does not fail at sign-up;
+The app needs **all eighteen**, 0001 to 0018. Skipping one does not fail at sign-up;
 it fails later, on whichever screen uses the missing piece.
 
 **Before running 0004, change the three email addresses in it** to ones you can
@@ -164,12 +165,12 @@ select set_pupil_pin('<pupil uuid>', '7391');
 
 ## Checking it yourself
 
-`./tools/testdb.sh` runs all seventeen migrations against a throwaway Postgres in
+`./tools/testdb.sh` runs all eighteen migrations against a throwaway Postgres in
 Docker and then tries to break them — a child reading another child's garden, a
 teacher opening a class they do not teach, a player reading the answer key, a
 parent giving points to somebody else's child, a home parent enumerating a
 school, a child session trying to add a child, a parent approving their own
-request for a class. 475 assertions, and it needs to stay green.
+request for a class. 601 assertions, and it needs to stay green.
 
 It also checks that the Supabase rules hold on plain Postgres: pgcrypto sits in an
 `extensions` schema there, as on a real project.

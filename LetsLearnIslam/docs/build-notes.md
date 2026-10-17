@@ -17,7 +17,7 @@ the garden; this file is the short operational version.
 - `tools/llinsert.py <block> TAG` — backs up, strips a prior copy by marker, inserts before
   `</body>`. Idempotent; refuses a block with unbalanced `<script>` tags.
 - `tools/llcheck.py` — `node --check` per block, duplicate lexical globals, assign-to-const.
-- `tools/testdb.sh` — applies the seventeen migrations to postgres:16 in Docker, then 475 RLS
+- `tools/testdb.sh` — applies the eighteen migrations to postgres:16 in Docker, then 601 RLS
   assertions (91 in `0100`, 93 in `0110_sessions`, 51 in `0120_timetable`, 21 in
   `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`, 33 in `0160_books`, 54 in `0170_homework`, 32 in `0180_profiles_lockdown`, 30 in `0190_cross_school`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
   `supabase/test/0000_supabase_stub.sql` imitates Supabase, including pgcrypto living in an
@@ -299,3 +299,10 @@ the legacy `anon` key). `supabase/SETUP.md` is updated.
 **Still never run against GoCardless, not even sandbox,** and everything in the client that
 touches the school beyond sign-in is still only proved against fixtures. Google and Facebook
 sign-in are untested by definition.
+
+## Forgot my PIN (0018 + PINRESET block)
+- A child cannot reset their own number: they press "I forgot my number", which only tells a grown-up. The request call always answers ok, so it cannot be used to discover who exists.
+- Adults (teacher of the child's class, linked parent, admin of the child's school) issue a temporary 4-digit number, returned once and never stored in clear. Signing in with it forces the child to choose their own (`pin_choose_new`).
+- Easy numbers are refused in the database (`ll_pin_trivial`) and mirrored in the browser (`pnTrivial`). Keep the two lists identical.
+- Existing seeded PINs such as 1234 are not changed automatically; flagging them is a manual step to be run by hand after review.
+- Browser check: 52 stubbed-database assertions passed (child flow, adult page, temp number shown once and wiped, admin log, parent view).

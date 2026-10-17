@@ -244,6 +244,12 @@ const GD_HELP = {
       watch: ["Pay is not shown here, and no other teacher can see your hours.",
               "You cannot change your hours. If one is wrong, tell the office."],
     },
+    "Secret numbers": {
+      what: "Help a child who has forgotten their secret number.",
+      how: ["Children who press I forgot my number appear at the top, with their class.", "Press New number, then Make a temporary one. A four-digit number is shown once. Tell the child; they will be asked to choose their own the next time they sign in.", "Or choose Type one myself and set it for them."],
+      tips: ["Tell the child the number quietly, not in front of the class. It stops working after seven days."],
+      watch: ["You can only help pupils in your own classes.", "Numbers that are too easy to guess, such as 1234 or 0000, are refused.", "The number is shown once and is never stored where anyone can read it again."],
+    },
   },
   admin: {
     "Classes": {
@@ -338,6 +344,12 @@ const GD_HELP = {
       tips: [],
       watch: ["Always ask a grown-up before you join."],
     },
+    "Secret numbers": {
+      what: "Help any child in your school who has forgotten their secret number.",
+      how: ["Requests appear at the top and on the dashboard.", "Make a temporary number or type one yourself, as a teacher would.", "Below is a 30-day log of who changed which child's number, and how."],
+      tips: ["The log never contains a number."],
+      watch: ["Only your own school's children are shown.", "Other devices a child was signed in on can stay signed in for up to an hour."],
+    },
   },
   parent: {
     "Class sessions": {
@@ -358,6 +370,12 @@ const GD_HELP = {
             "When you come back it says it is checking. That is correct: it changes when your bank confirms."],
       tips: [],
       watch: ["This app never asks for your bank details and never stores them."],
+    },
+    "Secret numbers": {
+      what: "Give your child a new secret number if they have forgotten it.",
+      how: ["Find your child, then press New number.", "A temporary number is shown once. Give it to your child; they choose their own at next sign-in."],
+      tips: ["Choose something your child can remember but a classmate would not guess."],
+      watch: ["Easy numbers such as 1234 are refused.", "You can only change your own children's numbers."],
     },
   },
 };
@@ -391,7 +409,7 @@ const GD_TOURS = {
     faq: [
       ["Where do my coins come from?", "From practising, from saying your duas for the first time each day, and from your teacher and your parents when they give you some."],
       ["Why did my dhikr stop giving coins?", "The first three sets of 33 each day give coins. After that you can keep going for the reward of the dhikr itself, and tomorrow the coins start again."],
-      ["I forgot my PIN.", "Tell your teacher. They can give you a new one."],
+      ["I forgot my PIN.", "On the number pad, press I forgot my number. A teacher or grown-up will give you a new one to start with, and then you choose your own secret number."],
       ["Why can I not see all the books?", "Your teacher gives you the books for your level. When you are ready for the next one, your teacher will give it to you and it will appear on your shelf."],
       ["Why can I not hear the dua?", "A recording has to be added first. When it is there you will see a ▶ button next to the Arabic."],
     ],
