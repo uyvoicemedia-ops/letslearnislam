@@ -56,6 +56,14 @@ the garden; this file is the short operational version.
 - **`profiles` has COLUMN-level select grants (0001, 0005) so the PIN hash can never be read.**
   A new column on `profiles` is invisible to the app until you `grant select (col)` — the symptom
   is "permission denied for table profiles", not a missing column.
+- **A password-recovery link is a sign-in.** Supabase signs the person in with a recovery session as soon
+  as the link opens, so the app must show "Choose a new password" BEFORE doing anything else (PWRESET wraps
+  `llaBoot` for this), and must read the `#...type=recovery` token at page load, before the library
+  swallows it. The link goes to the project's **Site URL**; a different port or address means it lands in an
+  unconnected app. The "email sent" screen is deliberately identical for known and unknown addresses.
+- **Reset the admin password without email (owner only, SQL Editor):**
+  `update auth.users set encrypted_password = crypt('NEW-LONG-PASSWORD', gen_salt('bf')) where email = '…';`
+  then clear the editor. `crypt` resolves in the SQL Editor because pgcrypto is in `extensions` (see 0008).
 - **RLS limits ROWS, never COLUMNS, and Supabase grants signed-in users every privilege on a new table.**
   `profiles` had "edit your own name and avatar" (own row only) and "staff edit people", but nobody
   had revoked table-level UPDATE/INSERT, so a child could `update profiles set role = 'admin'` on
@@ -177,6 +185,7 @@ the garden; this file is the short operational version.
 
 | Block | What it does |
 |---|---|
+| `PWRESET` | adults reset a forgotten password from the sign-in screen (Supabase recovery link, neutral wording, new-password screen) |
 | `HWK` | set / hand in / mark homework for staff, pupils and parents (0015) |
 | `BOOKSEL` | the Pupils' books grid for staff; a pupil's shelf shows only the books they were given (0014) |
 | `QZUP` | upload a quiz from a CSV or a paste; hands it to the normal editor and `qaSave` |

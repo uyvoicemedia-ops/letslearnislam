@@ -1,0 +1,198 @@
+<!-- ============================================================
+     PWRESET — an adult who forgot their password can set a new one
+     ------------------------------------------------------------
+     There was no way to do this from the app: the only fix was the
+     Supabase dashboard. Before real parents and teachers sign up, they
+     need their own way back in.
+
+     The flow, using Supabase's own password recovery:
+
+       1. Sign in with an email  ->  "Forgot your password?"
+       2. Type the email. The app asks Supabase to send a link. The screen
+          says the same thing whether or not that address has an account,
+          so it cannot be used to find out who is registered.
+       3. The link opens the app (Supabase sends it to the project's Site
+          URL, which must be the address the app is served from). Supabase
+          signs the person in with a short-lived recovery session; this
+          block notices that, and shows "Choose a new password" BEFORE
+          anything else, whatever the app would normally have done.
+       4. They choose a new password twice. updateUser() sets it, their
+          other devices are signed out, and they carry on.
+
+     For adults only. Children have no email and no password: they use a
+     class code and a PIN, and the only way back for them is a grown-up.
+
+     The reset link's token arrives in the address bar. This block reads it
+     at page load (before the Supabase library consumes it), and removes it
+     from the address bar once handled so it does not sit in history.
+
+     What it does NOT do: it does not send the email itself (Supabase does,
+     through its built-in sender, which allows only a few emails an hour and
+     is meant for testing; real use needs your own SMTP under Authentication
+     -> SMTP Settings), and it cannot tell whether the email arrived.
+     ============================================================ -->
+<style>
+  .pwr-rules { margin:6px 0 2px; padding:0; list-style:none; font-size:13px; color:var(--muted); }
+  .pwr-rules li { margin:2px 0; }
+  .pwr-rules li.ok { color:#237a53; font-weight:700; }
+  .pwr-rules li::before { content:"○ "; } .pwr-rules li.ok::before { content:"✓ "; }
+  .pwr-show { display:flex; align-items:center; gap:8px; font-size:13.5px; margin:6px 0 2px; }
+  .pwr-show input { width:20px; height:20px; }
+</style>
+<script>
+"use strict";
+
+/* Read the address bar NOW. By the time the app has connected, the library
+   will have swallowed the link's token and tidied the address. */
+const GR = {
+  recovery: /[#&?]type=recovery\b/.test(location.hash + location.search),
+  expired: /[#&?]error_code=(otp_expired|access_denied)\b/.test(location.hash + location.search),
+  busy: false, lastSent: 0, sent: false,
+};
+const GR_MIN = 10;
+const GR_COMMON = ["password", "password1", "passw0rd", "12345678", "123456789", "1234567890", "qwertyuiop", "letmein123", "iloveyou1",
+  "welcome123", "admin12345", "letslearn", "letslearn1", "madrasah", "madrasah1", "bismillah", "allahuakbar", "muhammad123", "abcd123456"];
+
+function grTidyUrl() {
+  try { history.replaceState(null, "", location.pathname); } catch (e) {}
+}
+
+/* ---------------- what is wrong with a password ---------------- */
+function grProblems(pw, email) {
+  const p = [];
+  if (pw.length < GR_MIN) p.push("min");
+  if (/^(.)\1+$/.test(pw)) p.push("same");
+  if (GR_COMMON.indexOf(pw.toLowerCase()) >= 0) p.push("common");
+  const e = String(email || "").toLowerCase(), local = e.split("@")[0];
+  if (e && (pw.toLowerCase() === e || (local.length >= 4 && pw.toLowerCase().indexOf(local) >= 0))) p.push("email");
+  return p;
+}
+const GR_SAY = {
+  min: "Use at least " + GR_MIN + " characters.",
+  same: "Use more than one repeated character.",
+  common: "That one is too easy to guess. Try three or four words together.",
+  email: "Do not use your email address in your password.",
+};
+
+/* ---------------- stages ---------------- */
+function grBody(S) {
+  if (S === "forgot") {
+    const wait = Math.max(0, 60 - Math.floor((Date.now() - GR.lastSent) / 1000));
+    return `
+      <p class="lla-brand">LetsLearn</p>
+      <h1>Forgot your password?</h1>
+      <p class="lla-sub">${GR.sent ? "" : "Type your email and we will send you a link to choose a new one."}</p>
+      ${GR.sent ? `<p class="lla-ok" role="status">If that address has an account, a link is on its way. It can take a few minutes, so check your spam folder too.</p>` :
+      `<label class="lla-field"><span>Email</span>
+        <input id="grEmail" type="email" autocomplete="username" value="${esc((document.getElementById("llaEmail") || {}).value || "")}"></label>`}
+      ${llaMsg()}
+      ${GR.sent ? "" : `<button class="lla-btn primary" id="grSend" onclick="grSend()" ${wait && GR.lastSent ? "disabled" : ""}>Send me a link</button>`}
+      <div class="lla-row"><button class="lla-small" onclick="GR.sent=false;llaShow('email')">Back to sign in</button></div>
+      <p class="lla-note">This is for parents and teachers. Children ask a grown-up, who can give them a new PIN.</p>`;
+  }
+  if (S === "newpass") return `
+    <p class="lla-brand">LetsLearn</p>
+    <h1>Choose a new password</h1>
+    <p class="lla-sub">Welcome back. Pick something only you know.</p>
+    <label class="lla-field"><span>New password</span>
+      <input id="grNew" type="password" autocomplete="new-password" oninput="grCheck()"></label>
+    <label class="lla-field"><span>Type it again</span>
+      <input id="grNew2" type="password" autocomplete="new-password" oninput="grCheck()"></label>
+    <label class="pwr-show"><input type="checkbox" onchange="grShow(this.checked)"> Show what I type</label>
+    <ul class="pwr-rules" id="grRules" aria-live="polite">
+      <li data-r="min">At least ${GR_MIN} characters</li>
+      <li data-r="match">Both boxes match</li>
+    </ul>
+    ${llaMsg()}
+    <button class="lla-btn primary" id="grSave" onclick="grSave()" ${GR.busy ? "disabled" : ""}>Save my new password</button>`;
+  return null;
+}
+
+window.grShow = function (on) {
+  ["grNew", "grNew2"].forEach(id => { const e = document.getElementById(id); if (e) e.type = on ? "text" : "password"; });
+};
+window.grCheck = function () {
+  const a = (document.getElementById("grNew") || {}).value || "", b = (document.getElementById("grNew2") || {}).value || "";
+  const ok = { min: a.length >= GR_MIN, match: a.length > 0 && a === b };
+  document.querySelectorAll("#grRules li").forEach(li => li.classList.toggle("ok", !!ok[li.dataset.r]));
+};
+
+/* ---------------- asking for the link ---------------- */
+window.grSend = async function () {
+  const email = ((document.getElementById("grEmail") || {}).value || "").trim();
+  LLA.err = ""; LLA.ok = "";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { LLA.err = "That does not look like an email address."; return llaPaint(); }
+  if (!llaCloud()) { LLA.err = "No school project is connected on this device."; return llaPaint(); }
+  if (GR.busy || (GR.lastSent && Date.now() - GR.lastSent < 60000)) return;
+  GR.busy = true;
+  try {
+    const { error } = await LLC.sb.auth.resetPasswordForEmail(email);
+    GR.lastSent = Date.now();
+    /* Only a rate limit is worth telling them about, and it says nothing
+       about whether the address exists. Everything else looks the same. */
+    if (error && (error.status === 429 || /rate limit|too many/i.test(error.message || ""))) {
+      GR.busy = false; LLA.err = "Too many tries just now. Please wait a few minutes and try again."; return llaPaint();
+    }
+    GR.sent = true;
+  } catch (e) {
+    GR.sent = true;                       // a network hiccup must not reveal anything either
+    GR.lastSent = Date.now();
+  }
+  GR.busy = false;
+  llaPaint();
+};
+
+/* ---------------- setting the new one ---------------- */
+window.grSave = async function () {
+  const a = (document.getElementById("grNew") || {}).value || "", b = (document.getElementById("grNew2") || {}).value || "";
+  const email = (LLC.session && LLC.session.user && LLC.session.user.email) || "";
+  LLA.err = ""; LLA.ok = "";
+  if (!a) { LLA.err = "Type your new password."; return llaPaint(); }
+  if (a !== b) { LLA.err = "The two boxes do not match."; return llaPaint(); }
+  const bad = grProblems(a, email);
+  if (bad.length) { LLA.err = GR_SAY[bad[0]]; return llaPaint(); }
+  if (GR.busy) return;
+  GR.busy = true;
+  const { error } = await LLC.sb.auth.updateUser({ password: a });
+  GR.busy = false;
+  if (error) {
+    LLA.err = /different from the old/i.test(error.message || "") ? "Choose a password you have not used before." : (error.message || "That did not save. Try again?");
+    return llaPaint();
+  }
+  /* every other device that was signed in with the old password is signed out */
+  try { await LLC.sb.auth.signOut({ scope: "others" }); } catch (e) {}
+  GR.recovery = false; GR.expired = false;
+  grTidyUrl();
+  if (typeof toast === "function") toast("Your password is changed");
+  await llaAfterAdult();
+};
+
+/* ---------------- wiring ---------------- */
+const llaBodyPw = llaBody;
+llaBody = function () {
+  const mine = grBody(LLA.stage);
+  if (mine != null) return mine;
+  let html = llaBodyPw.apply(this, arguments);
+  if (LLA.stage === "email") {
+    html = html.replace('<div class="lla-row"><button class="lla-small" onclick="llaShow(\'signin\')">Back</button></div>',
+      '<div class="lla-row"><button class="lla-small" onclick="llaShow(\'forgot\')">Forgot your password?</button></div>' +
+      '<div class="lla-row"><button class="lla-small" onclick="llaShow(\'signin\')">Back</button></div>');
+  }
+  return html;
+};
+
+/* If the person arrived from a reset link, this comes BEFORE anything the
+   app would normally do (entering a saved person, the picker). */
+const llaBootPw = llaBoot;
+llaBoot = async function () {
+  if (!GR.recovery && !GR.expired) return llaBootPw.apply(this, arguments);
+  // the connection and the link's session take a moment
+  for (let i = 0; i < 40 && !(llaCloud() && (LLC.session || GR.expired)); i++) await new Promise(r => setTimeout(r, 150));
+  if (GR.recovery && llaCloud() && LLC.session) { LLA.stage = "newpass"; llaPaint(); return; }
+  GR.expired = true;
+  grTidyUrl();
+  LLA.stage = "forgot"; LLA.err = "That link has run out, or was already used. Ask for a new one below."; llaPaint();
+};
+
+if (typeof window.render === "function") { /* nothing to wrap: the gate paints itself */ }
+</script>

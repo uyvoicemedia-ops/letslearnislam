@@ -240,6 +240,28 @@ to `points`, so the record of real children stays real. Calling it again returns
 same student. Do not put a real child in the Test Class, and change the PIN if the
 project is ever shared (`select set_pupil_pin('<id>', '7391');`).
 
+## Forgotten passwords
+
+Adults (parents, teachers, admins) can reset their own password from the app: **Continue with an email,
+then Forgot your password?**. Children have no password; a grown-up gives them a new PIN.
+
+For the link to land in the app you need three things set in the Supabase dashboard:
+
+- **Site URL** (Authentication → URL Configuration) must be **exactly the address the app is served
+  from**, e.g. `http://localhost:8765`. Supabase sends the reset link there. If the app is on a different
+  port or address, the link opens somewhere that is not connected. Add the same address under Redirect URLs.
+- **Email sending.** Supabase's built-in sender is for testing only: it allows just a few emails an hour,
+  and a busy morning of resets would hit the limit. Set up your own under Authentication → SMTP Settings
+  before real families use this.
+- **Confirm email** should be ON (see HANDOFF).
+
+The reset screen says the same thing whether or not the address has an account, so it cannot be used to find
+out who is registered. A new password must be at least 10 characters, must not be a well-known one, and must
+not be built from the email address. Setting it signs the person out of their other devices.
+
+If an admin ever locks themselves out and cannot receive the email, the SQL route still works: see "Reset the
+admin password" in `docs/build-notes.md`.
+
 ## Homework
 
 On the **Homework** screen a teacher presses **Set new homework** (class, title, what to do,
