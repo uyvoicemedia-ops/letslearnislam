@@ -83,10 +83,9 @@ begin
   perform t_be(yusuf_uid);
   set local role authenticated;
   r := t_say(format('update profiles set is_test = false where id = %L', pupil));
-  perform t_assert(r = 'ok', 'an admin may change the flag: ' || r);
-  perform t_assert(not (select is_test from profiles where id = pupil), 'and it takes effect');
-  update profiles set is_test = true where id = pupil;
+  perform t_assert(r like '42501%', 'even an admin cannot flip the flag from the app any more (0016: only the owner can): ' || r);
   reset role;
+  perform t_assert((select is_test from profiles where id = pupil), 'so the test student is still flagged');
 
   raise notice 'a second school gets its own';
   perform t_be(ab_uid);

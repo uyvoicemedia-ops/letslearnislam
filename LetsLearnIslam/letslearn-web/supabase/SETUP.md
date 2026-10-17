@@ -25,8 +25,9 @@ before moving on. Order matters: 0001 turns row-level security on, so between
 | `migrations/0013_reports.sql` | report recipients and an append-only log of what was downloaded or printed |
 | `migrations/0014_pupil_books.sql` | which books each pupil has been given |
 | `migrations/0015_homework.sql` | setting, handing in and marking homework, through school-checked functions |
+| `migrations/0016_profiles_lockdown.sql` | **security fix, apply first:** nobody can change their own role or PIN hash, or create a profile, from the app |
 
-The app needs **all fifteen**, 0001 to 0015. Skipping one does not fail at sign-up;
+The app needs **all sixteen**, 0001 to 0016. Skipping one does not fail at sign-up;
 it fails later, on whichever screen uses the missing piece.
 
 **Before running 0004, change the three email addresses in it** to ones you can
@@ -162,12 +163,12 @@ select set_pupil_pin('<pupil uuid>', '7391');
 
 ## Checking it yourself
 
-`./tools/testdb.sh` runs all fifteen migrations against a throwaway Postgres in
+`./tools/testdb.sh` runs all sixteen migrations against a throwaway Postgres in
 Docker and then tries to break them — a child reading another child's garden, a
 teacher opening a class they do not teach, a player reading the answer key, a
 parent giving points to somebody else's child, a home parent enumerating a
 school, a child session trying to add a child, a parent approving their own
-request for a class. 413 assertions, and it needs to stay green.
+request for a class. 445 assertions, and it needs to stay green.
 
 It also checks that the Supabase rules hold on plain Postgres: pgcrypto sits in an
 `extensions` schema there, as on a real project.

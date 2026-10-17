@@ -17,9 +17,9 @@ the garden; this file is the short operational version.
 - `tools/llinsert.py <block> TAG` — backs up, strips a prior copy by marker, inserts before
   `</body>`. Idempotent; refuses a block with unbalanced `<script>` tags.
 - `tools/llcheck.py` — `node --check` per block, duplicate lexical globals, assign-to-const.
-- `tools/testdb.sh` — applies the fifteen migrations to postgres:16 in Docker, then 413 RLS
+- `tools/testdb.sh` — applies the sixteen migrations to postgres:16 in Docker, then 445 RLS
   assertions (91 in `0100`, 93 in `0110_sessions`, 51 in `0120_timetable`, 21 in
-  `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`, 33 in `0160_books`, 54 in `0170_homework`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
+  `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`, 33 in `0160_books`, 54 in `0170_homework`, 32 in `0180_profiles_lockdown`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
   `supabase/test/0000_supabase_stub.sql` imitates Supabase, including pgcrypto living in an
   `extensions` schema. **When the test database and the real one differ, the test is wrong:
   fix the stub, then prove it fails without the fix.**
@@ -56,6 +56,15 @@ the garden; this file is the short operational version.
 - **`profiles` has COLUMN-level select grants (0001, 0005) so the PIN hash can never be read.**
   A new column on `profiles` is invisible to the app until you `grant select (col)` — the symptom
   is "permission denied for table profiles", not a missing column.
+- **RLS limits ROWS, never COLUMNS, and Supabase grants signed-in users every privilege on a new table.**
+  `profiles` had "edit your own name and avatar" (own row only) and "staff edit people", but nobody
+  had revoked table-level UPDATE/INSERT, so a child could `update profiles set role = 'admin'` on
+  their own row, write their own `pin_hash`, and a teacher could write any pupil's `pin_hash` or
+  INSERT a new admin profile. Reproduced against the test DB before it was fixed (0016: revoke
+  INSERT/UPDATE, grant UPDATE only on `full_name, avatar`). **Any new table, and any table you did
+  not revoke on, needs the same question asked: which columns can a signed-in user actually write?**
+  `points`, `homework` and `submissions` were already safe; check `garden`, `practice`, `reading`
+  and the club tables next.
 - **Homework was a screen of placeholders, and the old rules were broader than they looked.** The
   `Set new homework` / `Mark` buttons had no handler; `staff mark work` let ANY teacher update ANY
   submission; the admin branch of `ll_teaches` let an admin at one school read and change another's

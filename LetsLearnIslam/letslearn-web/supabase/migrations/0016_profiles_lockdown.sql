@@ -1,0 +1,34 @@
+-- ============================================================
+-- LetsLearn — nobody edits their own role
+-- ------------------------------------------------------------
+-- A hole in 0001-0015, found while reviewing the "forgot my PIN" design
+-- and then reproduced against the test database:
+--
+--   * "edit your own name and avatar" (0003) lets a signed-in user UPDATE
+--     their own profiles row, and it limits the ROW, not the COLUMNS.
+--     Nothing took away the table-level UPDATE that Supabase grants to
+--     signed-in users, so a child could set their own role to 'admin' or
+--     write a PIN hash of their own making. A teacher could do the same,
+--     and "staff edit people" let a teacher write any column of any
+--     profile in the school, including a pupil's pin_hash.
+--   * "staff add people" let a teacher INSERT a profile with any role and
+--     any email. Whoever then signs up with that email is linked to it
+--     (ll_link_new_user), so a teacher could plant an admin.
+--
+-- 0001 locked down who can READ the PIN columns, and never who could write
+-- them. This closes the writing side:
+--
+--   * nobody INSERTs a profile directly any more. Rows are made by the
+--     owner in the SQL editor, by the sign-up trigger and by the families
+--     functions, all of which are security definer and unaffected.
+--   * a signed-in user may UPDATE only full_name and avatar, and only on
+--     the rows the existing policies already allow (their own, and for
+--     staff the people in their school).
+--
+-- Role, school, family, email, auth_uid, the PIN columns and is_test can
+-- therefore only be changed by a function or by the owner. Nothing in the
+-- app updates or inserts profiles directly.
+-- ============================================================
+
+revoke insert, update on profiles from anon, authenticated;
+grant update (full_name, avatar) on profiles to authenticated;

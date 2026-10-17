@@ -39,8 +39,8 @@ Working and verified locally:
 - the live Kahoot-style quiz — room code, LAN relay, server-side scoring, podium
 - the solo practice quiz, now on the same coloured tiles as the live one
 - a sign-in gate with a child PIN flow
-- Supabase schema: 15 migrations, 413 RLS assertions green against Postgres in Docker
-  (0009 class sessions, 0010 timetable/classes, 0011 test student, 0012 teacher hours, 0013 reports, 0014 pupil books and 0015 homework are written and tested but NOT yet applied to the real project)
+- Supabase schema: 16 migrations, 445 RLS assertions green against Postgres in Docker
+  (0009 class sessions, 0010 timetable/classes, 0011 test student, 0012 teacher hours, 0013 reports, 0014 pupil books, 0015 homework and 0016 profiles lockdown are written and tested but NOT yet applied to the real project)
 - every records screen reads the school when connected, and says so when it doesn't
 - fees by Direct Debit: schema, policies, edge function, parent and admin screens
 
@@ -49,6 +49,15 @@ a real service. Not Supabase, not GoCardless, not even sandbox. The client halve
 proved against hand-built fixtures standing in for PostgREST and the GoCardless API — which
 caught four genuine bugs and tells you nothing about how the real APIs behave. Google and
 Facebook sign-in are untested by definition, because the handshake needs a live project.
+
+## URGENT before real children use the live project
+
+1. **Apply `0016_profiles_lockdown.sql`.** Until it runs, a signed-in child can make themselves an
+   admin and set their own PIN, and a teacher can overwrite any pupil's PIN hash (reproduced locally).
+2. **Turn "Confirm email" ON** (Authentication). With it off, `ll_link_new_user()` links a sign-up to a
+   roster row by email alone, so anyone can sign up as a parent's or teacher's address and take that
+   account and its children. (SETUP.md §2 still says to turn it off for your own first sign-in: do that
+   once, then turn it back on.)
 
 ## Next, in rough priority order
 
