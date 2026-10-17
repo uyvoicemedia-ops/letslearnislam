@@ -1,0 +1,249 @@
+<!-- ============================================================
+     QZUP — teachers upload a quiz from a spreadsheet
+     ------------------------------------------------------------
+     Writing forty questions one card at a time is how nobody ends up
+     writing forty questions. A teacher who already has them in a
+     spreadsheet can upload the file instead.
+
+     It does NOT save anything itself. It reads the file, shows what it
+     understood and what it could not, and then opens the quiz in the
+     ordinary editor to be read through and saved there. That keeps one
+     door into the quiz store: qaSave still validates it (strips empty
+     answers, re-finds the right one), and the school sync still wraps
+     qaSave, so an uploaded quiz is stored, shared and played exactly like
+     one made by hand.
+
+     Format: CSV, which every spreadsheet can save and a teacher can open
+     in any text editor.  question, answer 1..4, correct, seconds
+       correct   1-4, A-D, or the text of the right answer
+       seconds   optional, 5-90, default 20
+     Excel's own .xlsx is a zip file and cannot be read without a library
+     this app does not have; the message says how to save as CSV instead.
+
+     Limits, so a wrong file cannot hang a classroom: 100 questions, 1 MB,
+     300 characters a question, 100 an answer. Everything is read as text
+     and shown through esc(); nothing from the file is ever run.
+
+     Only teachers and admins see the button. An uploaded quiz is marked
+     "please read it through before a class plays it", like the deen sets:
+     whoever typed it into a spreadsheet is the only one who has checked it.
+     ============================================================ -->
+<style>
+  .qup-drop { border:2px dashed var(--line); border-radius:14px; padding:18px; text-align:center; background:var(--bg); }
+  .qup-drop.over { border-color:var(--islam-blue, #2e6bbf); background:#eef3fb; }
+  .qup-sum { display:flex; gap:14px; flex-wrap:wrap; margin:10px 0; }
+  .qup-sum b { font-size:22px; display:block; }
+  .qup-bad { max-height:170px; overflow:auto; border:1.5px solid #e6c2bc; background:#fbf0ee; border-radius:12px; padding:8px 12px; margin:8px 0; font-size:13.5px; }
+  .qup-bad li { margin:3px 0; }
+  .qup-prev { max-height:210px; overflow:auto; border:1.5px solid var(--line); border-radius:12px; }
+  .qup-prev table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  .qup-prev td, .qup-prev th { padding:7px 10px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }
+  .qup-prev td.ok { color:#237a53; font-weight:800; }
+  .qup-ta { width:100%; box-sizing:border-box; min-height:96px; font:inherit; font-size:14px; padding:10px 12px; border-radius:10px; border:1.5px solid var(--line); background:var(--bg); color:inherit; }
+</style>
+<script>
+"use strict";
+
+const QUP = { open: false, text: "", name: "", title: "", result: null, err: "" };
+const QUP_MAX_Q = 100, QUP_MAX_BYTES = 1024 * 1024, QUP_MAX_P = 300, QUP_MAX_A = 100;
+
+/* ---------------- reading the table ---------------- */
+
+/* A small CSV reader that copes with what spreadsheets really produce: quoted
+   cells with commas and line breaks in them, doubled quotes, a byte-order mark,
+   CRLF, and the semicolons and tabs that other locales and a paste from a
+   spreadsheet use instead of commas. */
+function qupDelimiter(text) {
+  const first = text.split(/\r\n|\n|\r/).find(l => l.trim()) || "";
+  const n = (c) => (first.match(new RegExp(c === "\t" ? "\\t" : "\\" + c, "g")) || []).length;
+  const cands = [[",", n(",")], [";", n(";")], ["\t", n("\t")]].sort((a, b) => b[1] - a[1]);
+  return cands[0][1] ? cands[0][0] : ",";
+}
+function qupParseCsv(text) {
+  text = String(text || "").replace(/^﻿/, "");
+  const d = qupDelimiter(text), rows = [];
+  let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += c;
+    } else if (c === '"' && cell === "") q = true;
+    else if (c === d) { row.push(cell); cell = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell); cell = "";
+      if (row.some(x => x.trim() !== "")) rows.push(row);
+      row = [];
+    } else cell += c;
+  }
+  row.push(cell);
+  if (row.some(x => x.trim() !== "")) rows.push(row);
+  return rows;
+}
+
+const qupNorm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+function qupColumns(head) {
+  const find = (names) => head.findIndex(h => names.indexOf(qupNorm(h)) >= 0);
+  const col = {
+    p: find(["question", "q", "prompt", "ask", "whatdoyouask"]),
+    k: find(["correct", "right", "rightanswer", "correctanswer", "key", "answer"]),
+    s: find(["seconds", "time", "timer", "secs"]),
+    a: [0, 1, 2, 3].map(n => find(["answer" + (n + 1), "a" + (n + 1), "option" + (n + 1), "choice" + (n + 1), "ans" + (n + 1), "answer" + "abcd"[n], "option" + "abcd"[n], "choice" + "abcd"[n], "abcd"[n]])),
+  };
+  const known = col.p >= 0 && col.a.filter(x => x >= 0).length >= 2;
+  return known ? col : null;
+}
+
+/* The whole job: text in, { qs, problems } out. Pure, so it can be tested. */
+function qupInterpret(text) {
+  const out = { qs: [], problems: [], rows: 0, header: false };
+  const rows = qupParseCsv(text);
+  if (!rows.length) { out.problems.push("The file is empty."); return out; }
+  let col = qupColumns(rows[0]), start = 0;
+  if (col) { out.header = true; start = 1; }
+  else col = { p: 0, a: [1, 2, 3, 4], k: 5, s: 6 };           // no header: question, four answers, correct, seconds
+  const bad = (n, msg) => out.problems.push("Row " + n + ": " + msg);
+  for (let r = start; r < rows.length; r++) {
+    const cells = rows[r], n = r + 1; out.rows++;
+    if (out.qs.length >= QUP_MAX_Q) { out.problems.push("Only the first " + QUP_MAX_Q + " questions are used. The rest were left out."); break; }
+    const g = (i) => (i >= 0 && i < cells.length ? String(cells[i]).trim() : "");
+    const p = g(col.p);
+    const ans = col.a.map(g);
+    const present = ans.filter(a => a);
+    if (!p) { bad(n, "there is no question."); continue; }
+    if (p.length > QUP_MAX_P) { bad(n, "the question is longer than " + QUP_MAX_P + " characters."); continue; }
+    if (present.length < 2) { bad(n, "needs at least two answers."); continue; }
+    if (present.some(a => a.length > QUP_MAX_A)) { bad(n, "an answer is longer than " + QUP_MAX_A + " characters."); continue; }
+    if (new Set(present.map(a => a.toLowerCase())).size !== present.length) { bad(n, "two answers are the same, so the right one would be ambiguous."); continue; }
+    const kRaw = g(col.k);
+    let k = -1;
+    if (/^[1-4]$/.test(kRaw)) k = +kRaw - 1;
+    else if (/^[a-dA-D]$/.test(kRaw)) k = "abcd".indexOf(kRaw.toLowerCase());
+    else if (kRaw) k = ans.findIndex(a => a && a.toLowerCase() === kRaw.toLowerCase());
+    if (k < 0 || k > 3 || !ans[k]) { bad(n, kRaw ? "the right answer “" + kRaw.slice(0, 40) + "” is not one of the answers." : "no right answer is marked."); continue; }
+    const sRaw = parseInt(g(col.s), 10);
+    out.qs.push({ p, a: ans, k, s: isFinite(sRaw) ? Math.max(5, Math.min(90, sRaw)) : 20 });
+  }
+  if (!out.qs.length && !out.problems.length) out.problems.push("No questions were found.");
+  return out;
+}
+
+/* ---------------- the dialog ---------------- */
+
+function qupPretty(filename) {
+  const base = String(filename || "").replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+  return base ? base.charAt(0).toUpperCase() + base.slice(1) : "";
+}
+
+window.qupOpen = function () {
+  Object.assign(QUP, { open: true, text: "", name: "", title: "", result: null, err: "" });
+  qupPaint();
+};
+window.qupClose = function () { QUP.open = false; document.querySelectorAll(".qup-veil").forEach(v => v.remove()); };
+
+function qupPaint() {
+  document.querySelectorAll(".qup-veil").forEach(v => v.remove());
+  if (!QUP.open) return;
+  const r = QUP.result;
+  const veil = document.createElement("div");
+  veil.className = "qa-veil qup-veil";
+  veil.onclick = (e) => { if (e.target === veil) qupClose(); };
+  const prev = r && r.qs.length ? '<div class="qup-prev"><table><thead><tr><th>#</th><th>Question</th><th>Right answer</th><th>Sec</th></tr></thead><tbody>' +
+    r.qs.slice(0, 40).map((q, i) => "<tr><td>" + (i + 1) + "</td><td>" + esc(q.p) + '</td><td class="ok">' + esc(q.a[q.k]) + "</td><td>" + q.s + "</td></tr>").join("") +
+    (r.qs.length > 40 ? '<tr><td colspan="4" class="note">…and ' + (r.qs.length - 40) + " more</td></tr>" : "") + "</tbody></table></div>" : "";
+  veil.innerHTML = '<div class="qa-box" role="dialog" aria-modal="true" aria-labelledby="qupH"><div class="qa-head"><h2 id="qupH">Upload a quiz</h2><button class="btn" onclick="qupClose()">Close</button></div>' +
+    '<p class="note" style="margin-top:0">Save your spreadsheet as <strong>CSV</strong> (in Excel: File → Save As → <em>CSV UTF-8</em>), then choose it here. Arabic is fine as long as it is UTF-8. ' +
+    '<a href="#" onclick="qupTemplate();return false">Download a template</a> to see the columns.</p>' +
+    '<div class="qup-drop" id="qupDrop"><input id="qupFile" type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" aria-label="Choose a quiz file" onchange="qupFile(this.files[0])"> ' +
+    '<span class="note">or drop it here</span></div>' +
+    '<label class="qa-field"><span>Or paste the rows straight from a spreadsheet</span><textarea class="qup-ta" id="qupPaste" placeholder="question, answer 1, answer 2, answer 3, answer 4, correct" ' +
+    'oninput="qupPasted(this.value)">' + esc(QUP.name ? "" : QUP.text) + "</textarea></label>" +
+    (QUP.err ? '<p class="qz-note-bad" role="alert">' + esc(QUP.err) + "</p>" : "") +
+    (r ? '<div class="qup-sum" aria-live="polite"><div><b>' + r.qs.length + '</b><span class="note">questions ready</span></div><div><b>' + r.problems.length + '</b><span class="note">to fix or skip</span></div></div>' : "") +
+    (r && r.problems.length ? '<ul class="qup-bad" aria-label="Problems found">' + r.problems.slice(0, 60).map(p => "<li>" + esc(p) + "</li>").join("") + (r.problems.length > 60 ? "<li>…and " + (r.problems.length - 60) + " more</li>" : "") + "</ul>" : "") +
+    prev +
+    (r && r.qs.length ? '<label class="qa-field"><span>What is it called?</span><input id="qupTitle" type="text" maxlength="80" value="' + esc(QUP.title) + '" oninput="QUP.title=this.value"></label>' +
+      '<p class="note">Rows with a problem are left out. Next you can read it through and change anything in the normal editor before it is saved.</p>' +
+      '<div class="qa-row"><button class="btn primary" onclick="qupUse()">Open in the editor →</button></div>' : "") + "</div>";
+  document.body.appendChild(veil);
+  const drop = document.getElementById("qupDrop");
+  ["dragover", "dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => { const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) qupFile(f); });
+}
+
+window.qupFile = function (f) {
+  if (!f) return;
+  QUP.err = "";
+  if (/\.xlsx?$/i.test(f.name)) { QUP.err = "That is an Excel file. Open it and choose File → Save As → CSV UTF-8, then choose the new file."; QUP.result = null; return qupPaint(); }
+  if (f.size > QUP_MAX_BYTES) { QUP.err = "That file is over 1 MB, which is far more than a quiz needs. Is it the right file?"; QUP.result = null; return qupPaint(); }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const text = String(rd.result || "");
+    if ((text.match(/�/g) || []).length > 3) { QUP.err = "Some characters did not read properly. Save the file as CSV UTF-8 and try again."; }
+    QUP.name = f.name; QUP.text = text; QUP.title = qupPretty(f.name);
+    QUP.result = qupInterpret(text);
+    if (!QUP.result.qs.length && !QUP.err) QUP.err = "Nothing in that file could be used. Check the columns against the template.";
+    qupPaint();
+  };
+  rd.onerror = () => { QUP.err = "That file could not be read."; qupPaint(); };
+  rd.readAsText(f, "utf-8");
+};
+window.qupPasted = function (text) {
+  QUP.name = ""; QUP.text = text; QUP.err = "";
+  clearTimeout(QUP.t);
+  QUP.t = setTimeout(() => {
+    QUP.result = text.trim() ? qupInterpret(text) : null;
+    if (!QUP.title) QUP.title = "";
+    const keep = document.getElementById("qupPaste");
+    const pos = keep ? keep.selectionStart : 0;
+    qupPaint();
+    const again = document.getElementById("qupPaste");
+    if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (e) {} }
+  }, 500);
+};
+
+window.qupTemplate = function () {
+  const rows = [
+    ["question", "answer 1", "answer 2", "answer 3", "answer 4", "correct", "seconds"],
+    ["Which colour is the sky on a clear day?", "Blue", "Green", "Red", "Yellow", "1", "20"],
+    ["How many days are in a week?", "Five", "Seven", "Ten", "Twelve", "B", "20"],
+    ["Which of these is a fruit?", "Carrot", "Apple", "Potato", "Onion", "Apple", "15"],
+  ];
+  const csv = rows.map(r => r.map(c => /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c).join(",")).join("\r\n") + "\r\n";
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "quiz-template.csv";
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+};
+
+/* Hand the quiz to the ordinary editor. It is saved from there, by qaSave. */
+window.qupUse = function () {
+  const r = QUP.result; if (!r || !r.qs.length) return;
+  const title = String(QUP.title || "").trim();
+  if (!title) { QUP.err = "Give the quiz a name."; return qupPaint(); }
+  const who = (typeof WHO !== "undefined" && WHO[role]) ? WHO[role].name : "A teacher";
+  QA.draft = {
+    id: "own-" + Date.now().toString(36), title, by: who, at: new Date().toISOString(),
+    note: "Uploaded from a file. Please read it through before a class plays it.",
+    qs: r.qs.map(q => ({ p: q.p, a: q.a.slice(), k: q.k, s: q.s })),
+  };
+  QA.err = "";
+  qupClose();
+  qaPaint();
+  if (typeof toast === "function") toast(r.qs.length + " questions loaded. Read them through, then Save.");
+};
+
+/* ---------------- the button ---------------- */
+const quizStartPageQup = quizStartPage;
+quizStartPage = function () {
+  let html = quizStartPageQup.apply(this, arguments);
+  if (role !== "teacher" && role !== "admin") return html;
+  const btn = '<button class="btn" style="width:100%;margin-top:8px" onclick="qupOpen()">⬆ Upload a quiz from a spreadsheet</button>';
+  const mark = "✏️ Make a quiz of your own</button>";
+  const at = html.indexOf(mark);
+  return at > -1 ? html.slice(0, at + mark.length) + btn + html.slice(at + mark.length) : html;
+};
+if (typeof PAGES === "object" && PAGES.quiz) { /* the quiz page calls quizStartPage by name, so it picks this up */ }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && QUP.open) qupClose(); });
+</script>
