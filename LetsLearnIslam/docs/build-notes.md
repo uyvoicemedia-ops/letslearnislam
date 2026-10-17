@@ -17,9 +17,9 @@ the garden; this file is the short operational version.
 - `tools/llinsert.py <block> TAG` — backs up, strips a prior copy by marker, inserts before
   `</body>`. Idempotent; refuses a block with unbalanced `<script>` tags.
 - `tools/llcheck.py` — `node --check` per block, duplicate lexical globals, assign-to-const.
-- `tools/testdb.sh` — applies the eleven migrations to postgres:16 in Docker, then 256 RLS
+- `tools/testdb.sh` — applies the thirteen migrations to postgres:16 in Docker, then 326 RLS
   assertions (91 in `0100`, 93 in `0110_sessions`, 51 in `0120_timetable`, 21 in
-  `0130_test_student`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
+  `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
   `supabase/test/0000_supabase_stub.sql` imitates Supabase, including pgcrypto living in an
   `extensions` schema. **When the test database and the real one differ, the test is wrong:
   fix the stub, then prove it fails without the fix.**
@@ -56,6 +56,22 @@ the garden; this file is the short operational version.
 - **`profiles` has COLUMN-level select grants (0001, 0005) so the PIN hash can never be read.**
   A new column on `profiles` is invisible to the app until you `grant select (col)` — the symptom
   is "permission denied for table profiles", not a missing column.
+- **Salary data is protected in three layers.** `hours_log.rate_pence` is not granted to
+  `authenticated` at all (column grants, as for `profiles`), `hours_week()` returns the rate and
+  pay only to an admin, and the RLS policies let a teacher read only their own rows. A frozen rate
+  on each row means a rate change can never rewrite a paid week. `hours_week` is a function, not a
+  view, because the decision is per caller.
+- **CSV injection.** Anything a person typed (a pupil's name) can start with `=`, `+`, `-` or `@`
+  and run as a spreadsheet formula. `ofCell()` prefixes such cells with `'`; the browser test feeds
+  it `=HYPERLINK(...)`.
+- **PostgREST returns at most 1000 rows per request.** Reports page through with `.range()`
+  (`ofAll`); a plain `select()` would silently drop attendance after a month in a big school.
+- **The quiz block puts its own link on the menu** (`a[data-quiz]`, no `data-page`), so it is not in
+  `NAV`. The guide special-cases it. If another block does the same, add it there too.
+- **A guide that names menu items must resolve them.** `GD_TOURS` finds each "Show me" target by its
+  menu label; the browser test fails if any label is missing from that role's menu.
+- **macOS `sed` has no `\b`.** `sed -E 's/\bGD\b/…/'` matches nothing and exits 0; use Python.
+  `llcheck` caught a `const GD` that clashed with an existing global before it shipped.
 - **Safari and iOS will not play audio from a server that ignores `Range`.** `python3 -m http.server`
   (and `llserve.py` until now) answer `Range: bytes=0-1` with a whole-file 200; Safari gives up and
   the clip never plays, while Chrome carries on and hides the bug. `llserve.py` now returns 206/416
@@ -120,6 +136,8 @@ the garden; this file is the short operational version.
 
 | Block | What it does |
 |---|---|
+| `GUIDE` | a tour per role (student, teacher, admin, parent), a Guide page, quick answers; remembers progress per device |
+| `OFFICE` | Teacher hours and Reports & email on real data (0012, 0013) |
 | `DUAAUDIO` | play button on every Arabic dua/step/dhikr/prayer name that has a recording; the eating-duas offer in the kitchen |
 | `TESTSTU` | test student: admin button on Classes, badge, auto test mode for `is_test` pupils |
 | `SCHED` | the Classes and Timetable pages (were `pageSimple` stubs); lanes for overlapping lessons |

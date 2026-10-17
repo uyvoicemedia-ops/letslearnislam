@@ -1,0 +1,519 @@
+<!-- ============================================================
+     OFFICE — Teacher hours, and Reports & email, made real
+     ------------------------------------------------------------
+     Both pages were mock-ups. Teacher hours carried a yellow note saying
+     the backend already had a half-built teaching-hours function; it never
+     did. Migration 0012 is that function, and this is the screen on it.
+     Reports & email carried "Nothing sends in this prototype", and still
+     cannot send: sending needs an email provider and a verified domain,
+     which only the madrasah can open an account for. What it does now is
+     real and honest:
+
+       * the salary, fees, Direct Debit and attendance reports are built
+         from the school's own data;
+       * download as CSV, print, or open a ready-written message in the
+         admin's own mail app (attach the download);
+       * every one of those is logged — who, when, what, to whom — as what
+         actually happened, never as "delivered";
+       * the addresses are kept once, by an admin.
+
+     Salary rules, enforced in the database and mirrored here: an admin
+     edits hours and rates; a teacher sees their own hours and never a rate
+     or a pay figure; nobody else sees anything.
+
+     Not connected: both pages stay the labelled prototype they were.
+     ============================================================ -->
+<style>
+  .of-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }
+  .of-week { display:inline-flex; align-items:center; gap:2px; border:1.5px solid var(--line); border-radius:12px; background:var(--card); }
+  .of-week button { font:inherit; font-weight:800; font-size:16px; border:0; background:none; cursor:pointer; padding:7px 12px; color:inherit; }
+  .of-week span { padding:0 10px; font-weight:700; font-size:13.5px; white-space:nowrap; }
+  .of-err { font-size:12.5px; font-weight:700; color:#c9483a; margin:8px 0; }
+  .of-ok { font-size:12.5px; font-weight:700; color:#2a7a55; margin:8px 0; }
+  .of-form { background:var(--card); border:1.5px solid var(--line); border-radius:13px; padding:14px 16px; margin:0 0 14px; }
+  .of-form h3 { margin:0 0 8px; font-size:15px; }
+  .of-form .g { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
+  .of-form label { display:block; font-size:12px; font-weight:700; margin:6px 0 3px; }
+  .of-form input, .of-form select, .of-rate input, .of-in { font:inherit; padding:7px 10px; border-radius:10px; border:1.5px solid var(--line); background:var(--bg); color:inherit; width:100%; box-sizing:border-box; }
+  .of-rate { display:flex; gap:6px; align-items:center; }
+  .of-rate input { width:84px; }
+  .of-sub td { background:var(--bg); font-size:13px; }
+  .of-warn { display:inline-block; font-size:11.5px; font-weight:800; color:#8a5a00; background:#fdf1d0; border-radius:99px; padding:2px 9px; margin-left:6px; }
+  .of-rec { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--line); }
+  .of-rec button { border:0; background:none; color:#c9483a; font-weight:800; cursor:pointer; min-width:32px; min-height:32px; }
+  .of-prev { margin-top:12px; }
+  .of-prev h3 { margin:14px 0 4px; font-size:15px; }
+  @media print { .no-print { display:none !important; } }
+</style>
+<script>
+"use strict";
+
+const OFFICE = {
+  loaded: false, busy: false, err: "", ok: "",
+  week: "",                // ISO date of the Monday being looked at
+  hours: [], detail: [], staff: [], classes: [], rates: {},
+  open: "",                // teacher whose rows are unfolded
+  addForm: null,           // { teacher, class_id, date, hh, mm, note }
+  rep: { salary: true, fees: false, dd: false, att: false, from: "", to: "", to_ids: {} },
+  recipients: [], log: [], data: { charges: [], mandates: [], att: [], truncated: false },
+  recForm: null,
+};
+
+function ofLive() { try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; } }
+function ofAdmin() { return ofLive() && LLC.profile.role === "admin"; }
+
+/* ---------------- dates, money, csv ---------------- */
+const ofPad = (n) => String(n).padStart(2, "0");
+const ofIso = (d) => d.getFullYear() + "-" + ofPad(d.getMonth() + 1) + "-" + ofPad(d.getDate());
+function ofMonday(d) { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }
+function ofParse(iso) { const p = iso.split("-"); return new Date(+p[0], +p[1] - 1, +p[2]); }
+function ofShift(iso, days) { const d = ofParse(iso); d.setDate(d.getDate() + days); return ofIso(d); }
+function ofNice(iso) { return ofParse(iso).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }); }
+function ofWeekLabel(iso) {
+  const end = ofParse(ofShift(iso, 6));
+  return "Week ending " + end.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+}
+const ofHM = (m) => Math.floor(m / 60) + "h" + (m % 60 ? " " + (m % 60) + "m" : "");
+const ofDec = (m) => (m / 60).toFixed(2);
+const ofGBP = (pence) => "£" + (Number(pence || 0) / 100).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const ofPlain = (pence) => (Number(pence || 0) / 100).toFixed(2);
+
+/* A spreadsheet treats a cell that starts with = + - or @ as a formula. A
+   child's or teacher's name is typed by people; an accountant opening the file
+   should never run one. */
+function ofCell(v) {
+  let s = v == null ? "" : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function ofCsv(sections) {
+  return sections.map(sec => [ofCell(sec.title)].concat(sec.note ? [ofCell(sec.note)] : [])
+    .concat([sec.head.map(ofCell).join(",")]).concat(sec.rows.map(r => r.map(ofCell).join(","))).join("\r\n")
+  ).join("\r\n\r\n") + "\r\n";
+}
+function ofDownload(name, text) {
+  const blob = new Blob(["﻿" + text], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+/* ---------------- reading ---------------- */
+async function ofAll(make) {                       // PostgREST stops at 1000 rows a go
+  let out = [], from = 0;
+  for (let i = 0; i < 25; i++) {
+    const { data, error } = await make().range(from, from + 999);
+    if (error) throw error;
+    out = out.concat(data || []);
+    if (!data || data.length < 1000) return { rows: out, truncated: false };
+    from += 1000;
+  }
+  return { rows: out, truncated: true };
+}
+
+async function ofPullHours() {
+  if (!ofLive()) return false;
+  OFFICE.err = "";
+  try {
+    if (!OFFICE.week) OFFICE.week = ofIso(ofMonday(new Date()));
+    const sb = LLC.sb, wk = OFFICE.week;
+    const w = await sb.rpc("hours_week", { p_week_start: wk });
+    if (w.error) throw w.error;
+    OFFICE.hours = w.data || [];
+    const d = await sb.from("hours_log").select("id, teacher_id, class_id, on_date, minutes, source, note")
+      .gte("on_date", wk).lt("on_date", ofShift(wk, 7)).order("on_date");
+    if (d.error) throw d.error;
+    OFFICE.detail = d.data || [];
+    const c = await sb.from("classes").select("id, name").order("name");
+    OFFICE.classes = c.data || [];
+    if (ofAdmin()) {
+      const st = await sb.from("profiles").select("id, full_name, role").in("role", ["teacher", "admin"]).order("full_name");
+      OFFICE.staff = st.data || [];
+      const r = await sb.from("teacher_rates").select("teacher_id, rate_pence");
+      OFFICE.rates = {}; (r.data || []).forEach(x => { OFFICE.rates[x.teacher_id] = x.rate_pence; });
+    }
+    OFFICE.loaded = true;
+    return true;
+  } catch (e) { OFFICE.err = (e && e.message) || "could not read the hours"; return false; }
+}
+
+async function ofPullReports() {
+  if (!ofAdmin()) return false;
+  try {
+    const sb = LLC.sb;
+    if (!OFFICE.rep.to) { const t = new Date(); OFFICE.rep.to = ofIso(t); t.setDate(t.getDate() - 29); OFFICE.rep.from = ofIso(t); }
+    const r = await sb.from("report_recipients").select("id, name, email, role").order("name");
+    if (r.error) throw r.error;
+    OFFICE.recipients = r.data || [];
+    const l = await sb.from("report_log").select("id, report, period, recipients, format, action, by_id, at").order("at", { ascending: false }).limit(40);
+    if (l.error) throw l.error;
+    OFFICE.log = l.data || [];
+    return true;
+  } catch (e) { OFFICE.err = (e && e.message) || "could not read the report settings"; return false; }
+}
+
+async function ofPullData() {
+  if (!ofAdmin()) return;
+  const sb = LLC.sb, rep = OFFICE.rep, d = OFFICE.data;
+  d.truncated = false;
+  try {
+    if (rep.fees || rep.dd) {
+      const c = await ofAll(() => sb.from("fee_charges").select("id, amount_pence, period, status, charge_date, created_at").order("created_at", { ascending: false }));
+      d.charges = c.rows; d.truncated = d.truncated || c.truncated;
+    }
+    if (rep.dd) {
+      const m = await sb.from("mandates").select("id, status");
+      d.mandates = m.data || [];
+    }
+    if (rep.att) {
+      const a = await ofAll(() => sb.from("attendance").select("pupil_id, class_id, on_date, mark").gte("on_date", rep.from).lte("on_date", rep.to).order("on_date"));
+      d.att = a.rows; d.truncated = d.truncated || a.truncated;
+      const p = await sb.from("profiles").select("id, full_name").eq("role", "student").order("full_name");
+      d.pupils = p.data || [];
+    }
+  } catch (e) { OFFICE.err = (e && e.message) || "could not read the data for that report"; }
+}
+
+async function ofRefresh() {
+  await ofPullHours(); await ofPullReports();
+  if (typeof render === "function") render();
+}
+if (typeof llcPull === "function") {
+  const llcPullOffice = llcPull;
+  llcPull = async function () {
+    const out = await llcPullOffice.apply(this, arguments);
+    try { if (ofLive()) { OFFICE.loaded = false; await ofRefresh(); } } catch (e) {}
+    return out;
+  };
+}
+
+/* ============================================================
+   Teacher hours
+   ============================================================ */
+
+function ofName(id) { const s = OFFICE.staff.find(x => x.id === id); return s ? s.full_name : ""; }
+function ofClassName(id) { const c = OFFICE.classes.find(x => x.id === id); return c ? c.name : "—"; }
+
+function ofSay(e) {
+  const code = e && e.code, msg = (e && e.message) || "";
+  if (code === "42501") return "Only an admin can change hours.";
+  return msg || "That did not work.";
+}
+function ofFnError(d) {
+  const m = { not_admin: "Only an admin can do that.", not_a_monday: "A week starts on a Monday.", no_such_teacher: "That person is not staff at your school.",
+    no_such_class: "That class is not in your school.", bad_minutes: "Hours must be between one minute and twelve hours.", bad_rate: "A rate must be between £0 and £200 an hour." };
+  return d && d.error ? (m[d.error] || d.error) : "";
+}
+async function ofRpc(name, args, doneMsg) {
+  if (!ofLive() || OFFICE.busy) return null;
+  OFFICE.busy = true; OFFICE.err = ""; OFFICE.ok = "";
+  try {
+    const { data, error } = await LLC.sb.rpc(name, args);
+    if (error) throw error;
+    if (data && data.error) OFFICE.err = ofFnError(data);
+    else { if (doneMsg) OFFICE.ok = typeof doneMsg === "function" ? doneMsg(data) : doneMsg; await ofPullHours(); }
+    return data;
+  } catch (e) { OFFICE.err = ofSay(e); return null; }
+  finally { OFFICE.busy = false; render(); }
+}
+
+window.ofWeek = function (delta) {
+  OFFICE.week = delta === 0 ? ofIso(ofMonday(new Date())) : ofShift(OFFICE.week, delta * 7);
+  OFFICE.open = ""; OFFICE.ok = ""; OFFICE.err = "";
+  ofPullHours().then(render);
+  render();
+};
+window.ofGenerate = () => ofRpc("hours_generate_week", { p_week_start: OFFICE.week },
+  d => d.inserted ? "Added " + d.inserted + " lesson" + (d.inserted === 1 ? "" : "s") + " from the timetable."
+                  : "Nothing new to add: every lesson that has happened is already here.");
+window.ofSetRate = function (teacher, input) {
+  const v = parseFloat(String(input.value).replace(/[£,\s]/g, ""));
+  if (!isFinite(v) || v < 0 || v > 200) { OFFICE.err = "A rate must be between £0 and £200 an hour."; render(); return; }
+  ofRpc("hours_set_rate", { p_teacher: teacher, p_pence: Math.round(v * 100) },
+    d => "Rate saved" + (d.filled ? ", and applied to " + d.filled + " row" + (d.filled === 1 ? "" : "s") + " that had none." : "."));
+};
+window.ofToggle = (id) => { OFFICE.open = OFFICE.open === id ? "" : id; render(); };
+window.ofDelRow = async function (id) {
+  if (!ofAdmin() || OFFICE.busy || !confirm("Remove these hours from the week?")) return;
+  OFFICE.busy = true; OFFICE.err = ""; OFFICE.ok = "";
+  try {
+    const { error } = await LLC.sb.from("hours_log").delete().eq("id", id);
+    if (error) throw error;
+    await ofPullHours(); OFFICE.ok = "Removed.";
+  } catch (e) { OFFICE.err = ofSay(e); }
+  OFFICE.busy = false; render();
+};
+window.ofAddOpen = function () {
+  OFFICE.err = ""; OFFICE.ok = "";
+  OFFICE.addForm = { teacher: (OFFICE.staff[0] || {}).id || "", class_id: "", date: ofShift(OFFICE.week, 0), hh: "1", mm: "0", note: "" };
+  render();
+};
+window.ofAddSave = async function () {
+  const f = OFFICE.addForm; if (!f) return;
+  const mins = Math.round((parseFloat(f.hh) || 0) * 60 + (parseFloat(f.mm) || 0));
+  if (!f.teacher) { OFFICE.err = "Choose a teacher."; render(); return; }
+  if (!f.date) { OFFICE.err = "Choose the day."; render(); return; }
+  if (!(mins >= 1 && mins <= 720)) { OFFICE.err = "Hours must be between one minute and twelve hours."; render(); return; }
+  const d = await ofRpc("hours_add", { p_teacher: f.teacher, p_class: f.class_id || null, p_on: f.date, p_minutes: mins, p_note: f.note || null }, "Added.");
+  if (d && d.ok) { OFFICE.addForm = null; render(); }
+};
+
+function ofSalaryRows() {
+  return OFFICE.hours.map(h => [h.teacher_name, h.classes, ofDec(h.minutes), h.rate_pence == null ? "" : ofPlain(h.rate_pence), h.rate_pence == null && h.pay_pence === 0 ? "" : ofPlain(h.pay_pence)]);
+}
+
+function ofHoursAdmin() {
+  const total = OFFICE.hours.reduce((a, h) => a + Number(h.pay_pence || 0), 0);
+  const mins = OFFICE.hours.reduce((a, h) => a + h.minutes, 0);
+  const missing = OFFICE.hours.reduce((a, h) => a + (h.rows_without_rate || 0), 0);
+  const rows = OFFICE.hours.map(h => {
+    const mine = OFFICE.detail.filter(d => d.teacher_id === h.teacher_id);
+    const open = OFFICE.open === h.teacher_id;
+    const noRate = h.rows_without_rate > 0;
+    let r = "<tr><td><button class=\"of-in\" style=\"width:auto;border:0;background:none;padding:0;cursor:pointer;font-weight:800\" onclick=\"ofToggle('" + esc(h.teacher_id) + "')\" aria-expanded=\"" + open + "\">" +
+      (open ? "▾ " : "▸ ") + esc(h.teacher_name) + "</button>" + (noRate ? '<span class="of-warn">no rate set</span>' : "") + "</td>" +
+      "<td>" + esc(h.classes) + '</td><td class="num">' + esc(ofHM(h.minutes)) + " <span class=\"note\">(" + ofDec(h.minutes) + ')</span></td>' +
+      '<td class="num">' + (h.rate_pence == null ? "—" : ofGBP(h.rate_pence) + "/h") + '</td><td class="num"><strong>' + (h.pay_pence ? ofGBP(h.pay_pence) : "—") + "</strong></td></tr>";
+    if (open) {
+      r += '<tr class="of-sub"><td colspan="5">' + (mine.length ? "<table style=\"width:100%\"><tbody>" + mine.map(d =>
+        "<tr><td style=\"width:110px\">" + esc(ofNice(d.on_date)) + "</td><td>" + esc(ofClassName(d.class_id)) + "</td><td class=\"num\">" + esc(ofHM(d.minutes)) + "</td>" +
+        "<td class=\"note\">" + (d.source === "manual" ? "added by hand" : "from the timetable") + (d.note ? " · " + esc(d.note) : "") + "</td>" +
+        '<td class="num"><button class="of-in" style="width:auto;padding:3px 10px;font-size:12px;cursor:pointer" onclick="ofDelRow(\'' + esc(d.id) + '\')">Remove</button></td></tr>').join("") + "</tbody></table>" : "No rows.") + "</td></tr>";
+    }
+    return r;
+  }).join("");
+  const rates = '<h2 class="section">Hourly rates</h2><div class="card"><p class="note" style="margin:0 0 6px">A rate is copied onto each row when it is made, so changing it later never rewrites a week that has been paid. Rows made before a rate was set are filled in when you set it.</p>' +
+    OFFICE.staff.map(s => '<div class="of-rec"><span><strong>' + esc(s.full_name) + '</strong> <span class="note">' + esc(s.role) + "</span></span>" +
+      '<span class="of-rate">£<input aria-label="Hourly rate for ' + esc(s.full_name) + '" inputmode="decimal" value="' +
+      (OFFICE.rates[s.id] != null ? (OFFICE.rates[s.id] / 100).toFixed(2) : "") + '" placeholder="not set" onchange="ofSetRate(\'' + esc(s.id) + '\', this)"> /h</span></div>').join("") + "</div>";
+  return '<div class="of-bar no-print">' + ofWeekBar() +
+    '<button class="btn primary" onclick="ofGenerate()"' + (OFFICE.busy ? " disabled" : "") + ">Generate from timetable</button>" +
+    '<button class="btn" onclick="ofAddOpen()">+ Cover or extra hours</button></div>' + ofMsgs() + ofAddForm() +
+    (OFFICE.hours.length ? '<div class="card"><table><thead><tr><th>Teacher</th><th>Classes</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Pay</th></tr></thead><tbody>' + rows +
+      '<tr><td colspan="2" class="num"><strong>Total</strong></td><td class="num"><strong>' + esc(ofHM(mins)) + '</strong></td><td></td><td class="num"><strong>' + ofGBP(total) + "</strong></td></tr></tbody></table>" +
+      (missing ? '<p class="of-err">' + missing + " row" + (missing === 1 ? " has" : "s have") + " no rate, so " + (missing === 1 ? "it is" : "they are") + " not in the pay total. Set the rate below.</p>" : "") +
+      '<div class="row no-print" style="margin-top:12px"><button class="btn primary" onclick="ofToReports({salary:true})">📤 Send to accountant</button>' +
+      '<button class="btn" onclick="ofPayrollCsv()">Export for payroll (CSV)</button></div></div>'
+      : '<div class="callout">No hours for this week yet. Press <strong>Generate from timetable</strong> once the lessons have happened, then correct anything that did not run.</div>') +
+    rates;
+}
+
+function ofWeekBar() {
+  return '<span class="of-week" role="group" aria-label="Choose the week"><button onclick="ofWeek(-1)" aria-label="Previous week">‹</button><span>' + esc(ofWeekLabel(OFFICE.week)) +
+    '</span><button onclick="ofWeek(1)" aria-label="Next week">›</button></span><button class="btn" onclick="ofWeek(0)">This week</button>';
+}
+function ofMsgs() { return (OFFICE.err ? '<p class="of-err" role="alert">' + esc(OFFICE.err) + "</p>" : "") + (OFFICE.ok ? '<p class="of-ok" role="status">' + esc(OFFICE.ok) + "</p>" : ""); }
+
+function ofAddForm() {
+  const f = OFFICE.addForm; if (!f) return "";
+  return '<div class="of-form"><h3>Cover or extra hours</h3><div class="g">' +
+    '<div><label for="ofT">Teacher</label><select id="ofT" onchange="OFFICE.addForm.teacher=this.value">' + OFFICE.staff.map(s => '<option value="' + esc(s.id) + '"' + (s.id === f.teacher ? " selected" : "") + ">" + esc(s.full_name) + "</option>").join("") + "</select></div>" +
+    '<div><label for="ofC">Class <span class="note">(optional)</span></label><select id="ofC" onchange="OFFICE.addForm.class_id=this.value"><option value="">—</option>' + OFFICE.classes.map(c => '<option value="' + esc(c.id) + '"' + (c.id === f.class_id ? " selected" : "") + ">" + esc(c.name) + "</option>").join("") + "</select></div>" +
+    '<div><label for="ofD">Day</label><input id="ofD" type="date" value="' + esc(f.date) + '" oninput="OFFICE.addForm.date=this.value"></div>' +
+    '<div><label for="ofH">Hours</label><input id="ofH" inputmode="numeric" value="' + esc(f.hh) + '" oninput="OFFICE.addForm.hh=this.value"></div>' +
+    '<div><label for="ofM">Minutes</label><input id="ofM" inputmode="numeric" value="' + esc(f.mm) + '" oninput="OFFICE.addForm.mm=this.value"></div></div>' +
+    '<label for="ofN">Note <span class="note">(optional)</span></label><input id="ofN" maxlength="200" value="' + esc(f.note) + '" placeholder="Cover for Mauluda" oninput="OFFICE.addForm.note=this.value">' +
+    '<div class="row" style="margin-top:12px"><button class="btn primary" onclick="ofAddSave()"' + (OFFICE.busy ? " disabled" : "") + '>Add</button><button class="btn" onclick="OFFICE.addForm=null;OFFICE.err=\'\';render()">Cancel</button></div></div>';
+}
+
+function ofHoursTeacher() {
+  const mine = OFFICE.hours[0], mins = mine ? mine.minutes : 0;
+  const rows = OFFICE.detail.filter(d => d.teacher_id === LLC.profile.id);
+  return '<div class="of-bar no-print">' + ofWeekBar() + "</div>" + ofMsgs() +
+    '<div class="grid g2"><div class="card"><div class="note">This week</div><div style="font-size:30px;font-weight:800">' + esc(ofHM(mins)) + '</div><div class="note">' + ofDec(mins) + " hours</div></div></div>" +
+    '<div class="card" style="margin-top:14px"><h3 class="card-title">Your lessons</h3>' + (rows.length ? "<table><tbody>" + rows.map(d =>
+      "<tr><td style=\"width:130px\">" + esc(ofNice(d.on_date)) + "</td><td>" + esc(ofClassName(d.class_id)) + '</td><td class="num">' + esc(ofHM(d.minutes)) + '</td><td class="note">' + (d.source === "manual" ? "added by the office" : "timetable") + (d.note ? " · " + esc(d.note) : "") + "</td></tr>").join("") + "</tbody></table>"
+      : '<p class="note">Nothing recorded for this week yet. The office adds hours from the timetable once the lessons have happened.</p>') +
+    '<p class="note" style="margin-top:10px">If something here looks wrong, tell the office. Only they can change hours, and pay is not shown on this page.</p></div>';
+}
+
+const pageHoursOffice0 = pageHours;
+function pageHoursOffice() {
+  if (!ofLive()) {
+    return pageHoursOffice0().replace(/<div class="callout">Your backend already[\s\S]*?<\/div>/,
+      '<div class="callout"><strong>Prototype data.</strong> These names and figures are a sample, not your school. Connect this device and sign in as an admin to build real hours from the timetable.</div>');
+  }
+  const role6 = LLC.profile.role;
+  if (role6 !== "admin" && role6 !== "teacher") return pageSimple("Teacher hours", "Staff only", "Teaching hours are for the teachers and the office.");
+  if (!OFFICE.loaded) {
+    if (!OFFICE.week) OFFICE.week = ofIso(ofMonday(new Date()));
+    return "<h1>Teacher hours</h1><p class=\"sub\">Loading…</p>" + ofMsgs();
+  }
+  return "<h1>Teacher hours</h1><p class=\"sub\">" + esc(ofWeekLabel(OFFICE.week)) + "</p>" + (role6 === "admin" ? ofHoursAdmin() : ofHoursTeacher());
+}
+
+window.ofPayrollCsv = function () {
+  const sec = [{ title: "Salary report — " + ofWeekLabel(OFFICE.week), head: ["Teacher", "Classes", "Hours", "Rate £/h", "Pay £"], rows: ofSalaryRows() }];
+  ofDownload("letslearn-salary-" + OFFICE.week + ".csv", ofCsv(sec));
+  ofLogReport("Salary report", ofWeekLabel(OFFICE.week), [], "csv", "downloaded");
+};
+window.ofToReports = function (sel) {
+  Object.assign(OFFICE.rep, { salary: false, fees: false, dd: false, att: false }, sel || {});
+  page = "reports"; render();
+  ofPullReports().then(() => ofPullData()).then(render);
+};
+
+/* ============================================================
+   Reports & email
+   ============================================================ */
+
+async function ofLogReport(report, period, recipients, format, action) {
+  if (!ofAdmin()) return;
+  try {
+    await LLC.sb.from("report_log").insert({ school_id: LLC.profile.school_id, report, period,
+      recipients: recipients.map(r => r.email).join(", ").slice(0, 600), format, action, by_id: LLC.profile.id });
+    await ofPullReports(); render();
+  } catch (e) {}
+}
+
+function ofSections() {
+  const rep = OFFICE.rep, d = OFFICE.data, out = [];
+  if (rep.salary) {
+    out.push({ title: "Salary report — " + ofWeekLabel(OFFICE.week), head: ["Teacher", "Classes", "Hours", "Rate £/h", "Pay £"], rows: ofSalaryRows(),
+      note: OFFICE.hours.length ? "" : "No hours recorded for this week." });
+  }
+  const inRange = (c) => { const k = (c.charge_date || c.created_at || "").slice(0, 10); return k >= rep.from && k <= rep.to; };
+  if (rep.fees) {
+    const rows = d.charges.filter(inRange);
+    const sum = (sts) => rows.filter(c => sts.indexOf(c.status) >= 0).reduce((a, c) => a + c.amount_pence, 0);
+    const cnt = (sts) => rows.filter(c => sts.indexOf(c.status) >= 0).length;
+    const groups = [["Collected", ["confirmed", "paid_out"]], ["On its way", ["pending", "submitted"]], ["Failed", ["failed", "charged_back"]], ["Cancelled", ["cancelled"]]];
+    out.push({ title: "Fees — " + rep.from + " to " + rep.to, note: "Charges dated in this period. Amounts are what was asked for, by what has happened to the payment.",
+      head: ["Status", "Charges", "Amount £"], rows: groups.map(g => [g[0], cnt(g[1]), ofPlain(sum(g[1]))]).concat([["Total asked for", rows.length, ofPlain(rows.reduce((a, c) => a + c.amount_pence, 0))]]) });
+    const per = {}; rows.forEach(c => { const k = c.period || "—"; (per[k] = per[k] || { n: 0, asked: 0, got: 0 }); per[k].n++; per[k].asked += c.amount_pence; if (["confirmed", "paid_out"].indexOf(c.status) >= 0) per[k].got += c.amount_pence; });
+    out.push({ title: "Fees by period", head: ["Period", "Charges", "Asked £", "Collected £", "Outstanding £"],
+      rows: Object.keys(per).sort().map(k => [k, per[k].n, ofPlain(per[k].asked), ofPlain(per[k].got), ofPlain(per[k].asked - per[k].got)]) });
+  }
+  if (rep.dd) {
+    const by = {}; d.mandates.forEach(m => { by[m.status] = (by[m.status] || 0) + 1; });
+    out.push({ title: "Direct Debit mandates", head: ["Status", "Mandates"], rows: Object.keys(by).sort().map(k => [k, by[k]]).concat(d.mandates.length ? [] : [["None set up yet", 0]]) });
+    const ch = {}; d.charges.forEach(c => { ch[c.status] = ch[c.status] || { n: 0, p: 0 }; ch[c.status].n++; ch[c.status].p += c.amount_pence; });
+    out.push({ title: "Direct Debit collections, all time", head: ["Status", "Collections", "Amount £"], rows: Object.keys(ch).sort().map(k => [k, ch[k].n, ofPlain(ch[k].p)]) });
+  }
+  if (rep.att) {
+    const names = {}; (d.pupils || []).forEach(p => { names[p.id] = p.full_name; });
+    const cls = {}; OFFICE.classes.forEach(c => { cls[c.id] = c.name; });
+    const agg = {};
+    d.att.forEach(a => { const k = a.class_id + "|" + a.pupil_id; (agg[k] = agg[k] || { c: a.class_id, p: a.pupil_id, present: 0, late: 0, absent: 0, excused: 0 })[a.mark]++; });
+    const rows = Object.values(agg).sort((x, y) => (cls[x.c] || "").localeCompare(cls[y.c] || "") || (names[x.p] || "").localeCompare(names[y.p] || ""));
+    const pct = (r) => { const t = r.present + r.late + r.absent; return t ? Math.round((r.present + r.late) / t * 100) + "%" : "—"; };
+    out.push({ title: "Attendance — " + rep.from + " to " + rep.to, note: "Present and late count as attending; excused days are left out of the percentage.",
+      head: ["Class", "Pupil", "Present", "Late", "Absent", "Excused", "Attending"], rows: rows.map(r => [cls[r.c] || "—", names[r.p] || "—", r.present, r.late, r.absent, r.excused, pct(r)]) });
+  }
+  return out;
+}
+
+const ofRepNames = () => [["salary", "Salary report"], ["fees", "Fees collected"], ["dd", "Direct Debit summary"], ["att", "Attendance summary"]].filter(x => OFFICE.rep[x[0]]).map(x => x[1]);
+const ofChosen = () => OFFICE.recipients.filter(r => OFFICE.rep.to_ids[r.id]);
+function ofPeriodLabel() {
+  const rep = OFFICE.rep, p = [];
+  if (rep.salary) p.push(ofWeekLabel(OFFICE.week));
+  if (rep.fees || rep.dd || rep.att) p.push(rep.from + " to " + rep.to);
+  return p.join(" · ");
+}
+
+window.ofRepSet = async function (k, v) {
+  OFFICE.rep[k] = v; OFFICE.err = ""; OFFICE.ok = "";
+  if (["fees", "dd", "att", "from", "to"].indexOf(k) >= 0) { render(); await ofPullData(); }
+  render();
+};
+window.ofRecTo = (id, on) => { OFFICE.rep.to_ids[id] = on; render(); };
+window.ofRecOpen = () => { OFFICE.recForm = { name: "", email: "", role: "" }; OFFICE.err = ""; render(); };
+window.ofRecSave = async function () {
+  const f = OFFICE.recForm; if (!f || OFFICE.busy) return;
+  if (!f.name.trim()) { OFFICE.err = "Give the person a name."; render(); return; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())) { OFFICE.err = "That does not look like an email address."; render(); return; }
+  OFFICE.busy = true; OFFICE.err = "";
+  try {
+    const { error } = await LLC.sb.from("report_recipients").insert({ school_id: LLC.profile.school_id, name: f.name.trim(), email: f.email.trim(), role: f.role.trim() });
+    if (error) throw error;
+    OFFICE.recForm = null; await ofPullReports();
+  } catch (e) { OFFICE.err = e && e.code === "23505" ? "That address is already in the list." : ofSay(e); }
+  OFFICE.busy = false; render();
+};
+window.ofRecDel = async function (id) {
+  if (!confirm("Remove this address? Reports will no longer be offered to it.")) return;
+  try { const { error } = await LLC.sb.from("report_recipients").delete().eq("id", id); if (error) throw error; delete OFFICE.rep.to_ids[id]; await ofPullReports(); }
+  catch (e) { OFFICE.err = ofSay(e); }
+  render();
+};
+
+function ofFile(ext) { return "letslearn-" + ofRepNames().join("-").toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "") + "-" + (OFFICE.rep.salary ? OFFICE.week : OFFICE.rep.to) + "." + ext; }
+
+window.ofRepCsv = function () {
+  const sec = ofSections(); if (!sec.length) { OFFICE.err = "Choose at least one report."; render(); return; }
+  ofDownload(ofFile("csv"), ofCsv(sec));
+  OFFICE.ok = "Downloaded. Attach it to your email."; ofLogReport(ofRepNames().join(", "), ofPeriodLabel(), ofChosen(), "csv", "downloaded");
+};
+window.ofRepPrint = function () {
+  if (!ofSections().length) { OFFICE.err = "Choose at least one report."; render(); return; }
+  ofLogReport(ofRepNames().join(", "), ofPeriodLabel(), ofChosen(), "print", "printed");
+  window.print();
+};
+window.ofRepMail = function () {
+  const to = ofChosen();
+  if (!ofSections().length) { OFFICE.err = "Choose at least one report."; render(); return; }
+  if (!to.length) { OFFICE.err = "Choose who it is going to."; render(); return; }
+  const names = ofRepNames(), school = "your madrasah";
+  const subject = names.join(" and ") + " — " + ofPeriodLabel();
+  const body = "Assalamu alaikum,\n\nPlease find the " + names.join(", ").toLowerCase() + " attached (" + ofPeriodLabel() + ").\n\nPlease reply with any queries.\n\n" + (LLC.profile.full_name || "");
+  ofLogReport(names.join(", "), ofPeriodLabel(), to, "text", "mail_draft");
+  window.location.href = "mailto:" + to.map(r => r.email).join(",") + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+  OFFICE.ok = "Your mail app has the message ready. Attach the downloaded CSV before you send it.";
+  render();
+};
+
+const OF_ACTION = { downloaded: "Downloaded", printed: "Printed", mail_draft: "Mail draft opened" };
+
+function pageReportsOffice() {
+  if (!ofLive()) return pageReportsOffice0();
+  if (!ofAdmin()) return pageSimple("Reports & email", "Admin only",
+    "Salary figures are admin-only. A teacher can see their own hours on the Teacher hours page, but not anyone else's, and cannot send anything to the accountant.");
+  if (!OFFICE.loaded) return "<h1>Reports &amp; email</h1><p class=\"sub\">Loading…</p>" + ofMsgs();
+  const rep = OFFICE.rep, sec = ofSections();
+  const pick = (k, label, note) => '<tr><td><label><input type="checkbox" ' + (rep[k] ? "checked" : "") + ' onchange="ofRepSet(\'' + k + '\', this.checked)"> ' + label + '</label><div class="note">' + note + "</div></td></tr>";
+  const recs = OFFICE.recipients.length ? OFFICE.recipients.map(r => '<div class="of-rec"><label><input type="checkbox" ' + (rep.to_ids[r.id] ? "checked" : "") + ' onchange="ofRecTo(\'' + esc(r.id) + '\', this.checked)"> <strong>' + esc(r.name) + '</strong><div class="note" style="margin-left:22px">' +
+    esc(r.email) + (r.role ? " · " + esc(r.role) : "") + '</div></label><button aria-label="Remove ' + esc(r.name) + '" onclick="ofRecDel(\'' + esc(r.id) + '\')">×</button></div>').join("")
+    : '<p class="note">No addresses yet. Add the accountant once, below, rather than typing it each month.</p>';
+  const recForm = OFFICE.recForm ? '<div class="of-form" style="margin-top:10px"><div class="g"><div><label for="rcN">Name</label><input id="rcN" maxlength="80" oninput="OFFICE.recForm.name=this.value" value="' + esc(OFFICE.recForm.name) + '"></div>' +
+    '<div><label for="rcE">Email</label><input id="rcE" type="email" autocomplete="off" oninput="OFFICE.recForm.email=this.value" value="' + esc(OFFICE.recForm.email) + '"></div>' +
+    '<div><label for="rcR">Role <span class="note">(optional)</span></label><input id="rcR" maxlength="60" oninput="OFFICE.recForm.role=this.value" value="' + esc(OFFICE.recForm.role) + '" placeholder="Accountant"></div></div>' +
+    '<div class="row" style="margin-top:10px"><button class="btn primary" onclick="ofRecSave()">Add address</button><button class="btn" onclick="OFFICE.recForm=null;render()">Cancel</button></div></div>'
+    : '<button class="btn no-print" style="margin-top:10px" onclick="ofRecOpen()">+ Add an address</button>';
+  const preview = sec.length ? sec.map(s => '<h3>' + esc(s.title) + "</h3>" + (s.note ? '<p class="note" style="margin:0 0 6px">' + esc(s.note) + "</p>" : "") +
+    '<div class="card" style="overflow:auto"><table><thead><tr>' + s.head.map(h => "<th>" + esc(h) + "</th>").join("") + "</tr></thead><tbody>" +
+    (s.rows.length ? s.rows.map(r => "<tr>" + r.map(c => "<td>" + esc(c) + "</td>").join("") + "</tr>").join("") : '<tr><td colspan="' + s.head.length + '" class="note">Nothing in this period.</td></tr>') + "</tbody></table></div>").join("")
+    : '<div class="callout">Choose a report to see it here.</div>';
+  const log = OFFICE.log.length ? OFFICE.log.map(l => "<tr><td class=\"note\">" + esc(new Date(l.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) +
+    "</td><td><strong>" + esc(l.report) + '</strong><div class="note">' + esc(l.period) + '</div></td><td class="note">' + esc(l.recipients || "—") + "</td><td><span class=\"pill grey\">" + esc(OF_ACTION[l.action] || l.action) + "</span></td></tr>").join("")
+    : '<tr><td colspan="4" class="note" style="padding:14px 0">Nothing yet.</td></tr>';
+  return "<h1>Reports &amp; email</h1><p class=\"sub\">Build a report, download it or print it, or open it in your own mail app</p>" +
+    '<div class="callout warn"><strong>This does not send email by itself.</strong> Sending on a schedule needs an email service and your domain verified, which only the madrasah can set up (notes at the bottom). Until then, <em>Open email draft</em> prepares the message in your own mail app and you attach the download. Every step is logged, as what actually happened.</div>' +
+    ofMsgs() + '<h2 class="section">Build a report</h2><div class="card"><div class="grid g2"><div><h3 class="card-title">What to include</h3><table><tbody>' +
+    pick("salary", "Salary report", "From Teacher hours · " + esc(ofWeekLabel(OFFICE.week))) + pick("fees", "Fees collected", "By status and by period") +
+    pick("dd", "Direct Debit summary", "Mandates and collections") + pick("att", "Attendance summary", "Per class and per child") +
+    '</tbody></table><div class="row" style="margin-top:10px"><span class="note">Salary week:</span>' + ofWeekBar() + '</div><div class="row" style="margin-top:10px"><span class="note">Fees and attendance from</span><input class="of-in" style="width:auto" type="date" value="' + esc(rep.from) +
+    '" onchange="ofRepSet(\'from\', this.value)" aria-label="From"><span class="note">to</span><input class="of-in" style="width:auto" type="date" value="' + esc(rep.to) + '" onchange="ofRepSet(\'to\', this.value)" aria-label="To"></div></div>' +
+    '<div><h3 class="card-title">Who it is for</h3>' + recs + recForm +
+    '<p class="note" style="margin-top:10px">Addresses are kept once, here. They are not verified by email, because nothing here can send one. Check each carefully: a mistyped accountant\'s address is how payroll reaches a stranger.</p></div></div>' +
+    '<div class="row no-print" style="margin-top:14px"><button class="btn primary" onclick="ofRepCsv()">Download CSV</button><button class="btn" onclick="ofRepMail()">Open email draft</button><button class="btn" onclick="ofRepPrint()">🖨 Print</button></div></div>' +
+    (OFFICE.data.truncated ? '<div class="callout warn" style="margin-top:12px">This is a very large set, so only the first part is shown. Narrow the dates.</div>' : "") +
+    '<h2 class="section">Preview</h2><div class="of-prev">' + preview + "</div>" +
+    '<h2 class="section">What has been done</h2><div class="card"><table><thead><tr><th>When</th><th>Report</th><th>For</th><th>What happened</th></tr></thead><tbody>' + log + "</tbody></table>" +
+    '<p class="note" style="margin-top:10px">The log cannot be edited or deleted. It records that a report was downloaded, printed or opened in a mail app, and who did it. It cannot know whether an email was sent or arrived.</p></div>' +
+    '<h2 class="section">To send on a schedule</h2><div class="callout">Automatic sending is not available yet. It needs <strong>an email provider</strong> (Resend, Postmark, SendGrid or SES, not a personal Gmail), <strong>your domain verified</strong> (SPF, DKIM, DMARC) so mail arrives as your own address, and <strong>a scheduled job</strong> in Supabase to build and send the report. A new address should be confirmed by email before its first send, so a stolen admin login cannot quietly redirect payroll. When you have an account, this is a small addition on top of what is here.</div>';
+}
+const pageReportsOffice0 = pageReports;
+
+/* ---------- wire in ---------- */
+/* A teacher can see their own hours, so they need a way to the page. */
+if (typeof NAV === "object" && NAV.teacher) {
+  const grp = NAV.teacher[1] && NAV.teacher[1][1];
+  if (grp && !grp.some(x => x[0] === "hours")) grp.push(["hours", "My hours", "⏱"]);
+}
+pageHours = pageHoursOffice;
+pageReports = pageReportsOffice;
+if (typeof PAGES === "object") { PAGES.hours = pageHours; PAGES.reports = pageReports; }
+if (ofLive() && !OFFICE.loaded) { ofRefresh(); }
+</script>

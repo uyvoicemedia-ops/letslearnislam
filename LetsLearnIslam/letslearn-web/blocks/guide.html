@@ -1,0 +1,361 @@
+<!-- ============================================================
+     GUIDE — a short tour for each kind of person
+     ------------------------------------------------------------
+     A student, a teacher, an admin and a parent each use a different
+     part of this app, so each gets their own tour, in their own words,
+     about only the things they can actually do.
+
+       * It lives on the menu as "Guide", and offers itself once, the
+         first time somebody in a role arrives.
+       * Each step can take you to the real screen and light up the menu
+         item ("Show me"), then wait while you look. The card sits at the
+         bottom so the screen stays visible.
+       * Some steps have something to do: a little tap, a question. They
+         never block you from moving on, and nothing in a step touches
+         real data, coins, hours or fees. The coin you tap in the student
+         tour is a picture of a coin.
+       * It remembers, on this device only, which steps you finished.
+
+     Every claim in a tour has to be true of the app today. If a feature
+     is not built, or only works with something set up (a recording, a
+     project, a GoCardless account), the step says so rather than
+     promising it. The students' tour is written for young readers:
+     short sentences, one idea per step, and a reminder to ask a grown-up
+     before joining an online lesson.
+
+     Menu items are found by their label, so renaming one screen's id
+     cannot leave a tour pointing at nothing; a step whose screen is not
+     on that person's menu simply has no "Show me".
+     ============================================================ -->
+<style>
+  .gd-coach { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); z-index:95;
+      width:min(560px, calc(100vw - 24px)); background:var(--card); color:var(--ink, inherit);
+      border:1.5px solid var(--line); border-radius:22px; box-shadow:0 18px 50px rgba(0,0,0,.32);
+      padding:16px 18px 14px; animation:gdUp .28s ease both; }
+  .gd-coach.kid { font-size:17px; }
+  @keyframes gdUp { from { opacity:0; transform:translate(-50%, 14px); } to { opacity:1; transform:translate(-50%, 0); } }
+  .gd-top { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .gd-em { font-size:34px; line-height:1; width:48px; height:48px; border-radius:15px; display:grid; place-items:center;
+      background:var(--bg); flex:none; }
+  .gd-title { font-weight:800; font-size:18px; line-height:1.2; flex:1; min-width:0; }
+  .gd-coach.kid .gd-title { font-size:21px; }
+  .gd-x { border:0; background:none; font-size:22px; cursor:pointer; color:var(--muted); width:44px; height:44px; border-radius:50%; flex:none; }
+  .gd-x:focus-visible, .gd-btn:focus-visible, .gd-opt:focus-visible, .gd-star:focus-visible { outline:3px solid #f6d64a; outline-offset:2px; }
+  .gd-text { margin:2px 0 10px; line-height:1.5; font-size:15px; }
+  .gd-coach.kid .gd-text { font-size:18px; line-height:1.55; }
+  .gd-dots { display:flex; gap:5px; margin:0 0 10px; }
+  .gd-dots i { height:6px; flex:1; border-radius:4px; background:var(--line); }
+  .gd-dots i.done { background:var(--qaida-green, #268f73); }
+  .gd-dots i.now { background:var(--islam-blue, #2e6bbf); }
+  .gd-try { background:var(--bg); border:1.5px dashed var(--line); border-radius:14px; padding:10px 12px; margin:0 0 10px; }
+  .gd-try .q { font-weight:800; margin:0 0 8px; font-size:14.5px; }
+  .gd-coach.kid .gd-try .q { font-size:17px; }
+  .gd-opts { display:grid; gap:8px; }
+  .gd-opt { font:inherit; font-weight:700; text-align:left; padding:11px 14px; min-height:46px; border-radius:12px; cursor:pointer;
+      border:2px solid var(--line); background:var(--card); color:inherit; }
+  .gd-opt.good { border-color:#2a9a6a; background:#e9f7ef; }
+  .gd-opt.bad { border-color:#d98a80; background:#fbeae7; }
+  .gd-fb { margin:8px 0 0; font-weight:700; font-size:13.5px; }
+  .gd-fb.good { color:#237a53; } .gd-fb.bad { color:#b8473a; }
+  .gd-star { font:inherit; font-size:44px; line-height:1; border:0; background:none; cursor:pointer; padding:4px 10px; min-width:64px; min-height:64px; position:relative; }
+  .gd-star:active { transform:scale(.9); }
+  .gd-pop { position:absolute; left:50%; top:-4px; font-size:16px; font-weight:800; color:#b07d00; pointer-events:none; animation:gdPop .9s ease-out forwards; }
+  @keyframes gdPop { to { transform:translate(-50%, -34px); opacity:0; } }
+  .gd-btns { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .gd-btns .sp { flex:1; }
+  .gd-btn { font:inherit; font-weight:800; min-height:46px; padding:0 18px; border-radius:13px; cursor:pointer; border:2px solid var(--line); background:var(--card); color:inherit; }
+  .gd-btn.primary { background:var(--qaida-green, #268f73); border-color:transparent; color:#fff; }
+  .gd-btn.ghost { border-color:transparent; background:none; color:var(--muted); }
+  .gd-btn[disabled] { opacity:.5; cursor:default; }
+  #nav a.gd-spot { position:relative; box-shadow:0 0 0 3px #f6d64a, 0 0 0 8px rgba(246,214,74,.35); border-radius:12px; animation:gdSpot 1.5s ease-in-out infinite; }
+  @keyframes gdSpot { 50% { box-shadow:0 0 0 3px #f6d64a, 0 0 0 12px rgba(246,214,74,0); } }
+  .gd-invite { position:fixed; left:16px; bottom:16px; z-index:94; width:min(330px, calc(100vw - 32px)); background:var(--card);
+      border:1.5px solid var(--line); border-radius:20px; padding:14px 16px; box-shadow:0 14px 40px rgba(0,0,0,.28); animation:gdUp2 .3s ease both; }
+  @keyframes gdUp2 { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
+  .gd-invite b { display:block; font-size:16px; margin-bottom:2px; }
+  .gd-invite p { margin:0 0 10px; font-size:14px; color:var(--muted); line-height:1.45; }
+  .gd-cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:12px; }
+  .gd-card { background:var(--card); border:1.5px solid var(--line); border-radius:16px; padding:14px 15px; display:flex; flex-direction:column; gap:6px; }
+  .gd-card.done { border-color:#a7d3b6; background:#f0f9f3; }
+  .gd-card .em { font-size:28px; }
+  .gd-card h3 { margin:0; font-size:15.5px; }
+  .gd-card p { margin:0; font-size:13.5px; color:var(--muted); line-height:1.45; flex:1; }
+  .gd-card .row { display:flex; gap:8px; align-items:center; margin-top:4px; }
+  .gd-prog { height:10px; border-radius:6px; background:var(--line); overflow:hidden; max-width:360px; margin:6px 0 14px; }
+  .gd-prog i { display:block; height:100%; background:var(--qaida-green, #268f73); transition:width .4s ease; }
+  details.gd-faq { background:var(--card); border:1.5px solid var(--line); border-radius:13px; padding:0 14px; margin-bottom:8px; }
+  details.gd-faq summary { cursor:pointer; font-weight:800; padding:12px 0; min-height:24px; }
+  details.gd-faq p { margin:0 0 12px; line-height:1.55; color:var(--muted); }
+  @media (max-width:520px) { .gd-coach { bottom:8px; border-radius:20px; } .gd-invite { bottom:8px; left:8px; } }
+  @media (prefers-reduced-motion:reduce) { .gd-coach, .gd-invite { animation:none; } #nav a.gd-spot { animation:none; } .gd-pop { animation:none; opacity:0; } }
+</style>
+<script>
+"use strict";
+
+/* ============================================================
+   What each tour says
+   ------------------------------------------------------------
+   step = { id, em, title, text, show: "<menu label>", try: {...} }
+     show   the menu label to jump to (found on that person's own menu)
+     try    { type:"tap" }                       a picture of a coin to tap
+            { type:"choice", q, options:[...], right:<index>, why }
+   ============================================================ */
+const GD_TOURS = {
+  student: {
+    kid: true, name: "Your tour", lead: "Two minutes. Tap Next whenever you are ready.",
+    steps: [
+      { id: "hello", em: "👋", title: "Assalamu alaikum!", text: "This is your own place to learn, practise and grow a garden. Let's have a quick look around." },
+      { id: "practise", em: "🎯", title: "Practise a little every day", text: "Tap Practise to learn your letters and words. The more you practise, the more coins you earn. Try the star: that is how a coin feels!",
+        show: "Practise", try: { type: "tap" } },
+      { id: "garden", em: "🌳", title: "Your garden grows with you", text: "Coins 🌱 are for your garden. Build a house, plant trees, go inside and look around. Tap the grass to walk there.",
+        show: "My garden" },
+      { id: "duas", em: "🤲", title: "Duas in your house", text: "When you walk into a room, you are asked to say a dua. If there is a recording, tap the ▶ button to listen first. Then say it yourself.",
+        show: "My garden", try: { type: "choice", q: "How do you hear a dua?", options: ["Tap the ▶ button", "Tap a coin", "Knock on the door"], right: 0,
+          why: "The ▶ button plays a recording of a person reciting. If you cannot see it, there is no recording yet." } },
+      { id: "quiz", em: "🎮", title: "Quiz time!", text: "Your teacher shows a code on the board. Tap Quiz, type the code, and answer as fast as you can.", show: "Quiz" },
+      { id: "lessons", em: "📅", title: "Online lessons", text: "Class sessions shows your lessons. When your teacher has added a link there is a Join button. Always ask a grown-up before you join.",
+        show: "Class sessions", try: { type: "choice", q: "Who puts the Join link there?", options: ["Your teacher", "Anybody", "Another child"], right: 0,
+          why: "Only your teacher can add a link. If something looks wrong, tell a grown-up." } },
+      { id: "done", em: "🏅", title: "You are ready!", text: "You can open this guide again any time from the menu. Have fun, and keep practising!" },
+    ],
+    faq: [
+      ["Where do my coins come from?", "From practising, from saying your duas for the first time each day, and from your teacher and your parents when they give you some."],
+      ["I forgot my PIN.", "Tell your teacher. They can give you a new one."],
+      ["Why can I not hear the dua?", "A recording has to be added first. When it is there you will see a ▶ button next to the Arabic."],
+    ],
+  },
+  teacher: {
+    name: "Your tour", lead: "Six things you will do most. Two minutes.",
+    steps: [
+      { id: "hello", em: "👋", title: "Welcome to your classes", text: "This is your day in LetsLearn: your classes, your lessons, the register, homework, quizzes and your own hours. Here is where each lives." },
+      { id: "classes", em: "🏫", title: "My classes", text: "Each class shows who teaches it, the pupils in it, and the code children type to find their class. A teacher sees only their own classes.",
+        show: "My classes", try: { type: "choice", q: "What do children type to find their class?", options: ["The class's join code", "Their PIN", "Your password"], right: 0,
+          why: "The join code finds the class; each child then picks their name and types their own PIN. The code is a finder, not a secret." } },
+      { id: "timetable", em: "🗓", title: "The timetable", text: "The whole school's week is here so you can see who has which room. Your own lessons are outlined in gold, and Mine shows only yours.",
+        show: "Timetable" },
+      { id: "sessions", em: "🔗", title: "Online lessons", text: "In Class sessions, add a lesson with its date, time and meeting link. Pupils and parents of that class get a Join button. Links can only come from the platforms your school has approved.",
+        show: "Class sessions", try: { type: "choice", q: "Which meeting links can you attach?", options: ["Only platforms your school approved", "Any link at all", "None, only admins can"], right: 0,
+          why: "An admin keeps the approved list. A link to anywhere else is refused, so a child is never sent somewhere unexpected." } },
+      { id: "register", em: "✅", title: "Register and homework", text: "Take attendance for your classes and set homework. Marked work reaches the child and their parent.", show: "Attendance" },
+      { id: "quiz", em: "🎮", title: "Run a live quiz", text: "Pick a set, share the code, and watch the class answer at once. The four deen quiz sets need a teacher to read them through before a class uses them.", show: "Quiz" },
+      { id: "hours", em: "⏱", title: "Your hours", text: "My hours shows your teaching hours for each week. The office builds them from the timetable and fixes any cover. Pay is not shown here, and nobody else can see your hours.",
+        show: "My hours" },
+      { id: "done", em: "🎉", title: "That is the tour", text: "Open the Guide from the menu whenever you want it again, including quick answers." },
+    ],
+    faq: [
+      ["I can't see a class I teach.", "An admin adds you to a class from the Classes page. Ask them to check you are listed as its teacher."],
+      ["Why can't I change my hours?", "Only the office can change hours or rates, so pay is never altered by accident. If something is wrong, tell them."],
+      ["A child lost their PIN.", "Ask an admin, or a teacher of that child, to set a new one."],
+    ],
+  },
+  admin: {
+    name: "Your tour", lead: "How to set the madrasah up, in the order that works. Three minutes.",
+    steps: [
+      { id: "hello", em: "👋", title: "You run the madrasah", text: "Seven jobs, in the order that works best. Each one has its own screen on the menu." },
+      { id: "classes", em: "🏫", title: "1 · Classes", text: "Create each class, put a teacher on it, and put the pupils in. A pupil is in exactly one class, and moving them is one tap.",
+        show: "Classes", try: { type: "choice", q: "A pupil is in the wrong class. What do you do?", options: ["Use Move to… on their name", "Delete and re-add them", "Ask the teacher to do it"], right: 0,
+          why: "Move to… takes them out of the old class and into the new one in one step, school-checked." } },
+      { id: "timetable", em: "🗓", title: "2 · The timetable", text: "Add each weekly lesson. The app will not let a class, a room or a teacher be in two places at once, and it tells you which one clashed.",
+        show: "Timetable" },
+      { id: "sessions", em: "🔗", title: "3 · Online lessons", text: "Teachers add dated lessons with a meeting link in Class sessions. You keep the list of approved platforms at the bottom of that page. Start there before children are sent links.",
+        show: "Class sessions" },
+      { id: "hours", em: "⏱", title: "4 · Teacher hours", text: "Set each teacher's rate, then press Generate from timetable once the lessons have happened. Fix cover or a lesson that did not run. Last week's pay stays frozen at the rate it was paid at.",
+        show: "Teacher hours", try: { type: "choice", q: "You change a teacher's rate today. What happens to last week's pay?", options: ["Nothing: it stays as it was paid", "It is recalculated", "It is deleted"], right: 0,
+          why: "A rate is copied onto each row when it is made, so a past week cannot be rewritten by accident." } },
+      { id: "reports", em: "📤", title: "5 · Reports and email", text: "Build the salary, fees, Direct Debit and attendance reports, then download them or open a ready-written email in your own mail app. It does not send email by itself yet, and every step is logged honestly.",
+        show: "Reports & email" },
+      { id: "dd", em: "🏦", title: "6 · Fees by Direct Debit", text: "Parents set up a Direct Debit on GoCardless's own page: this app never sees a bank detail. Press Check first to see who would be charged, and only then type COLLECT. A collection cannot be undone from here.",
+        show: "Direct Debit", try: { type: "choice", q: "Where does a parent type their bank details?", options: ["On GoCardless's own page", "In this app", "In an email to you"], right: 0,
+          why: "Never in this app. What we keep is a customer id and a mandate id. It needs your GoCardless account connected first." } },
+      { id: "test", em: "🧪", title: "7 · Try the garden yourself", text: "On the Classes page, Create a test student gives you a pupil with unlimited coins to explore the garden. It lives in a class of its own and writes nothing to the points record.",
+        show: "Classes" },
+      { id: "done", em: "🎉", title: "You are set up", text: "Open the Guide any time from the menu." },
+    ],
+    faq: [
+      ["Can a teacher see pay?", "No. Teachers see their own hours only, never a rate or a pay figure, and nobody outside your school sees any of it."],
+      ["Does Reports & email send mail?", "Not yet. It builds the report and opens an email in your own mail app, and logs what you did. Sending on a schedule needs an email service and your domain verified."],
+      ["Is Direct Debit working?", "The screens and the connection are built, but it has not been tested with a GoCardless account yet. Start in their sandbox, with test bank details, before any real family."],
+    ],
+  },
+  parent: {
+    name: "Your tour", lead: "Everything a parent needs. Two minutes.",
+    steps: [
+      { id: "hello", em: "👋", title: "Welcome", text: "See how your child is getting on, join their online lessons, and look after fees, all in one place." },
+      { id: "progress", em: "📈", title: "How they are doing", text: "Overview and Progress show practice, homework and attendance for your child, and nobody else's.", show: "Progress" },
+      { id: "lessons", em: "📅", title: "Online lessons", text: "Class sessions lists your child's lessons. When their teacher has added a link there is a Join button, and the address it goes to is shown beside it.",
+        show: "Class sessions" },
+      { id: "week", em: "🗓", title: "Their week", text: "My class shows their teacher and room, and Timetable shows the week.", show: "Timetable" },
+      { id: "fees", em: "🏦", title: "Fees by Direct Debit", text: "Set up a Direct Debit once and fees are collected for you. You type your bank details on GoCardless's own page, never in this app, and you will see it say it is checking until your bank confirms.",
+        show: "Direct Debit", try: { type: "choice", q: "Where do you type your bank details?", options: ["On GoCardless's own page", "In this app", "In a message to the school"], right: 0,
+          why: "This app never asks for them and never stores them." } },
+      { id: "done", em: "🎉", title: "All done", text: "Open the Guide whenever you want it again." },
+    ],
+    faq: [
+      ["Can I see other children?", "No. You see only your own child or children, and the school's staff see only the classes they teach."],
+      ["My child can't sign in.", "Ask their teacher for a new PIN. Children sign in with a class code and a PIN, never an email."],
+    ],
+  },
+};
+
+/* ---------------- remembering, on this device only ---------------- */
+const GD_KEY = "ll.guide.v1";
+function gdLoad() { try { return JSON.parse(localStorage.getItem(GD_KEY) || "{}") || {}; } catch (e) { return {}; } }
+function gdSave(o) { try { localStorage.setItem(GD_KEY, JSON.stringify(o)); } catch (e) {} }
+function gdRec(r) { const o = gdLoad(); o[r] = o[r] || { done: [], seen: false }; return o; }
+function gdMark(r, id) { const o = gdRec(r); if (o[r].done.indexOf(id) < 0) o[r].done.push(id); gdSave(o); }
+function gdSeen(r) { const o = gdRec(r); o[r].seen = true; gdSave(o); }
+function gdDone(r) { return (gdLoad()[r] || { done: [] }).done; }
+function gdWasSeen(r) { return !!(gdLoad()[r] || {}).seen; }
+
+const GDS = { open: false, i: 0, role: "", spot: "", picked: {}, taps: 0 };
+
+function gdTour() { return GD_TOURS[role] || null; }
+function gdPageFor(label) {
+  if (!label || typeof NAV !== "object" || !NAV[role]) return "";
+  /* The quiz block puts its own link on the menu when it renders; it is not
+     in NAV, so a label lookup cannot see it. Everyone has it. */
+  if (label.toLowerCase() === "quiz") return "quiz";
+  let hit = "";
+  NAV[role].forEach(([g, items]) => items.forEach(([id, l]) => { if (!hit && l.toLowerCase() === label.toLowerCase()) hit = id; }));
+  return hit;
+}
+
+/* ---------------- the coach card ---------------- */
+function gdClose(markSeen) {
+  const el = document.getElementById("gdCoach"); if (el) el.remove();
+  GDS.open = false; GDS.spot = "";
+  if (markSeen !== false) gdSeen(role);
+  gdSpot();
+}
+
+function gdSpot() {
+  document.querySelectorAll("#nav a.gd-spot").forEach(a => a.classList.remove("gd-spot"));
+  if (GDS.open && GDS.spot) {
+    const a = document.querySelector(GDS.spot === "quiz" ? "#nav a[data-quiz]" : '#nav a[data-page="' + GDS.spot + '"]');
+    if (a) a.classList.add("gd-spot");
+  }
+}
+
+window.gdStart = function (i) {
+  const t = gdTour(); if (!t) return;
+  const inv = document.getElementById("gdInvite"); if (inv) inv.remove();
+  GDS.open = true; GDS.role = role; GDS.i = Math.max(0, Math.min(i || 0, t.steps.length - 1)); GDS.picked = {}; GDS.taps = 0; GDS.spot = "";
+  gdPaint(true);
+};
+
+function gdPaint(focus) {
+  const t = gdTour();
+  if (!t || !GDS.open) return;
+  const s = t.steps[GDS.i], last = GDS.i === t.steps.length - 1, done = gdDone(role);
+  let el = document.getElementById("gdCoach");
+  if (!el) { el = document.createElement("div"); el.id = "gdCoach"; document.body.appendChild(el); }
+  el.className = "gd-coach" + (t.kid ? " kid" : "");
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-label", t.name);
+  const showId = s.show ? gdPageFor(s.show) : "";
+  let tryHtml = "";
+  if (s.try && s.try.type === "tap") {
+    tryHtml = '<div class="gd-try"><p class="q">Tap the star!</p><button class="gd-star" aria-label="Tap the star to see a coin" onclick="gdTap(this)">⭐</button> <span class="gd-fb good" aria-live="polite">' +
+      (GDS.taps ? "+" + GDS.taps + " 🪙 (just for fun: no real coins)" : "") + "</span></div>";
+  } else if (s.try && s.try.type === "choice") {
+    const p = GDS.picked[s.id];
+    tryHtml = '<div class="gd-try"><p class="q">' + esc(s.try.q) + '</p><div class="gd-opts">' + s.try.options.map((o, k) =>
+      '<button class="gd-opt' + (p === k ? (k === s.try.right ? " good" : " bad") : "") + '" onclick="gdPick(' + k + ')">' + esc(o) + "</button>").join("") + "</div>" +
+      (p != null ? '<p class="gd-fb ' + (p === s.try.right ? "good" : "bad") + '" role="status">' + (p === s.try.right ? "✓ Yes. " : "Not quite. ") + esc(s.try.why) + "</p>" : "") + "</div>";
+  }
+  el.innerHTML = '<div class="gd-top"><span class="gd-em" aria-hidden="true">' + s.em + '</span><div class="gd-title" id="gdT">' + esc(s.title) + "</div>" +
+    '<button class="gd-x" aria-label="Close the tour" onclick="gdClose()">×</button></div>' +
+    '<div class="gd-dots" aria-hidden="true">' + t.steps.map((x, k) => "<i class=\"" + (k === GDS.i ? "now" : done.indexOf(x.id) >= 0 ? "done" : "") + "\"></i>").join("") + "</div>" +
+    '<p class="gd-text" aria-live="polite">' + esc(s.text) + "</p>" + tryHtml +
+    '<div class="gd-btns">' + (GDS.i > 0 ? '<button class="gd-btn" onclick="gdGo(-1)">Back</button>' : "") +
+    (showId ? '<button class="gd-btn" onclick="gdShow()">Show me</button>' : "") +
+    '<span class="sp"></span><span class="note" aria-hidden="true">' + (GDS.i + 1) + " of " + t.steps.length + "</span>" +
+    '<button class="gd-btn primary" id="gdNext" onclick="gdGo(1)">' + (last ? "Finish 🎉" : "Next") + "</button></div>";
+  gdSpot();
+  if (focus) { const n = document.getElementById("gdNext"); if (n) n.focus({ preventScroll: true }); }
+}
+
+window.gdGo = function (d) {
+  const t = gdTour(); if (!t) return;
+  const s = t.steps[GDS.i];
+  if (d > 0) gdMark(role, s.id);
+  const n = GDS.i + d;
+  if (n >= t.steps.length) { gdClose(); if (typeof toast === "function") toast("Tour finished. The Guide is on your menu."); if (page === "guide") render(); return; }
+  if (n < 0) return;
+  GDS.i = n; GDS.spot = "";
+  gdPaint(true);
+};
+window.gdShow = function () {
+  const t = gdTour(); const s = t.steps[GDS.i]; const id = gdPageFor(s.show);
+  if (!id) return;
+  page = id; render();               // render() re-applies the highlight through the wrapper below
+  GDS.spot = id; gdPaint(false); gdSpot();
+};
+window.gdPick = function (k) { const t = gdTour(); GDS.picked[t.steps[GDS.i].id] = k; gdPaint(false); };
+window.gdTap = function (btn) {
+  GDS.taps = Math.min(GDS.taps + 1, 99);
+  const pop = document.createElement("span"); pop.className = "gd-pop"; pop.textContent = "+1 🪙"; btn.appendChild(pop);
+  setTimeout(() => pop.remove(), 900);
+  const fb = btn.parentElement.querySelector(".gd-fb"); if (fb) fb.textContent = "+" + GDS.taps + " 🪙 (just for fun: no real coins)";
+};
+
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && GDS.open) gdClose(); });
+
+/* ---------------- the Guide page ---------------- */
+function pageGuide() {
+  const t = gdTour();
+  if (!t) return "<h1>Guide</h1><p class=\"sub\">There is no guide for this screen yet.</p>";
+  const done = gdDone(role), n = t.steps.length, got = t.steps.filter(s => done.indexOf(s.id) >= 0).length;
+  const first = Math.max(0, t.steps.findIndex(s => done.indexOf(s.id) < 0));
+  return "<h1>Guide</h1><p class=\"sub\">" + esc(t.lead) + "</p>" +
+    '<div class="gd-prog" role="progressbar" aria-valuemin="0" aria-valuemax="' + n + '" aria-valuenow="' + got + '" aria-label="Steps finished"><i style="width:' + Math.round(got / n * 100) + '%"></i></div>' +
+    '<p class="note" style="margin:-8px 0 12px">' + got + " of " + n + " steps finished</p>" +
+    '<p><button class="btn primary" onclick="gdStart(' + (got === n ? 0 : first) + ')">' + (got === 0 ? "Start the tour" : got === n ? "Take the tour again" : "Carry on") + "</button> " +
+    (got ? '<button class="btn" onclick="gdReset()">Start again from the beginning</button>' : "") + "</p>" +
+    '<div class="gd-cards">' + t.steps.map((s, k) => {
+      const d = done.indexOf(s.id) >= 0;
+      return '<div class="gd-card' + (d ? " done" : "") + '"><span class="em" aria-hidden="true">' + s.em + "</span><h3>" + esc(s.title) + (d ? " ✓" : "") + "</h3><p>" + esc(s.text) + "</p>" +
+        '<div class="row"><button class="btn" onclick="gdStart(' + k + ')">Open this step</button></div></div>';
+    }).join("") + "</div>" +
+    '<h2 class="section">Quick answers</h2>' + t.faq.map(f => '<details class="gd-faq"><summary>' + esc(f[0]) + "</summary><p>" + esc(f[1]) + "</p></details>").join("");
+}
+window.gdReset = function () { const o = gdLoad(); if (o[role]) { o[role].done = []; gdSave(o); } render(); };
+
+/* ---------------- offering it once ---------------- */
+function gdGateOpen() {
+  const c = document.querySelector(".lla-card");
+  return !!(c && c.getClientRects().length);
+}
+function gdInvite() {
+  const t = gdTour();
+  const has = document.getElementById("gdInvite");
+  const want = t && !GDS.open && !gdWasSeen(role) && !gdGateOpen() && !document.querySelector(".dua-veil") && page !== "guide";
+  if (!want) { if (has) has.remove(); return; }
+  if (has) return;
+  const el = document.createElement("div");
+  el.id = "gdInvite"; el.className = "gd-invite"; el.setAttribute("role", "region"); el.setAttribute("aria-label", "Take a tour");
+  el.innerHTML = "<b>" + (t.kid ? "👋 New here?" : "✨ Take a quick tour?") + "</b><p>" + (t.kid ? "I will show you around. It takes two minutes." : esc(t.lead)) + "</p>" +
+    '<div class="gd-btns"><button class="gd-btn primary" onclick="gdStart(0)">' + (t.kid ? "Show me around" : "Start the tour") + '</button><button class="gd-btn ghost" onclick="gdNotNow()">Not now</button></div>';
+  document.body.appendChild(el);
+}
+window.gdNotNow = function () { gdSeen(role); const e = document.getElementById("gdInvite"); if (e) e.remove(); };
+
+/* ---------------- wire in ---------------- */
+if (typeof NAV === "object") {
+  Object.keys(NAV).forEach(r => {
+    const first = NAV[r] && NAV[r][0] && NAV[r][0][1];
+    if (first && !first.some(x => x[0] === "guide")) first.push(["guide", "Guide", "✨"]);
+  });
+}
+if (typeof PAGES === "object") PAGES.guide = pageGuide;
+
+const renderGuide = render;
+render = function () {
+  const out = renderGuide.apply(this, arguments);
+  try {
+    if (GDS.open && GDS.role !== role) gdClose(false);      // the person switched role mid-tour
+    gdSpot(); gdInvite();
+  } catch (e) {}
+  return out;
+};
+setTimeout(() => { try { gdInvite(); } catch (e) {} }, 600);
+</script>

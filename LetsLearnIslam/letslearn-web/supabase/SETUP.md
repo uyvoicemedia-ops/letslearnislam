@@ -21,8 +21,10 @@ before moving on. Order matters: 0001 turns row-level security on, so between
 | `migrations/0009_class_sessions.sql` | online class sessions with a meeting link, and the approved-platform list |
 | `migrations/0010_timetable_and_classes.sql` | the weekly timetable (no double-booked class, room or teacher), and admin functions to create a class, move a pupil, assign a teacher |
 | `migrations/0011_test_student.sql` | a flagged Test Student account, for trying the garden |
+| `migrations/0012_teacher_hours.sql` | teacher hours (from the timetable), frozen rates, admin-only pay |
+| `migrations/0013_reports.sql` | report recipients and an append-only log of what was downloaded or printed |
 
-The app needs **all eleven**, 0001 to 0011. Skipping one does not fail at sign-up;
+The app needs **all thirteen**, 0001 to 0013. Skipping one does not fail at sign-up;
 it fails later, on whichever screen uses the missing piece.
 
 **Before running 0004, change the three email addresses in it** to ones you can
@@ -158,12 +160,12 @@ select set_pupil_pin('<pupil uuid>', '7391');
 
 ## Checking it yourself
 
-`./tools/testdb.sh` runs all eleven migrations against a throwaway Postgres in
+`./tools/testdb.sh` runs all thirteen migrations against a throwaway Postgres in
 Docker and then tries to break them — a child reading another child's garden, a
 teacher opening a class they do not teach, a player reading the answer key, a
 parent giving points to somebody else's child, a home parent enumerating a
 school, a child session trying to add a child, a parent approving their own
-request for a class. 256 assertions, and it needs to stay green.
+request for a class. 326 assertions, and it needs to stay green.
 
 It also checks that the Supabase rules hold on plain Postgres: pgcrypto sits in an
 `extensions` schema there, as on a real project.
@@ -235,7 +237,36 @@ to `points`, so the record of real children stays real. Calling it again returns
 same student. Do not put a real child in the Test Class, and change the PIN if the
 project is ever shared (`select set_pupil_pin('<id>', '7391');`).
 
+## Teacher hours, and Reports & email
+
+**Teacher hours** (migration 0012). An admin presses **Generate from timetable** for a week once
+the lessons have happened, then removes a lesson that did not run or adds cover. Set each
+teacher's hourly rate under **Hourly rates**.
+
+- A rate is copied onto each hour row when it is made, so changing it later never rewrites a
+  week that has been paid. Rows made before a rate was set are filled in when you set it.
+- A class with two teachers credits both; remove a row where that is not right.
+- Lessons that have not happened yet are skipped. Run it again after the week.
+- **A teacher sees their own hours, never a rate or a pay figure.** The rate column is not
+  readable by them at all. Nobody at another school, no pupil, no parent sees anything.
+
+**Reports & email** (migration 0013). Build the salary, fees, Direct Debit and attendance
+reports; **Download CSV**, **Print**, or **Open email draft** (your own mail app, attach the
+download). Every one is logged as what actually happened. **It does not send email by itself**,
+and it never says "delivered": sending on a schedule needs an email provider (Resend, Postmark,
+SendGrid or SES), your domain verified (SPF, DKIM, DMARC) and a scheduled job, which only the
+madrasah can set up. The CSV escapes any cell that starts with `=`, `+`, `-` or `@`, so a name
+typed as a spreadsheet formula cannot run when an accountant opens the file.
+
 ## 7. Fees by Direct Debit
+
+**Where this stands.** The code is all here (migration 0007, the edge function, the parent and
+admin screens) and 0007 is applied to your project. **None of it has run against GoCardless,
+not even their sandbox**, and you have to do these before it can: open a GoCardless *sandbox*
+account; make an access token and a webhook endpoint there; set the four secrets below;
+deploy the function with `--no-verify-jwt`. Then a parent presses **Set up a Direct Debit**
+(Direct Debit menu), is sent to GoCardless's own page, and the status changes when their signed
+webhook arrives. The admin presses **Check**, then types COLLECT.
 
 This is the only part of the app that moves real money, so read the whole
 section before you set any of it up.
