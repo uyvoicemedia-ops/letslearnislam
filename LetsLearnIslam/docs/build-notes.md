@@ -17,9 +17,9 @@ the garden; this file is the short operational version.
 - `tools/llinsert.py <block> TAG` — backs up, strips a prior copy by marker, inserts before
   `</body>`. Idempotent; refuses a block with unbalanced `<script>` tags.
 - `tools/llcheck.py` — `node --check` per block, duplicate lexical globals, assign-to-const.
-- `tools/testdb.sh` — applies the thirteen migrations to postgres:16 in Docker, then 326 RLS
+- `tools/testdb.sh` — applies the fourteen migrations to postgres:16 in Docker, then 359 RLS
   assertions (91 in `0100`, 93 in `0110_sessions`, 51 in `0120_timetable`, 21 in
-  `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
+  `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`, 33 in `0160_books`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
   `supabase/test/0000_supabase_stub.sql` imitates Supabase, including pgcrypto living in an
   `extensions` schema. **When the test database and the real one differ, the test is wrong:
   fix the stub, then prove it fails without the fix.**
@@ -56,6 +56,14 @@ the garden; this file is the short operational version.
 - **`profiles` has COLUMN-level select grants (0001, 0005) so the PIN hash can never be read.**
   A new column on `profiles` is invisible to the app until you `grant select (col)` — the symptom
   is "permission denied for table profiles", not a missing column.
+- **An upload feeds the editor, it does not save.** QZUP builds `QA.draft` and opens `qaPaint()`; the
+  teacher reads it and Saves, so `qaSave` still validates and the school sync still wraps it. A
+  second way of writing to the quiz store would have meant a second set of rules to keep in step.
+- **Hiding a book is not locking it.** `pupil_books` + the filtered shelf decide what a child is
+  shown. The `.llb` files are static and XOR-obfuscated; anyone told a path can fetch one. Do not
+  describe this as protection.
+- **Playwright's `check()` fails when the app correctly un-ticks a box** (an optimistic tick put
+  back after the school refused). Use `click()` for refusal cases and assert the state yourself.
 - **Salary data is protected in three layers.** `hours_log.rate_pence` is not granted to
   `authenticated` at all (column grants, as for `profiles`), `hours_week()` returns the rate and
   pay only to an admin, and the RLS policies let a teacher read only their own rows. A frozen rate
@@ -136,6 +144,8 @@ the garden; this file is the short operational version.
 
 | Block | What it does |
 |---|---|
+| `BOOKSEL` | the Pupils' books grid for staff; a pupil's shelf shows only the books they were given (0014) |
+| `QZUP` | upload a quiz from a CSV or a paste; hands it to the normal editor and `qaSave` |
 | `GUIDE` | a tour per role (student, teacher, admin, parent), a Guide page, quick answers; remembers progress per device |
 | `OFFICE` | Teacher hours and Reports & email on real data (0012, 0013) |
 | `DUAAUDIO` | play button on every Arabic dua/step/dhikr/prayer name that has a recording; the eating-duas offer in the kitchen |

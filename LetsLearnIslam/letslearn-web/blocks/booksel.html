@@ -1,0 +1,279 @@
+<!-- ============================================================
+     BOOKSEL — give each pupil the books for their level
+     ------------------------------------------------------------
+     The Books shelf showed all eight books to every child. A child on
+     their first Qaida page does not need the Quran-reading book, and
+     it is a teacher who knows when a child has moved up. So:
+
+       * teachers and admins get a "Pupils' books" screen: a grid of
+         one class, a row per pupil, a column per book. Tick a box to
+         give a book, untick to take it back. A row has quick "up to
+         level N" choices; a column has "all" and "none" for the class.
+       * a pupil's shelf shows only the books they were given. A pupil
+         who has been given nothing yet sees the first book of each
+         series, so nobody opens an empty shelf on day one.
+       * a parent, teacher or admin sees nothing new; the rules for who
+         may give and who may read are the database's (migration 0014).
+
+     Honest about what this is: it decides what a child is SHOWN. The
+     book files are static and lightly obfuscated, and the Books block
+     says plainly that it is not DRM. A child who is told which file to
+     fetch could still fetch it. Real protection is a server that checks
+     the licence and streams a page at a time, which is a different job.
+
+     Not connected: the shelf is the full prototype shelf it always was,
+     and the grid says it needs a school.
+     ============================================================ -->
+<style>
+  .bk-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }
+  .bk-bar select { font:inherit; padding:8px 12px; border-radius:11px; border:1.5px solid var(--line); background:var(--card); color:inherit; }
+  .bk-wrap { overflow:auto; border:1.5px solid var(--line); border-radius:14px; background:var(--card); }
+  table.bk { border-collapse:collapse; width:100%; min-width:760px; }
+  table.bk th, table.bk td { padding:8px 8px; text-align:center; border-bottom:1px solid var(--line); }
+  table.bk thead th { font-size:12px; font-weight:800; vertical-align:bottom; background:var(--bg); position:sticky; top:0; }
+  table.bk th.who, table.bk td.who { text-align:left; min-width:170px; position:sticky; left:0; background:var(--card); z-index:1; }
+  table.bk thead th.who { background:var(--bg); z-index:2; }
+  table.bk .grp { font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+  table.bk .cv { display:block; width:34px; height:46px; object-fit:cover; border-radius:5px; margin:0 auto 4px; box-shadow:0 1px 4px rgba(0,0,0,.25); }
+  table.bk .colbtn { display:flex; gap:4px; justify-content:center; margin-top:4px; }
+  table.bk .colbtn button { font:inherit; font-size:11px; font-weight:700; border:1.5px solid var(--line); background:var(--card); border-radius:8px; padding:3px 8px; cursor:pointer; min-height:28px; color:inherit; }
+  table.bk input[type=checkbox] { width:24px; height:24px; accent-color:var(--qaida-green, #268f73); cursor:pointer; }
+  table.bk select { font:inherit; font-size:12.5px; padding:5px 8px; border-radius:9px; border:1.5px solid var(--line); background:var(--bg); color:inherit; max-width:150px; }
+  table.bk td.n { font-size:12.5px; color:var(--muted); }
+  .bk-err { font-size:12.5px; font-weight:700; color:#c9483a; margin:8px 0; }
+  .bk-ok { font-size:12.5px; font-weight:700; color:#2a7a55; margin:8px 0; }
+  .bk-starter { margin:0 0 14px; }
+</style>
+<script>
+"use strict";
+
+const BK = { loaded: false, busy: false, err: "", ok: "", classes: [], cls: "", pupils: [], enrol: [], rows: [],
+             mine: null, assigned: null, assignedFor: "" };
+
+function bkLive() { try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; } }
+function bkStaff() { return bkLive() && (LLC.profile.role === "teacher" || LLC.profile.role === "admin"); }
+function bkStudent() { return bkLive() && LLC.profile.role === "student"; }
+
+/* the eight books, in teaching order: Qaida 1-4, then Elementary 1-4 */
+function bkCols() {
+  const out = [];
+  [["qaida", "Qaida"], ["islam", "Elementary"]].forEach(([key, label]) => {
+    BOOKS[key].items.forEach((b, i) => out.push({ id: b.id, series: key, label: label, n: i + 1, title: b.title, cover: b.cover }));
+  });
+  return out;
+}
+const bkName = (c) => c.series === "qaida" ? "Qaida " + c.title : c.title;
+
+/* ---------------- reading ---------------- */
+async function bkPull() {
+  if (!bkLive()) return false;
+  BK.err = "";
+  try {
+    const sb = LLC.sb, role6 = LLC.profile.role;
+    if (role6 === "student") {
+      const { data, error } = await sb.from("pupil_books").select("book_id").eq("pupil_id", LLC.profile.id);
+      if (error) throw error;
+      BK.assigned = (data || []).map(r => r.book_id); BK.assignedFor = LLC.profile.id; BK.loaded = true;
+      return true;
+    }
+    if (!bkStaff()) return false;
+    const c = await sb.from("classes").select("id, name").order("name");
+    if (c.error) throw c.error;
+    let list = c.data || [];
+    if (role6 === "teacher") {
+      const ct = await sb.from("class_teachers").select("class_id").eq("teacher_id", LLC.profile.id);
+      const mine = (ct.data || []).map(r => r.class_id);
+      list = list.filter(x => mine.indexOf(x.id) >= 0);
+    }
+    BK.classes = list;
+    if (!BK.cls || !list.some(x => x.id === BK.cls)) BK.cls = (list[0] || {}).id || "";
+    await bkPullClass();
+    BK.loaded = true;
+    return true;
+  } catch (e) { BK.err = (e && e.message) || "could not read the books"; return false; }
+}
+async function bkPullClass() {
+  if (!BK.cls) { BK.pupils = []; BK.enrol = []; BK.rows = []; return; }
+  const sb = LLC.sb;
+  const en = await sb.from("enrolments").select("pupil_id").eq("class_id", BK.cls);
+  if (en.error) throw en.error;
+  const ids = (en.data || []).map(r => r.pupil_id);
+  BK.enrol = ids;
+  if (!ids.length) { BK.pupils = []; BK.rows = []; return; }
+  const pu = await sb.from("profiles").select("id, full_name").in("id", ids).order("full_name");
+  if (pu.error) throw pu.error;
+  BK.pupils = pu.data || [];
+  const rows = await sb.from("pupil_books").select("pupil_id, book_id").in("pupil_id", ids);
+  if (rows.error) throw rows.error;
+  BK.rows = rows.data || [];
+}
+if (typeof llcPull === "function") {
+  const llcPullBooks = llcPull;
+  llcPull = async function () {
+    const out = await llcPullBooks.apply(this, arguments);
+    try { if (bkLive()) { await bkPull(); if (typeof render === "function") render(); } } catch (e) {}
+    return out;
+  };
+}
+
+/* ---------------- the grid ---------------- */
+const bkHas = (pid, bid) => BK.rows.some(r => r.pupil_id === pid && r.book_id === bid);
+const bkOf = (pid) => BK.rows.filter(r => r.pupil_id === pid).map(r => r.book_id);
+
+function bkSay(d) {
+  const m = { not_allowed: "You can only choose books for pupils you teach.", bad_book: "That is not a book.", too_many: "That is too many at once." };
+  return d && d.error ? (m[d.error] || d.error) : "";
+}
+
+async function bkCall(name, args, after) {
+  if (!bkStaff() || BK.busy) return null;
+  BK.busy = true; BK.err = ""; BK.ok = "";
+  try {
+    const { data, error } = await LLC.sb.rpc(name, args);
+    if (error) throw error;
+    if (data && data.error) { BK.err = bkSay(data); }
+    else if (after) after(data);
+    return data;
+  } catch (e) { BK.err = (e && e.message) || "That did not save."; return null; }
+  finally { BK.busy = false; }
+}
+
+window.bkTick = async function (pid, bid, on) {
+  const had = bkHas(pid, bid);
+  // optimistic, and put back if the school says no
+  if (on && !had) BK.rows.push({ pupil_id: pid, book_id: bid });
+  if (!on) BK.rows = BK.rows.filter(r => !(r.pupil_id === pid && r.book_id === bid));
+  const d = await bkCall("pupil_books_toggle", { p_pupils: [pid], p_book: bid, p_on: on });
+  if (!d || d.error || (d.skipped && !d.changed)) {
+    if (on && !had) BK.rows = BK.rows.filter(r => !(r.pupil_id === pid && r.book_id === bid));
+    if (!on && had) BK.rows.push({ pupil_id: pid, book_id: bid });
+    if (d && d.skipped && !d.changed) BK.err = bkSay({ error: "not_allowed" });
+  }
+  render();
+};
+
+window.bkColumn = async function (bid, on) {
+  const who = BK.pupils.map(p => p.id);
+  if (!who.length) return;
+  const d = await bkCall("pupil_books_toggle", { p_pupils: who, p_book: bid, p_on: on }, (r) => {
+    BK.ok = (on ? "Given to " : "Taken back from ") + r.changed + " pupil" + (r.changed === 1 ? "" : "s") + (r.skipped ? " (" + r.skipped + " skipped: not yours)" : "") + ".";
+  });
+  if (d && d.ok) await bkPullClass();
+  render();
+};
+
+/* "up to level N" for one series, keeping whatever they have of the other */
+function bkLevelSet(pid, series, n) {
+  const keep = bkOf(pid).filter(id => id.indexOf(series + "-") !== 0);
+  const add = BOOKS[series].items.slice(0, n).map(b => b.id);
+  return keep.concat(add);
+}
+window.bkRowLevel = async function (pid, value) {
+  if (!value) return;
+  let list;
+  if (value === "none") list = [];
+  else { const [series, n] = value.split(":"); list = bkLevelSet(pid, series, +n); }
+  const d = await bkCall("pupil_books_set", { p_pupil: pid, p_books: list });
+  if (d && d.ok) await bkPullClass();
+  render();
+};
+window.bkClassLevel = async function (value) {
+  if (!value || !BK.pupils.length) return;
+  const [series, n] = value.split(":"), who = BK.pupils.map(p => p.id);
+  if (!confirm("Give every pupil in this class the " + (series === "qaida" ? "Qaida" : "Elementary") + " books up to " + (series === "qaida" ? "Level " : "Book ") + n + ", and take back the higher ones?")) { render(); return; }
+  BK.busy = false;
+  for (const b of BOOKS[series].items) {
+    const on = BOOKS[series].items.indexOf(b) < +n;
+    const d = await bkCall("pupil_books_toggle", { p_pupils: who, p_book: b.id, p_on: on });
+    if (!d || d.error) break;
+  }
+  if (!BK.err) BK.ok = "Done. The class now has the " + (series === "qaida" ? "Qaida" : "Elementary") + " books up to " + n + ".";
+  await bkPullClass(); render();
+};
+window.bkPickClass = async function (id) { BK.cls = id; BK.ok = ""; BK.err = ""; try { await bkPullClass(); } catch (e) { BK.err = (e && e.message) || ""; } render(); };
+
+function bkLevelOptions() {
+  const o = ['<option value="">Set a level…</option>'];
+  for (let i = 1; i <= BOOKS.qaida.items.length; i++) o.push('<option value="qaida:' + i + '">Qaida up to Level ' + i + "</option>");
+  for (let i = 1; i <= BOOKS.islam.items.length; i++) o.push('<option value="islam:' + i + '">Elementary up to Book ' + i + "</option>");
+  o.push('<option value="none">No books</option>');
+  return o.join("");
+}
+
+function pagePupilBooks() {
+  if (!bkLive()) return "<h1>Pupils' books</h1><p class=\"sub\">Give each pupil the books for their level</p>" +
+    '<div class="callout"><strong>Not connected to a school.</strong> Books are given to pupils in your school\'s database, so this needs the device connected and an admin or teacher signed in.</div>';
+  if (!bkStaff()) return pageSimple("Pupils' books", "Teachers and admins", "Books are chosen by a pupil's teacher or the office.");
+  if (!BK.loaded) return "<h1>Pupils' books</h1><p class=\"sub\">Loading…</p>" + (BK.err ? '<p class="bk-err">' + esc(BK.err) + "</p>" : "");
+  const cols = bkCols();
+  const sel = '<div class="bk-bar"><label class="note" for="bkCls">Class</label><select id="bkCls" onchange="bkPickClass(this.value)">' +
+    BK.classes.map(c => '<option value="' + esc(c.id) + '"' + (c.id === BK.cls ? " selected" : "") + ">" + esc(c.name) + "</option>").join("") + "</select>" +
+    '<label class="note" for="bkAll">Whole class</label><select id="bkAll" onchange="bkClassLevel(this.value);this.value=\'\'" aria-label="Give the whole class books up to a level">' + bkLevelOptions().replace('<option value="none">No books</option>', "") + "</select></div>";
+  const msgs = (BK.err ? '<p class="bk-err" role="alert">' + esc(BK.err) + "</p>" : "") + (BK.ok ? '<p class="bk-ok" role="status">' + esc(BK.ok) + "</p>" : "");
+  if (!BK.classes.length) return "<h1>Pupils' books</h1><p class=\"sub\">Give each pupil the books for their level</p>" + '<div class="callout">You are not on a class yet, so there are no pupils to choose books for.</div>';
+  const head = '<tr><th class="who">Pupil</th>' + cols.map(c => '<th scope="col"><span class="grp">' + esc(c.series === "qaida" ? "Qaida" : "Elementary") + "</span>" +
+    '<img class="cv" src="' + esc(c.cover) + '" alt="" draggable="false">' + esc(c.series === "qaida" ? "Level " + c.n : "Book " + c.n) +
+    '<div class="colbtn"><button onclick="bkColumn(\'' + esc(c.id) + '\', true)" aria-label="Give ' + esc(bkName(c)) + ' to the whole class">all</button>' +
+    '<button onclick="bkColumn(\'' + esc(c.id) + '\', false)" aria-label="Take ' + esc(bkName(c)) + ' from the whole class">none</button></div></th>').join("") +
+    '<th scope="col">Quick</th></tr>';
+  const body = BK.pupils.length ? BK.pupils.map(p => '<tr><td class="who"><strong>' + esc(p.full_name) + '</strong><div class="note">' + bkOf(p.id).length + " of " + cols.length + " books</div></td>" +
+    cols.map(c => '<td><input type="checkbox" ' + (bkHas(p.id, c.id) ? "checked" : "") + ' aria-label="' + esc(p.full_name + ": " + bkName(c)) + '" onchange="bkTick(\'' + esc(p.id) + "','" + esc(c.id) + '\', this.checked)"></td>').join("") +
+    '<td><select aria-label="Quick level for ' + esc(p.full_name) + '" onchange="bkRowLevel(\'' + esc(p.id) + '\', this.value);this.value=\'\'">' + bkLevelOptions() + "</select></td></tr>").join("")
+    : '<tr><td colspan="' + (cols.length + 2) + '" class="note" style="padding:16px">Nobody is in this class yet.</td></tr>';
+  return "<h1>Pupils' books</h1><p class=\"sub\">Give each pupil the books for their level. A pupil sees only the books you tick.</p>" + sel + msgs +
+    '<div class="bk-wrap"><table class="bk"><thead>' + head + "</thead><tbody>" + body + "</tbody></table></div>" +
+    '<p class="note" style="margin-top:10px">A pupil who has been given nothing yet sees the first book of each series. This decides what a child is shown in the app; the book files themselves are not locked.</p>';
+}
+
+/* ---------------- the pupil's shelf ---------------- */
+function bkAllowed() {
+  if (!bkStudent()) return null;                              // everyone else, and the prototype: all of them
+  const given = BK.assigned || [];
+  if (given.length) return given;
+  return [BOOKS.qaida.items[0].id, BOOKS.islam.items[0].id];   // the starter shelf
+}
+
+const bookShelvesBk = bookShelves;
+bookShelves = function () {
+  const allowed = bkAllowed();
+  if (!allowed) return bookShelvesBk.apply(this, arguments);
+  const saved = { q: BOOKS.qaida.items, i: BOOKS.islam.items };
+  try {
+    BOOKS.qaida.items = saved.q.filter(b => allowed.indexOf(b.id) >= 0);
+    BOOKS.islam.items = saved.i.filter(b => allowed.indexOf(b.id) >= 0);
+    let html = bookShelvesBk.apply(this, arguments);
+    // a shelf with nothing on it is not worth its heading or its note
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll(".shelf").forEach(sh => {
+      if (sh.querySelector(".book")) return;
+      let prev = sh.previousElementSibling;
+      if (prev && prev.tagName === "P") { const h = prev.previousElementSibling; prev.remove(); prev = h; }
+      if (prev && prev.tagName === "H2") prev.remove();
+      sh.remove();
+    });
+    html = tpl.innerHTML;
+    const given = (BK.assigned || []).length;
+    return html.replace('<div class="play-body">', '<div class="play-body"><div class="callout bk-starter">' +
+      (given ? "These are the books your teacher has given you. You will get the next one when you are ready."
+             : "These are your first books. Your teacher will give you more as you move up.") + "</div>");
+  } finally {
+    BOOKS.qaida.items = saved.q; BOOKS.islam.items = saved.i;
+  }
+};
+
+const bookOpenBk = bookOpen;
+bookOpen = function (id) {
+  const allowed = bkAllowed();
+  if (allowed && allowed.indexOf(id) < 0) { if (typeof toast === "function") toast("Your teacher has not given you this book yet"); return; }
+  return bookOpenBk.apply(this, arguments);
+};
+
+/* ---------------- on the menu ---------------- */
+if (typeof NAV === "object") {
+  const add = (r, g) => { const grp = NAV[r] && NAV[r][g] && NAV[r][g][1]; if (grp && !grp.some(x => x[0] === "pupilbooks")) grp.push(["pupilbooks", "Pupils' books", "📚"]); };
+  add("teacher", 1); add("admin", 0);
+}
+if (typeof PAGES === "object") PAGES.pupilbooks = pagePupilBooks;
+if (bkLive() && !BK.loaded) bkPull().then(() => render(), () => {});
+</script>

@@ -23,8 +23,9 @@ before moving on. Order matters: 0001 turns row-level security on, so between
 | `migrations/0011_test_student.sql` | a flagged Test Student account, for trying the garden |
 | `migrations/0012_teacher_hours.sql` | teacher hours (from the timetable), frozen rates, admin-only pay |
 | `migrations/0013_reports.sql` | report recipients and an append-only log of what was downloaded or printed |
+| `migrations/0014_pupil_books.sql` | which books each pupil has been given |
 
-The app needs **all thirteen**, 0001 to 0013. Skipping one does not fail at sign-up;
+The app needs **all fourteen**, 0001 to 0014. Skipping one does not fail at sign-up;
 it fails later, on whichever screen uses the missing piece.
 
 **Before running 0004, change the three email addresses in it** to ones you can
@@ -160,12 +161,12 @@ select set_pupil_pin('<pupil uuid>', '7391');
 
 ## Checking it yourself
 
-`./tools/testdb.sh` runs all thirteen migrations against a throwaway Postgres in
+`./tools/testdb.sh` runs all fourteen migrations against a throwaway Postgres in
 Docker and then tries to break them — a child reading another child's garden, a
 teacher opening a class they do not teach, a player reading the answer key, a
 parent giving points to somebody else's child, a home parent enumerating a
 school, a child session trying to add a child, a parent approving their own
-request for a class. 326 assertions, and it needs to stay green.
+request for a class. 359 assertions, and it needs to stay green.
 
 It also checks that the Supabase rules hold on plain Postgres: pgcrypto sits in an
 `extensions` schema there, as on a real project.
@@ -236,6 +237,27 @@ says **TEST ACCOUNT**. The coins are the device's, not the database's: nothing i
 to `points`, so the record of real children stays real. Calling it again returns the
 same student. Do not put a real child in the Test Class, and change the PIN if the
 project is ever shared (`select set_pupil_pin('<id>', '7391');`).
+
+## Uploading a quiz, and giving pupils their books
+
+**Upload a quiz** (teachers and admins, on the Quiz screen). Save a spreadsheet as **CSV UTF-8**
+with the columns `question, answer 1, answer 2, answer 3, answer 4, correct, seconds` (the
+**Download a template** link shows them), or paste rows straight from a spreadsheet. `correct` is
+1-4, A-D, or the text of the right answer; `seconds` is optional. It shows what it understood and
+which rows it could not use, then opens the quiz in the normal editor to read through and Save.
+Limits: 100 questions, 1 MB, 300 characters a question, 100 an answer. Excel's own `.xlsx` cannot
+be read; the page says how to save as CSV. Uploaded quizzes are marked "please read it through
+before a class plays it".
+
+**Pupils' books** (migration 0014; on the menu for teachers and admins). Pick a class and tick
+which books each pupil has: a column per book (Qaida Levels 1-4, Elementary Books 1-4), a row per
+pupil. A row has "Qaida up to Level 2"-style quick choices, a column has **all** / **none** for the
+class, and the **Whole class** menu sets a level for everyone at once. A teacher can choose only for
+pupils they teach; an admin for the whole school. **A pupil sees only the books they were given.**
+A pupil given nothing yet sees the first book of each series. **This decides what a child is shown
+in the app; it does not lock the book files**, which are static and lightly obfuscated (the Books
+code says it is "NOT DRM"). Real protection is a server that checks the licence and streams a page
+at a time.
 
 ## Teacher hours, and Reports & email
 
