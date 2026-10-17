@@ -37440,6 +37440,143 @@ if (typeof PAGES === "object") PAGES.pinreset = pagePinReset;
 if (pnLive() && pnAdult() && !PNR.loaded) pnPull().then(() => render(), () => {});
 </script>
 <!-- PINRESET-BLOCK-END -->
+<!-- GARDENLIGHT-BLOCK-START --><!-- ============================================================
+     GARDENLIGHT — (b) lighting and ambient life for the garden
+     ------------------------------------------------------------
+     Direction A, "Pocket Camp": a warm late-morning light, a soft edge to
+     the picture, and a few slow things that move so the garden feels
+     lived-in:
+
+       * warm light falling from the sun's side, and a gentle vignette
+         (cool moonlight at night);
+       * three soft cloud shadows drifting across the ground;
+       * a few dust motes in the day, and fireflies at night.
+
+     It is NOT drawn on the garden's canvas. A first version was, and with
+     the canvas flushed every frame it cost 5-7ms of a 16ms budget on an
+     800px garden (the static light blit alone was 1.5-3.5ms). Instead it is
+     a layer of plain elements above the canvas, painted by CSS: a gradient
+     for the light, and `transform`/`opacity` animations that the browser
+     runs on the GPU compositor, off the main thread. The garden's own
+     frame loop does not know it exists, so it costs the canvas nothing.
+
+     * "Reduce motion" keeps the light and removes everything that moves.
+     * Inside a building it is hidden (rooms have their own lighting).
+     * It is not part of "Save a picture", which saves the canvas alone.
+
+     Add ?perf=1 to the address to see the garden's own frame time on
+     screen. Laptop and headless numbers are NOT tablet numbers.
+     ============================================================ -->
+<style>
+  .gl-fx { position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden; border-radius: inherit; }
+  .gl-light { position: absolute; inset: 0;
+    background:
+      radial-gradient(120% 95% at 82% 4%, rgba(255, 214, 130, .30), rgba(255, 226, 170, .10) 45%, rgba(255, 226, 170, 0) 70%),
+      radial-gradient(ellipse at 50% 56%, rgba(20, 40, 30, 0) 52%, rgba(30, 55, 40, .13) 100%); }
+  .gl-night .gl-light {
+    background:
+      radial-gradient(110% 90% at 18% 5%, rgba(150, 185, 255, .22), rgba(150, 185, 255, 0) 65%),
+      radial-gradient(ellipse at 50% 56%, rgba(0, 8, 24, 0) 52%, rgba(0, 8, 24, .22) 100%); }
+
+  .gl-sunset .gl-light {
+    background:
+      radial-gradient(120% 95% at 85% 12%, rgba(255, 150, 80, .34), rgba(255, 170, 110, .12) 45%, rgba(255, 170, 110, 0) 72%),
+      radial-gradient(ellipse at 50% 56%, rgba(60, 25, 30, 0) 52%, rgba(60, 25, 30, .16) 100%); }
+
+  .gl-cloud { position: absolute; left: -45%; width: 45%; aspect-ratio: 3 / 1; border-radius: 50%; opacity: .08;
+    background: radial-gradient(closest-side, rgba(20, 40, 50, .9), rgba(20, 40, 50, 0));
+    animation: glDrift 70s linear infinite; will-change: transform; }
+  .gl-cloud:nth-of-type(1) { top: 46%; animation-duration: 74s; }
+  .gl-cloud:nth-of-type(2) { top: 62%; width: 52%; animation-duration: 96s; animation-delay: -38s; }
+  .gl-cloud:nth-of-type(3) { top: 74%; width: 38%; animation-duration: 58s; animation-delay: -21s; }
+  .gl-night .gl-cloud { display: none; }
+  @keyframes glDrift { to { transform: translateX(320%); } }
+
+  .gl-mote { position: absolute; width: 8px; height: 8px; border-radius: 50%; opacity: 0;
+    background: radial-gradient(closest-side, rgba(255, 246, 200, 1), rgba(255, 236, 160, 0));
+    animation: glFloat 14s ease-in-out infinite; will-change: transform, opacity; }
+  .gl-night .gl-mote { width: 14px; height: 14px; background: radial-gradient(closest-side, rgba(220, 255, 150, 1), rgba(200, 255, 120, 0)); }
+  @keyframes glFloat {
+    0%   { opacity: 0;   transform: translate(0, 0); }
+    30%  { opacity: .75; }
+    60%  { opacity: .35; transform: translate(14px, -18px); }
+    100% { opacity: 0;   transform: translate(-10px, -34px); }
+  }
+  .gl-mote:nth-of-type(n+4):nth-of-type(-n+6) { animation-duration: 18s; }
+  .gl-mote:nth-of-type(n+7) { animation-duration: 11s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gl-cloud, .gl-mote { animation: none !important; }
+    .gl-cloud { display: none; } .gl-mote { opacity: 0; }
+  }
+
+  #gPerf { position: fixed; left: 8px; top: 8px; z-index: 200; padding: 4px 9px; border-radius: 8px;
+           background: rgba(0, 0, 0, .72); color: #9dffb4; font: 600 12px/1.3 ui-monospace, Menlo, monospace;
+           pointer-events: none; }
+  #gPerf.slow { color: #ffb4a8; }
+</style>
+<script>
+"use strict";
+
+const GL = { perf: /[?&]perf=1\b/.test(location.search), ms: [], frames: 0 };
+
+/* where the 14 motes start, as fixed percentages: stable, nothing random per render */
+function glMarkup() {
+  let s = '<div class="gl-light"></div><i class="gl-cloud"></i><i class="gl-cloud"></i><i class="gl-cloud"></i>';
+  for (let i = 0; i < 12; i++) {
+    const x = (i * 61.8 + 9) % 94, y = 34 + (i * 38.2) % 52, d = -((i * 2.3) % 14);
+    s += '<i class="gl-mote" style="left:' + x.toFixed(1) + '%;top:' + y.toFixed(1) + '%;animation-delay:' + d.toFixed(1) + 's"></i>';
+  }
+  return s;
+}
+
+function glMountFx() {
+  const stage = document.querySelector("main > .garden-wrap .garden-stage");
+  if (!stage) return;
+  let fx = stage.querySelector(".gl-fx");
+  const inside = !!Garden.inside;
+  if (inside) { if (fx) fx.remove(); return; }
+  if (!fx) {
+    fx = document.createElement("div"); fx.className = "gl-fx"; fx.setAttribute("aria-hidden", "true");
+    fx.innerHTML = glMarkup();
+    stage.appendChild(fx);
+  }
+  /* the canvas decides night from the chosen sky, not from g.night, so follow the same thing */
+  const sky = (gState().style || {}).sky;
+  fx.classList.toggle("gl-night", typeof skyIsNight === "function" ? skyIsNight(sky) : !!gardenState().night);
+  fx.classList.toggle("gl-sunset", sky === "sunset");
+}
+
+const pageGardenLight = pageGarden;
+pageGarden = function () {
+  const html = pageGardenLight.apply(this, arguments);
+  mount(glMountFx);
+  return html;
+};
+PAGES.garden = pageGarden;
+
+/* the garden's own frame time, only when asked for */
+function glReadout(ms) {
+  if (!GL.perf || !GL.ms.length) return;
+  let el = document.getElementById("gPerf");
+  if (!el) { el = document.createElement("div"); el.id = "gPerf"; document.body.appendChild(el); }
+  const a = GL.ms.reduce((p, q) => p + q, 0) / GL.ms.length;
+  el.textContent = "garden frame " + a.toFixed(1) + " ms avg · " + ms.toFixed(1) + " now";
+  el.classList.toggle("slow", a > 12);
+}
+const gardenFrameLight = gardenFrame;
+gardenFrame = function (ctx, W, H, t) {
+  if (!GL.perf) return gardenFrameLight.apply(this, arguments);
+  const t0 = performance.now();
+  const out = gardenFrameLight.apply(this, arguments);
+  const ms = performance.now() - t0;
+  GL.ms.push(ms); if (GL.ms.length > 90) GL.ms.shift();
+  if (++GL.frames % 30 === 0) glReadout(ms);
+  return out;
+};
+render();
+</script>
+<!-- GARDENLIGHT-BLOCK-END -->
 <!-- GUIDE-BLOCK-START --><!-- ============================================================
      GUIDE — a short tour for each kind of person
      ------------------------------------------------------------
@@ -37837,7 +37974,7 @@ const GD_TOURS = {
       { id: "hello", em: "👋", title: "Assalamu alaikum!", text: "This is your own place to learn, practise and grow a garden. Let's have a quick look around." },
       { id: "practise", em: "🎯", title: "Practise a little every day", text: "Tap Practise to learn your letters and words. The more you practise, the more coins you earn. Try the star: that is how a coin feels!",
         show: "Practise", try: { type: "tap" } },
-      { id: "garden", em: "🌳", title: "Your garden grows with you", text: "Coins 🌱 are for your garden. Build a house, plant trees, go inside and look around. Tap the grass to walk there.",
+      { id: "garden", em: "🌳", title: "Your garden grows with you", text: "Coins 🌱 are for your garden. Build a house, plant trees, go inside and look around. Tap the grass to walk there. When you buy something you see where it will go first, and you can take it back for a few seconds.",
         show: "My garden" },
       { id: "duas", em: "🤲", title: "Duas in your house", text: "When you walk into a room, you are asked to say a dua. If there is a recording, tap the ▶ button to listen first. Then say it yourself.",
         show: "My garden", try: { type: "choice", q: "How do you hear a dua?", options: ["Tap the ▶ button", "Tap a coin", "Knock on the door"], right: 0,
@@ -38229,5 +38366,798 @@ render = function () {
 setTimeout(() => { try { gdInvite(); gdHelpButton(); } catch (e) {} }, 600);
 </script>
 <!-- GUIDE-BLOCK-END -->
+<!-- GARDENJOY-BLOCK-START --><!-- ============================================================
+     GARDENJOY — (d) a little delight when you build, and a taller phone garden
+     ------------------------------------------------------------
+     When something is bought and placed (a tree, a building):
+       * a few coins fly from the coin pill to the spot, and a ring ripples
+         out where it landed (direction B, "Township", borrowed for the
+         one moment that deserves it);
+       * the price floats up from the pill as "-25", and the number counts
+         down instead of jumping;
+       * a short chime as the coins arrive.
+     While you slide the ghost about, a very small tick marks each new
+     square (not more than ~8 a second).
+
+     With "reduce motion" on, nothing flies or ripples: the "-25" appears
+     in place and fades, the number updates at once. Sound still follows
+     the app's own sound switch, because it uses the app's own Snd.
+
+     The first time a child starts placing something they get one gentle
+     tip about the ghost, undo and pinch. It is remembered on this device
+     only, and only as a yes/no.
+
+     On a phone the garden used to be 52% as tall as it was wide (about
+     230px on a 390px screen), so most of the screen went to the controls.
+     It is now nearly square.
+     ============================================================ -->
+<style>
+  .gj-layer { position: absolute; inset: 0; z-index: 7; pointer-events: none; overflow: hidden; border-radius: inherit; }
+  .gj-coin { position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; will-change: transform, opacity;
+             background: radial-gradient(circle at 35% 30%, #ffe9a1, #f5b83d 60%, #d99512);
+             box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .12), 0 1px 3px rgba(0, 0, 0, .3); }
+  .gj-ring { position: absolute; left: 0; top: 0; width: 24px; height: 24px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .95);
+             box-shadow: 0 0 0 2px rgba(31, 122, 98, .5); will-change: transform, opacity; }
+  .gj-cost { position: absolute; left: 0; top: 0; font: 800 17px/1 var(--gui-font, system-ui, sans-serif); color: #8a3a00; white-space: nowrap;
+             text-shadow: 0 1px 0 #fff, 0 0 6px #fff; will-change: transform, opacity; }
+</style>
+<script>
+"use strict";
+
+const GJ = { still: () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches), last: null, tickAt: 0 };
+
+/* where a square is, in pixels inside the garden stage */
+function gjSpot(u, v) {
+  const c = Garden.canvas, stage = c && c.parentElement; if (!stage) return null;
+  const r = c.getBoundingClientRect(), s = stage.getBoundingClientRect(), q = isoPt(u, v, Garden.W, Garden.H);
+  return { x: r.left - s.left + q.x * r.width / Garden.W, y: r.top - s.top + q.y * r.height / Garden.H };
+}
+function gjPill(stage) {
+  const el = stage.querySelector(".gui-hud .deeds .coin") || document.querySelector(".deeds .coin");
+  if (!el) return null;
+  const r = el.getBoundingClientRect(), s = stage.getBoundingClientRect();
+  return { x: r.left - s.left + r.width / 2, y: r.top - s.top + r.height / 2 };
+}
+
+/* the number counts down to its new value instead of jumping */
+function gjCount(from, to) {
+  const el = document.getElementById("deedCount");
+  if (!el || GJ.still() || from === to) return;
+  const t0 = performance.now(), dur = 520;
+  el.textContent = from;
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / dur);
+    const live = document.getElementById("deedCount"); if (!live) return;
+    live.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3)));
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function gjBurst(u, v, cost, fromDeeds, toDeeds) {
+  const stage = document.querySelector("main > .garden-wrap .garden-stage");
+  const spot = stage && gjSpot(u, v), pill = stage && gjPill(stage);
+  if (!stage || !spot || !pill) return;
+  let layer = stage.querySelector(".gj-layer");
+  if (!layer) { layer = document.createElement("div"); layer.className = "gj-layer"; layer.setAttribute("aria-hidden", "true"); stage.appendChild(layer); }
+  const still = GJ.still();
+
+  const tag = document.createElement("div"); tag.className = "gj-cost"; tag.textContent = "−" + cost;
+  tag.style.transform = "translate(" + (pill.x + 20) + "px," + (pill.y - 8) + "px)";
+  layer.appendChild(tag);
+  tag.animate(still
+    ? [{ opacity: 1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }]
+    : [{ opacity: 0, transform: tag.style.transform + " translateY(6px)" },
+       { opacity: 1, offset: 0.2 },
+       { opacity: 0, transform: tag.style.transform + " translateY(-26px)" }],
+    { duration: still ? 900 : 1100, easing: "ease-out" }).onfinish = () => tag.remove();
+
+  gjCount(fromDeeds, toDeeds);
+  if (still) return;
+
+  const n = Math.min(8, Math.max(4, Math.round(cost / 12)));
+  for (let i = 0; i < n; i++) {
+    const coin = document.createElement("i"); coin.className = "gj-coin"; layer.appendChild(coin);
+    const sx = pill.x - 11, sy = pill.y - 11, ex = spot.x - 11 + (i % 3 - 1) * 5, ey = spot.y - 11 - 6;
+    const mx = (sx + ex) / 2 + (i % 2 ? 26 : -26), my = Math.min(sy, ey) - 34 - (i % 3) * 8;   // an arc, not a straight line
+    const a = coin.animate([
+      { transform: "translate(" + sx + "px," + sy + "px) scale(1)", opacity: 1 },
+      { transform: "translate(" + mx + "px," + my + "px) scale(1.15)", opacity: 1, offset: 0.5 },
+      { transform: "translate(" + ex + "px," + ey + "px) scale(.35)", opacity: 0.2 },
+    ], { duration: 640, delay: i * 45, easing: "cubic-bezier(.3,.1,.4,1)", fill: "backwards" });
+    a.onfinish = () => coin.remove();
+  }
+  const ring = document.createElement("i"); ring.className = "gj-ring"; layer.appendChild(ring);
+  const rx = spot.x - 12, ry = spot.y - 12;
+  ring.animate([
+    { transform: "translate(" + rx + "px," + ry + "px) scale(.4)", opacity: 0.95 },
+    { transform: "translate(" + rx + "px," + ry + "px) scale(3.4)", opacity: 0 },
+  ], { duration: 700, delay: 460, easing: "ease-out", fill: "backwards" }).onfinish = () => ring.remove();
+  setTimeout(() => { try { Snd.star(); } catch (e) {} }, 480);
+}
+
+/* ---------------- hooks ---------------- */
+const gardenPlaceHereGJ = gardenPlaceHere;
+gardenPlaceHere = function (p) {
+  const g = gState(), before = g.deeds, pl = Garden.placing, cost = pl && pl.cost;
+  const out = gardenPlaceHereGJ.apply(this, arguments);
+  try {
+    if (pl && g.deeds < before && p && p.u != null && !Garden.inside) {
+      /* the page has just re-rendered; the burst is drawn on the fresh stage */
+      gjBurst(p.u, p.v, cost || (before - g.deeds), before, g.deeds);
+    }
+  } catch (e) { /* never let a flourish stop a purchase */ }
+  return out;
+};
+
+/* a tick for each new square the ghost moves to */
+const gardenFrameGJ = gardenFrame;
+gardenFrame = function () {
+  const out = gardenFrameGJ.apply(this, arguments);
+  const h = Garden.placing && !Garden.inside && Garden.isoHover;
+  if (h) {
+    const k = h.u + "," + h.v;
+    if (GJ.last && GJ.last !== k && performance.now() - GJ.tickAt > 120) { GJ.tickAt = performance.now(); try { Snd.tap(); } catch (e) {} }
+    GJ.last = k;
+  } else GJ.last = null;
+  return out;
+};
+
+/* ---------------- one gentle tip, once ---------------- */
+function gjTipOnce() {
+  let seen = false;
+  try { seen = localStorage.getItem("ll_gj_tip1") === "1"; } catch (e) {}
+  if (seen) return;
+  try { localStorage.setItem("ll_gj_tip1", "1"); } catch (e) {}
+  setTimeout(() => toast("Tip: you can see where it will go first, take it back for a few seconds, and pinch to zoom."), 600);
+}
+const gardenPickItemGJ = gardenPickItem, gardenPickBuildingGJ = gardenPickBuilding;
+gardenPickItem = function () { const r = gardenPickItemGJ.apply(this, arguments); if (Garden.placing && !Garden.inside) gjTipOnce(); return r; };
+gardenPickBuilding = function () { const r = gardenPickBuildingGJ.apply(this, arguments); if (Garden.placing && !Garden.inside) gjTipOnce(); return r; };
+
+/* ---------------- a taller garden on a phone ---------------- */
+const gardenMountGJ = gardenMount;
+gardenMount = function () {
+  gardenMountGJ.apply(this, arguments);
+  const c = document.getElementById("gCanvas");
+  if (!c || window.innerWidth > 700) return;
+  const H = Math.round(Garden.W * 0.95);
+  if (H > Garden.H + 4) gardenRedrawAt(c, Garden.W, H);
+};
+render();
+</script>
+<!-- GARDENJOY-BLOCK-END -->
+<!-- GARDENUI-BLOCK-START --><!-- ============================================================
+     GARDENUI — (a) the garden's HUD, tab dock and shop cards
+     ------------------------------------------------------------
+     Direction A, "Pocket Camp": warm, rounded, the garden is the star and
+     the controls sit around it rather than above it.
+
+       * the coin pill and the three needs float over the top of the garden
+         instead of sitting in a header above it;
+       * the tabs become a dock of big icon-over-label buttons (fixed to the
+         bottom of the screen on a phone or tablet, a tile grid beside the
+         garden on a desktop);
+       * shop items are cards in a grid, with the price as a coin tag and a
+         clear "need N more" state, not rows of text;
+       * the zoom and "Move things" controls are 44px, the touch minimum.
+
+     Nothing about how the garden WORKS is changed. This block only adds a
+     class, moves existing elements (so every id and handler stays), and
+     styles them. Every colour and size is a token on :root.GUI below.
+     It is all removed by deleting this block.
+     ============================================================ -->
+<style>
+  :root {
+    --gui-ink: #2b2a26;
+    --gui-cream: #fffaf0;
+    --gui-sage: #5fa78a;
+    --gui-sage-deep: #1f7a62;
+    --gui-gold: #f5b83d;
+    --gui-gold-deep: #8a5a00;
+    --gui-glass: rgba(255, 252, 244, .92);
+    --gui-shadow: 0 6px 18px rgba(40, 38, 30, .16);
+    --gui-radius: 18px;
+    --gui-font: ui-rounded, "SF Pro Rounded", "Nunito", "Baloo 2", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  /* ---------- the header: quiet, one slim row ---------- */
+  .gui-head { margin-bottom: 10px !important; align-items: center; gap: 10px; flex-wrap: wrap; font-family: var(--gui-font); }
+  .gui-head h1 { font-size: 22px; line-height: 1.1; margin: 0; }
+  .gui-head .sub { font-size: 13px; }
+  .gui-head .row { gap: 8px; }
+  .gui-head .btn { min-height: 44px; border-radius: 999px; font-family: inherit; font-weight: 800; padding: 0 16px; }
+
+  /* the page's entrance animation leaves an identity transform behind, and a transformed
+     ancestor turns position:fixed into position:absolute: that hid the dock below the page */
+  main > .garden-wrap.gui { animation-fill-mode: backwards; }
+
+  @media (max-width: 700px) {
+    .gui-head .row { width: 100%; flex-wrap: nowrap; }
+    .gui-head .row .btn { flex: 1 1 0; padding: 0 8px; font-size: 13px; white-space: nowrap; }
+    .gui .gui-hud .deeds { font-size: 14px; padding-right: 10px; min-height: 40px; }
+    .gui .gui-hud .deeds .coin { width: 28px; height: 28px; }
+    .gui .gui-hud .needs { padding: 6px 8px; min-height: 40px; gap: 4px; }
+    .gui .gui-hud .need .bar { width: 14px; }
+    .gui .gui-hud .deeds #deedCount + * , .gui-hud .deeds { white-space: nowrap; }
+    .gui .gui-hud .need > :first-child { font-size: 15px; }
+  }
+
+  /* ---------- the stage and its floating HUD ---------- */
+  .gui .garden-stage { border: 0; border-radius: 24px; box-shadow: 0 10px 30px rgba(40, 60, 50, .2);
+                       position: relative; isolation: isolate; }
+  .gui-hud { position: absolute; left: 10px; right: 10px; top: 10px; z-index: 5; display: flex; gap: 8px;
+             align-items: flex-start; justify-content: space-between; pointer-events: none; font-family: var(--gui-font); }
+  .gui-hud > * { pointer-events: auto; }
+  .gui-hud .deeds { background: var(--gui-glass); border-radius: 999px; padding: 6px 14px 6px 6px; gap: 8px;
+                    box-shadow: var(--gui-shadow); font-size: 16px; color: var(--gui-ink); min-height: 44px;
+                    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  .gui-hud .deeds .coin { width: 32px; height: 32px; font-size: 16px;
+                          background: radial-gradient(circle at 35% 30%, #ffe9a1, var(--gui-gold) 60%, #d99512);
+                          box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .2); }
+  .gui-hud .deeds #deedCount { font-variant-numeric: tabular-nums; }
+  .gui-hud .needs { margin: 0; flex-wrap: nowrap; gap: 6px; background: var(--gui-glass); border-radius: 999px;
+                    padding: 6px 10px; box-shadow: var(--gui-shadow); min-height: 44px;
+                    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  .gui-hud .need { gap: 4px; font-size: 0; }                 /* icon + bar only; the % is for screen readers */
+  .gui-hud .need .bar { width: 30px; height: 8px; }
+  .gui-hud .need .sr-pct { font-size: 0; min-width: 0; }
+  .gui-hud .need > :first-child { font-size: 17px; }
+  @media (min-width: 700px) { .gui-hud .need .bar { width: 44px; } }
+
+  /* "Move things" goes to the bottom-left so it never sits on the buildings */
+  .gui .stage-btn { right: auto; left: 12px; top: auto; bottom: 12px; min-height: 44px; padding: 0 18px;
+                    background: var(--gui-glass); font-family: var(--gui-font); }
+  .gui .stage-btn[aria-pressed="true"] { background: var(--gui-sage-deep); }
+  .gui .iso-btns { right: 12px; bottom: 12px; gap: 8px; }
+  .gui .iso-btns button { width: 44px; height: 44px; border-radius: 14px; border: 0; background: var(--gui-glass);
+                          box-shadow: var(--gui-shadow); font-size: 18px; }
+  .gui .iso-btns button:active { transform: scale(.94); }
+
+  /* ---------- the tab dock ---------- */
+  .gui .g-tabs { gap: 8px; margin-bottom: 12px; font-family: var(--gui-font); }
+  .gui .g-tabs .chip { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+                       min-width: 64px; min-height: 60px; padding: 6px 8px; border-radius: 18px; border: 0;
+                       background: var(--gui-cream); box-shadow: 0 2px 0 rgba(0, 0, 0, .08), var(--gui-shadow);
+                       color: var(--gui-ink); font-size: 12px; font-weight: 800; flex: 1 1 64px;
+                       transition: transform .12s ease, background .12s ease; }
+  .gui .g-tabs .chip .gi { font-size: 24px; line-height: 1; }
+  .gui .g-tabs .chip .gl { line-height: 1.1; }
+  .gui .g-tabs .chip:active { transform: translateY(1px) scale(.97); }
+  .gui .g-tabs .chip[aria-pressed="true"] { background: var(--gui-sage-deep); color: #fff;
+                       box-shadow: 0 2px 0 rgba(0, 0, 0, .25), 0 6px 14px rgba(31, 122, 98, .35); }
+
+  /* the garden page is on a phone or tablet: the dock is fixed to the bottom, like a game */
+  @media (max-width: 1000px) {
+    body.gui-garden #main { padding-bottom: 96px; }
+    .gui .g-tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; margin: 0; flex-wrap: nowrap;
+                   overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+                   padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); background: var(--gui-glass);
+                   border-top: 1px solid rgba(0, 0, 0, .06); box-shadow: 0 -8px 24px rgba(40, 38, 30, .12);
+                   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+    .gui .g-tabs::-webkit-scrollbar { display: none; }
+    .gui .g-tabs .chip { flex: 0 0 auto; min-width: 66px; }
+    /* the floating helpers lift clear of the dock */
+    body.gui-garden .gd-helpbtn { bottom: 96px; }
+    body.gui-garden .gd-invite, body.gui-garden .gd-coach { bottom: 96px; }
+  }
+  @media (min-width: 1001px) {
+    .gui .g-tabs { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); }
+  }
+
+  /* ---------- shop cards ---------- */
+  .gui .garden-wrap .card { border: 0; border-radius: var(--gui-radius); box-shadow: var(--gui-shadow);
+                            background: var(--gui-cream); font-family: var(--gui-font); }
+  .gui .garden-wrap .card-title { font-size: 17px; }
+  .gui .shop-item { position: relative; display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: center;
+                    min-height: 60px; padding: 10px 12px; border: 0; border-radius: 16px; background: #fff;
+                    box-shadow: 0 1px 0 rgba(0, 0, 0, .06), 0 3px 8px rgba(40, 38, 30, .08); font-family: inherit;
+                    transition: transform .12s ease, box-shadow .12s ease; }
+  .gui .shop-item:hover:not(:disabled) { background: #fff; transform: translateY(-1px);
+                    box-shadow: 0 1px 0 rgba(0, 0, 0, .06), 0 6px 14px rgba(40, 38, 30, .14); }
+  .gui .shop-item:active:not(:disabled) { transform: scale(.98); }
+  .gui .shop-item .em { width: 44px; height: 44px; font-size: 26px; display: grid; place-items: center; border-radius: 14px;
+                        background: #f3efe3; }
+  .gui .shop-item .nm { font-size: 14.5px; }
+  .gui .shop-item .pr, .gui .shop-item .need { margin: 0; padding: 6px 10px; border-radius: 999px; font-size: 13px;
+                        font-weight: 800; white-space: nowrap; background: #fff3cf; color: var(--gui-gold-deep); }
+  .gui .shop-item .need { background: #fde8e6; color: #a63a36; font-size: 12px; }
+  .gui .shop-item:disabled { opacity: 1; }
+  .gui .shop-item:disabled .em { filter: grayscale(.7); opacity: .6; }
+  .gui .shop-item:disabled .nm { color: #7b776b; }
+  .gui .shop-item[aria-pressed="true"] { background: #eaf6f0; box-shadow: 0 0 0 2.5px var(--gui-sage), var(--gui-shadow); }
+  .gui .gfx-subtabs button { min-height: 44px; }
+  .gui .btn.primary { background: var(--gui-sage-deep); border-radius: 999px; min-height: 48px; font-weight: 800; }
+
+  /* "Tap where the date palm should go": a light pill under the HUD, not a dark bar across it */
+  .gui .placing-banner { top: 62px; display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 14px; border-radius: 999px;
+                         background: var(--gui-glass); color: var(--gui-ink); font: 800 13px/1.2 var(--gui-font); box-shadow: var(--gui-shadow);
+                         max-width: calc(100% - 24px); z-index: 4; white-space: nowrap; }
+  .gui .placing-banner button { min-height: 36px; border-radius: 999px; background: #fff; color: var(--gui-ink); border: 1.5px solid var(--line); padding: 0 14px; }
+  @media (max-width: 700px) { .gui .placing-banner { font-size: 12px; padding-left: 10px; } }
+
+  /* keyboard focus is always visible */
+  .gui button:focus-visible { outline: 3px solid #1b57d1; outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gui *, .gui-head * { transition: none !important; animation: none !important; }
+  }
+</style>
+<script>
+"use strict";
+
+/* "🏗 Build" -> an icon above a label, without touching the handler */
+function guiSplitTab(btn) {
+  if (btn.querySelector(".gi")) return;
+  const t = btn.textContent.trim();
+  const m = t.match(/^(\p{Extended_Pictographic}️?(?:‍\p{Extended_Pictographic}️?)*)\s*(.*)$/u);
+  if (!m || !m[2]) return;
+  const gi = document.createElement("span"), gl = document.createElement("span");
+  gi.className = "gi"; gi.setAttribute("aria-hidden", "true"); gi.textContent = m[1];
+  gl.className = "gl"; gl.textContent = m[2];
+  btn.textContent = "";
+  btn.append(gi, gl);
+}
+
+/* the HUD: the coin pill and the needs move onto the garden, element and all,
+   so #deedCount and every need bar keep updating exactly as before */
+function guiEnhance() {
+  const wrap = document.querySelector("main > .garden-wrap.gui");
+  const stage = wrap && wrap.querySelector(".garden-stage");
+  if (!stage || stage.querySelector(".gui-hud")) return;
+  const hud = document.createElement("div");
+  hud.className = "gui-hud";
+  const deeds = document.querySelector("main > .gui-head .deeds");
+  const needs = wrap.querySelector(".needs");
+  if (deeds) hud.appendChild(deeds);
+  if (needs) hud.appendChild(needs);
+  if (hud.children.length) stage.appendChild(hud);
+  wrap.querySelectorAll(".g-tabs .chip").forEach(guiSplitTab);
+}
+
+const pageGardenGui = pageGarden;
+pageGarden = function () {
+  let html = pageGardenGui.apply(this, arguments);
+  if (role !== "student" || html.indexOf('class="garden-wrap"') < 0) return html;
+  html = html.replace('class="garden-wrap"', 'class="garden-wrap gui"')
+             .replace('<div class="between"', '<div class="between gui-head"');
+  mount(guiEnhance);
+  return html;
+};
+PAGES.garden = pageGarden;
+
+/* the dock and the lifted helpers only apply on the garden page */
+const renderGui = render;
+render = function () {
+  document.body.classList.toggle("gui-garden", page === "garden" && role === "student");
+  return renderGui.apply(this, arguments);
+};
+render();
+</script>
+<!-- GARDENUI-BLOCK-END -->
+<!-- GARDENPLACE-BLOCK-START --><!-- ============================================================
+     GARDENPLACE — (c) putting things down: ghost, snap, confirm, undo, zoom
+     ------------------------------------------------------------
+     Before: with a mouse there was no preview at all; a touch placed the
+     thing the instant the finger lifted, anywhere, on top of anything; and
+     there was no way back. Pinch did nothing, and a panned view eased back
+     to the character as soon as you let go, which is no use when you are
+     lining something up.
+
+     Now, outdoors:
+       * a GHOST of the thing follows the mouse (or the finger), snapped to
+         a square, green where it can go and red where something is in the
+         way (a building, or a solid thing like a tree);
+       * on a touch screen the first tap only places the ghost; a bar offers
+         "Place here" and "Cancel", so a mis-tap costs nothing;
+       * a placed thing can be taken back for nine seconds, for the FULL
+         price (selling still refunds half; undo is for a mistake);
+       * pinch to zoom (about the middle of the view, without jumping back
+         to the character), and Ctrl/Cmd + wheel (a bare wheel still
+         scrolls the page); two fingers also pan, and while you are placing
+         that view stays put until you press ◎. A single finger while
+         placing moves the ghost, as it always did.
+
+     Not changed: placing furniture indoors, buying, prices, the rules for
+     what a thing costs, and how anything is drawn. Undo returns the coins
+     but not the energy the build used.
+     ============================================================ -->
+<style>
+  .gp-bar { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); z-index: 6; display: flex; gap: 8px;
+            max-width: calc(100% - 24px); font-family: var(--gui-font, system-ui, sans-serif); }
+  .gp-bar button { min-height: 48px; padding: 0 20px; border: 0; border-radius: 999px; font: inherit; font-weight: 800; font-size: 15px;
+                   cursor: pointer; box-shadow: 0 6px 18px rgba(40, 38, 30, .22); white-space: nowrap; }
+  .gp-bar .ok { background: var(--gui-sage-deep, #1f7a62); color: #fff; }
+  .gp-bar .no { background: var(--gui-glass, #fffaf0); color: var(--gui-ink, #2b2a26); }
+  .gp-bar .undo { background: #fff3cf; color: #6b4600; }
+  .gp-bar button:active { transform: scale(.96); }
+  .gp-bar button:focus-visible { outline: 3px solid #1b57d1; outline-offset: 2px; }
+  /* the mouse shows a grab hand over the ghost; the garden stage lets the browser keep its own pinch off */
+  .gui .garden-stage canvas { touch-action: none; }
+  @media (prefers-reduced-motion: reduce) { .gp-bar button { transition: none; } }
+</style>
+<script>
+"use strict";
+
+const GP = { ptype: "mouse", confirm: false, staged: false, undo: null, hold: false, allowNull: false, pts: new Map(), pinch: null, timer: 0 };
+const GP_UNDO_MS = 9000;
+const GP_ZOOM = { min: 0.55, max: 1.7 };
+
+/* ---------------- where and whether ---------------- */
+function gpWorld(e) {
+  const c = Garden.canvas; if (!c) return null;
+  const r = c.getBoundingClientRect();
+  const sx = (e.clientX - r.left) * (Garden.W / r.width), sy = (e.clientY - r.top) * (Garden.H / r.height);
+  return isoInv(sx, sy, Garden.W, Garden.H);
+}
+function gpSnap(u, v) {
+  const s = landSize(gLand());
+  return { u: clamp(Math.floor(u) + 0.5, 0.5, s.cols - 0.5), v: clamp(Math.floor(v) + 0.5, 0.5, s.rows - 0.5) };
+}
+function gpFree(u, v) { try { return isoWalkable(u, v); } catch (e) { return true; } }
+const gpOutdoors = () => !!Garden.placing && !Garden.inside && Garden.placing.kind !== "room";
+
+/* ---------------- committing ---------------- */
+const gardenPlaceHereGP = gardenPlaceHere;
+gardenPlaceHere = function (p) {
+  const pl = Garden.placing;
+  if (!pl) return;
+  if (!gpOutdoors() || p == null || p.u == null) return gardenPlaceHereGP.apply(this, arguments);
+
+  const s = gpSnap(p.u, p.v);
+  if (GP.ptype !== "mouse" && !GP.confirm) {          // a finger: show where, and wait for a yes
+    Garden.isoHover = s; GP.staged = true; Snd.soft(); gpBits();
+    return;
+  }
+  GP.confirm = false;
+  if (!gpFree(s.u, s.v)) { toast("That spot is taken — try the next square"); Snd.wrong(); return; }
+
+  const g = gState();
+  const before = { deeds: g.deeds, ni: g.items.length, nb: g.buildings.length, planted: g.planted || 0 };
+  gardenPlaceHereGP.call(this, Object.assign({}, p, s));
+  GP.staged = false; GP.hold = false;
+  if (g.deeds < before.deeds) {                        // it went through
+    let kind = null, obj = null;
+    if (g.items.length > before.ni) { kind = "item"; obj = g.items[g.items.length - 1]; }
+    else if (g.buildings.length > before.nb) { kind = "building"; obj = g.buildings[g.buildings.length - 1]; }
+    if (obj) GP.undo = { kind, obj, cost: before.deeds - g.deeds, planted: before.planted, name: pl.name, until: Date.now() + GP_UNDO_MS };
+  }
+  gpBits();
+};
+
+function gpConfirm() {
+  if (!gpOutdoors() || !Garden.isoHover) return;
+  GP.confirm = true;
+  gardenPlaceHere({ u: Garden.isoHover.u, v: Garden.isoHover.v });
+}
+function gpCancel() { GP.staged = false; gardenCancelPlacing(); }
+
+const gardenCancelPlacingGP = gardenCancelPlacing;
+gardenCancelPlacing = function () { GP.staged = false; GP.hold = false; return gardenCancelPlacingGP.apply(this, arguments); };
+
+function gpUndo() {
+  const u = GP.undo;
+  if (!u || Date.now() > u.until) { GP.undo = null; gpBits(); return; }
+  const g = gState(), list = u.kind === "item" ? g.items : g.buildings, i = list.indexOf(u.obj);
+  GP.undo = null;
+  if (i < 0) { gpBits(); return; }
+  list.splice(i, 1);
+  g.deeds += u.cost;                                   // the full price: this is a mistake taken back, not a sale
+  if (u.kind === "item") g.planted = u.planted;
+  Garden.selected = null;
+  try { isoSolidsDirty(); } catch (e) {}
+  llSave(); Snd.back();
+  toast(u.name + " taken back — your coins are returned");
+  render();
+}
+
+/* ---------------- the bar over the garden ---------------- */
+function gpBits() {
+  const stage = document.querySelector("main > .garden-wrap .garden-stage");
+  if (!stage) return;
+  stage.querySelectorAll(".gp-bar").forEach(e => e.remove());
+  clearTimeout(GP.timer);
+  const live = GP.undo && Date.now() < GP.undo.until;
+  if (GP.undo && !live) GP.undo = null;
+
+  if (gpOutdoors() && GP.staged && Garden.isoHover) {
+    const ok = gpFree(Garden.isoHover.u, Garden.isoHover.v);
+    const bar = document.createElement("div"); bar.className = "gp-bar"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "Place it here?");
+    bar.innerHTML = '<button class="no" type="button" onclick="gpCancel()">✕ Cancel</button>' +
+      '<button class="ok" type="button" onclick="gpConfirm()"' + (ok ? "" : " disabled") + ">" + (ok ? "✓ Place here" : "Spot is taken") + "</button>";
+    stage.appendChild(bar);
+  } else if (live) {
+    const bar = document.createElement("div"); bar.className = "gp-bar";
+    bar.innerHTML = '<button class="undo" type="button" onclick="gpUndo()">↩ Undo — ' + esc(GP.undo.name) + "</button>";
+    stage.appendChild(bar);
+    GP.timer = setTimeout(gpBits, Math.max(50, GP.undo.until - Date.now() + 30));
+  }
+}
+
+/* ---------------- the ghost, drawn on top of the garden frame ---------------- */
+const gardenFrameGP = gardenFrame;
+gardenFrame = function (ctx, W, H, t) {
+  const placing = gpOutdoors();
+  if (!placing && (GP.staged || GP.hold)) { GP.staged = false; if (!Garden.placing) GP.hold = false; }
+  if (placing && Garden.isoHover) Garden.isoHover = gpSnap(Garden.isoHover.u, Garden.isoHover.v);
+  const was = Garden.panning;
+  if (GP.hold && placing) Garden.panning = true;       // the camera stays where it was put, instead of easing home
+  let out;
+  try { out = gardenFrameGP.apply(this, arguments); } finally { Garden.panning = was; }
+  if (placing && Garden.isoHover) {
+    try { gpGhost(ctx, W, H, t); } catch (e) { /* a ghost must never break the garden */ }
+  }
+  return out;
+};
+
+function gpGhost(c, W, H, t) {
+  const pl = Garden.placing, h = Garden.isoHover, ok = gpFree(h.u, h.v);
+  const night = !!gardenState().night;
+  if (pl.kind === "item" && IB && IB.item) {
+    c.save(); c.globalAlpha = ok ? 0.62 : 0.4;
+    IB.item(c, pl.id, h.u, h.v, W, H, t, night, 1);
+    c.restore();
+  }
+  const a = isoPt(h.u - 0.5, h.v - 0.5, W, H), b = isoPt(h.u + 0.5, h.v - 0.5, W, H),
+        d = isoPt(h.u + 0.5, h.v + 0.5, W, H), e = isoPt(h.u - 0.5, h.v + 0.5, W, H);
+  c.save();
+  c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.lineTo(d.x, d.y); c.lineTo(e.x, e.y); c.closePath();
+  c.fillStyle = ok ? "rgba(70, 200, 120, .34)" : "rgba(235, 80, 70, .38)"; c.fill();
+  c.lineWidth = 2.5; c.strokeStyle = ok ? "rgba(255,255,255,.95)" : "rgba(255,235,230,.95)";
+  c.setLineDash([7, 5]); c.lineDashOffset = -(GardenMotion() ? t * 14 : 0); c.stroke();
+  if (!ok) {                                           // a cross for people who cannot tell red from green
+    const m = isoPt(h.u, h.v, W, H), r = 9 * (Garden.zoom || 1);
+    c.setLineDash([]); c.lineWidth = 3.5; c.strokeStyle = "rgba(255,255,255,.95)";
+    c.beginPath(); c.moveTo(m.x - r, m.y - r * 0.5); c.lineTo(m.x + r, m.y + r * 0.5); c.moveTo(m.x + r, m.y - r * 0.5); c.lineTo(m.x - r, m.y + r * 0.5); c.stroke();
+  }
+  c.restore();
+}
+const GardenMotion = () => !(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+/* ---------------- the canvas: mouse hover, pinch, ctrl+wheel ---------------- */
+function gpBind() {
+  const canvas = document.getElementById("gCanvas");
+  if (!canvas) return;
+  GP.pts.clear(); GP.pinch = null;
+  const dist = () => { const p = [...GP.pts.values()]; return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1; };
+  /* zoom about the middle of the view: the camera offset scales with the zoom, so the
+     same spot stays in the middle instead of jumping back to the character */
+  const setZoom = (z) => {
+    const old = Garden.zoom || 1, nz = clamp(z, GP_ZOOM.min, GP_ZOOM.max), c = Garden.cam2;
+    Garden.zoom = nz;
+    if (c) { c.x *= nz / old; c.y *= nz / old; }
+  };
+  const mid = () => { const p = [...GP.pts.values()]; return { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 }; };
+
+  /* these run before the garden's own handlers (capture), and stop them during a pinch */
+  canvas.addEventListener("pointerdown", (e) => {
+    GP.ptype = e.pointerType || "mouse";
+    if (GP.ptype === "mouse") return;
+    GP.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (GP.pts.size === 2) {
+      GP.pinch = { d0: dist(), z0: Garden.zoom || 1, m: mid() };
+      Garden.panning = true;                                // the camera stops following while two fingers are down
+      try { if (canvas.onpointercancel) canvas.onpointercancel(); } catch (err) {}   // forget the first finger's tap or drag
+      e.stopImmediatePropagation(); e.preventDefault();
+    } else if (GP.pts.size > 2) e.stopImmediatePropagation();
+  }, true);
+  canvas.addEventListener("pointermove", (e) => {
+    if (GP.pts.has(e.pointerId)) GP.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (GP.pinch) {
+      if (GP.pts.size >= 2) {
+        setZoom(GP.pinch.z0 * dist() / GP.pinch.d0);
+        const m = mid(), r = canvas.getBoundingClientRect(), c = Garden.cam2;
+        if (c) { c.x -= (m.x - GP.pinch.m.x) * (Garden.W / r.width); c.y -= (m.y - GP.pinch.m.y) * (Garden.H / r.height); }
+        GP.pinch.m = m;
+      }
+      e.stopImmediatePropagation(); return;
+    }
+    /* a mouse with no button down: the ghost follows it */
+    if (e.pointerType === "mouse" && e.buttons === 0 && gpOutdoors()) {
+      const w = gpWorld(e); if (w) Garden.isoHover = gpSnap(w.u, w.v);
+    }
+  }, true);
+  const lift = (e) => {
+    GP.pts.delete(e.pointerId);
+    if (GP.pinch) {
+      e.stopImmediatePropagation();
+      if (GP.pts.size === 0) { GP.pinch = null; Garden.panning = null; GP.hold = !!Garden.placing; }   // while placing, the view you chose stays
+    }
+  };
+  canvas.addEventListener("pointerup", lift, true);
+  canvas.addEventListener("pointercancel", lift, true);
+
+  canvas.addEventListener("wheel", (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;                 // a bare wheel still scrolls the page
+    e.preventDefault();
+    setZoom((Garden.zoom || 1) * Math.exp(-e.deltaY * 0.004));
+  }, { passive: false });
+}
+
+/* when the view is held, ignore anything that tries to reset the camera behind our back */
+(function () {
+  let v = Garden.cam2;
+  Object.defineProperty(Garden, "cam2", {
+    configurable: true, enumerable: true,
+    get() { return v; },
+    set(x) { if (x === null && GP.hold && Garden.placing && !GP.allowNull) return; v = x; },
+  });
+})();
+const isoZoomGP = isoZoom;
+isoZoom = function () { GP.allowNull = true; try { return isoZoomGP.apply(this, arguments); } finally { GP.allowNull = false; } };
+const isoCentreGP = isoCentre;
+isoCentre = function () { GP.hold = false; GP.allowNull = true; try { return isoCentreGP.apply(this, arguments); } finally { GP.allowNull = false; } };
+
+/* ---------------- wiring ---------------- */
+function gpMount() { gpBind(); gpBits(); }
+const pageGardenGP = pageGarden;
+pageGarden = function () {
+  const html = pageGardenGP.apply(this, arguments);
+  mount(gpMount);
+  return html;
+};
+PAGES.garden = pageGarden;
+render();
+</script>
+<!-- GARDENPLACE-BLOCK-END -->
+<!-- GARDENA11Y-BLOCK-START --><!-- ============================================================
+     GARDENA11Y — the garden for people who cannot, or would rather not,
+     use it the default way
+     ------------------------------------------------------------
+     Found by measuring the garden page (text contrast against its real
+     background, and the size of everything you can press), not by guessing.
+
+       * CONTRAST. The app's green (#268c73) under white text is only 4.1:1,
+         under the 4.5:1 that ordinary text needs, and the grey notes were
+         4.47. In the garden, green buttons and chips go a shade deeper
+         (#1f7a62, 5.3:1), grey text a shade darker, red prices a shade
+         darker. Nothing else changes colour.
+       * TOUCH TARGETS. Everything pressable is at least 44px. The salah
+         "Tick" buttons (34px) and the Girl/Boy buttons (33px) were not.
+       * KEYBOARD. While placing something: arrow keys move the ghost along
+         the squares, Enter places it, Escape cancels. Ctrl/Cmd+Z takes back
+         the last thing placed (for nine seconds). + and - zoom and 0
+         centres. Keys in a text box are left alone.
+       * SCREEN READERS. The garden has a label, the zoom buttons say what
+         they do, and a polite live region says where the ghost is, whether
+         the square is free, and when something is placed or taken back.
+       * REDUCED MOTION. The sun, clouds, the sway of trees and the water
+         stand still. The child still walks and animates (walking is part of
+         playing, and its timing drives the movement). The page's own
+         flourishes (coins, ripples, confetti, drifting light) were already
+         switched off by the earlier blocks.
+       * FORCED COLOURS (Windows high contrast): controls keep a border.
+
+     Not done, and said so: the canvas is a picture, so a screen reader hears
+     a summary of what you have, not a description of where each tree is.
+     ============================================================ -->
+<style>
+  .ga-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  /* contrast: only inside the garden page */
+  main > .gui-head .btn.primary, .gui .btn.primary, .gui .chip[aria-pressed="true"], .gui .gfx-subtabs button[aria-pressed="true"],
+  .gui .land-cell.have { background: #1f7a62; border-color: #1f7a62; color: #fff; }
+  .gui .land-cell.next, .gui .mq-c, .gui .v { color: #1b6b56; }
+  .gui .mq-c.no { color: #b3342f; }
+  .gui .note, .gui .sub, main > .gui-head .sub { color: #5d6470; }
+  .gui .shop-item:disabled .nm { color: #6a665b; }
+  .gui .need .bar { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .28); }       /* the bar is visible even to someone who cannot tell its colour */
+
+  /* touch targets */
+  .gui .salah-tick, .gui .av-opt, .gui .btn, .gui .chip, .gui .shop-item, .gui .gfx-subtabs button { min-height: 44px; }
+  .gui .salah-tick, .gui .av-opt { min-width: 64px; }
+
+  @media (forced-colors: active) {
+    .gui .g-tabs .chip, .gui .shop-item, .gui .iso-btns button, .gui .stage-btn, .gp-bar button, .gui-hud .deeds, .gui-hud .needs { border: 2px solid ButtonText; }
+    .gui .g-tabs .chip[aria-pressed="true"], .gui .shop-item[aria-pressed="true"] { border-color: Highlight; outline: 2px solid Highlight; }
+  }
+</style>
+<script>
+"use strict";
+
+const GA = { reduce: () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) };
+
+/* ---------------- a polite voice ---------------- */
+function gaSay(text) {
+  let el = document.getElementById("gaLive");
+  if (!el) { el = document.createElement("div"); el.id = "gaLive"; el.className = "ga-sr"; el.setAttribute("role", "status"); el.setAttribute("aria-live", "polite"); document.body.appendChild(el); }
+  el.textContent = "";
+  setTimeout(() => { el.textContent = text; }, 40);          // clearing first makes a repeat message be read again
+}
+
+/* ---------------- names for the things that had none ---------------- */
+function gaMount() {
+  const wrap = document.querySelector("main > .garden-wrap");
+  if (!wrap) return;
+  const g = gState();
+  const canvas = document.getElementById("gCanvas");
+  if (canvas) {
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "Your garden. " + (g.items || []).length + " thing" + ((g.items || []).length === 1 ? "" : "s") + " planted and " +
+      (g.buildings || []).length + " building" + ((g.buildings || []).length === 1 ? "" : "s") + ". Use the buttons below to build. While placing something, the arrow keys move it, Enter places it and Escape cancels.");
+  }
+  const labels = ["Zoom in", "Zoom out", "Centre on my character"];
+  wrap.querySelectorAll(".iso-btns button").forEach((b, i) => { if (labels[i]) { b.setAttribute("aria-label", labels[i]); b.title = labels[i]; } });
+  const tabs = wrap.querySelector(".g-tabs"); if (tabs) { tabs.setAttribute("role", "group"); tabs.setAttribute("aria-label", "Garden menu"); }
+  wrap.querySelectorAll(".need").forEach(n => {
+    if (n.getAttribute("role")) return;
+    const txt = (n.textContent || "").replace(/\s+/g, " ").trim();
+    if (txt) n.setAttribute("aria-label", txt);
+  });
+}
+
+/* ---------------- keys ---------------- */
+const gaTyping = () => { const el = document.activeElement; return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable); };
+const gaOnControl = () => { const el = document.activeElement; return !!el && (el.tagName === "BUTTON" || el.tagName === "A" || el.tagName === "SUMMARY"); };
+
+function gaSquareWords(h) {
+  const free = gpFree(h.u, h.v);
+  return "Square " + Math.floor(h.u + 1) + " across, " + Math.floor(h.v + 1) + " down. " + (free ? "Free. Press Enter to place." : "Taken. Move somewhere else.");
+}
+
+window.addEventListener("keydown", (e) => {
+  if (page !== "garden" || role !== "student" || gaTyping() || e.altKey) return;
+  const k = e.key, mod = e.ctrlKey || e.metaKey;
+
+  if (mod && k.toLowerCase() === "z") {
+    if (GP.undo && Date.now() < GP.undo.until) { e.preventDefault(); e.stopImmediatePropagation(); const n = GP.undo.name; gpUndo(); gaSay(n + " taken back. Your coins are returned."); }
+    return;
+  }
+  if (mod) return;
+
+  if (gpOutdoors()) {
+    const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[k];
+    if (step) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      let h = Garden.isoHover;
+      if (!h) { const ch = gState().child || {}; h = gpSnap(ch.u == null ? 1 : ch.u, ch.v == null ? 1 : ch.v); }
+      else h = gpSnap(h.u + step[0], h.v + step[1]);
+      Garden.isoHover = h; GP.staged = false;
+      gaSay(gaSquareWords(h));
+      return;
+    }
+    if (k === "Enter" && !gaOnControl() && Garden.isoHover) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      const h = Garden.isoHover, name = Garden.placing.name, had = GP.undo;
+      GP.confirm = true; gardenPlaceHere({ u: h.u, v: h.v });
+      GP.confirm = false;
+      if (GP.undo && GP.undo !== had) gaSay(name + " placed. Press Control Z within nine seconds to take it back.");
+      else if (Garden.placing) gaSay("That square is taken. Move somewhere else.");
+      return;
+    }
+    if (k === "Escape" && !gaOnControl()) { e.preventDefault(); e.stopImmediatePropagation(); gpCancel(); gaSay("Cancelled."); return; }
+    return;
+  }
+
+  if (gaOnControl()) return;                                  // let buttons keep their own keys
+  if (k === "+" || k === "=") { e.preventDefault(); isoZoom(0.15); gaSay("Zoomed in."); }
+  else if (k === "-" || k === "_") { e.preventDefault(); isoZoom(-0.15); gaSay("Zoomed out."); }
+  else if (k === "0") { e.preventDefault(); isoCentre(); gaSay("Centred on your character."); }
+}, true);
+
+/* ---------------- reduced motion: the scenery stands still ---------------- */
+(function () {
+  const frozen = [[GD2, "sky", 3], [GD, "sky", 3], [GD, "river", 3], [IB, "mosque", 6], [IB, "school", 6], [IB, "house", 5], [IB, "tree", 5], [IB, "item", 6]];
+  frozen.forEach(([obj, name, at]) => {
+    const fn = obj && obj[name];
+    if (typeof fn !== "function") return;
+    obj[name] = function () {
+      if (GA.reduce() && arguments.length > at) { const a = Array.prototype.slice.call(arguments); a[at] = 0; return fn.apply(this, a); }
+      return fn.apply(this, arguments);
+    };
+  });
+})();
+
+/* ---------------- wiring ---------------- */
+const pageGardenGA = pageGarden;
+pageGarden = function () {
+  const html = pageGardenGA.apply(this, arguments);
+  mount(gaMount);
+  return html;
+};
+PAGES.garden = pageGarden;
+render();
+</script>
+<!-- GARDENA11Y-BLOCK-END -->
 </body>
 </html>

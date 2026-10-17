@@ -1,0 +1,136 @@
+<!-- ============================================================
+     GARDENLIGHT — (b) lighting and ambient life for the garden
+     ------------------------------------------------------------
+     Direction A, "Pocket Camp": a warm late-morning light, a soft edge to
+     the picture, and a few slow things that move so the garden feels
+     lived-in:
+
+       * warm light falling from the sun's side, and a gentle vignette
+         (cool moonlight at night);
+       * three soft cloud shadows drifting across the ground;
+       * a few dust motes in the day, and fireflies at night.
+
+     It is NOT drawn on the garden's canvas. A first version was, and with
+     the canvas flushed every frame it cost 5-7ms of a 16ms budget on an
+     800px garden (the static light blit alone was 1.5-3.5ms). Instead it is
+     a layer of plain elements above the canvas, painted by CSS: a gradient
+     for the light, and `transform`/`opacity` animations that the browser
+     runs on the GPU compositor, off the main thread. The garden's own
+     frame loop does not know it exists, so it costs the canvas nothing.
+
+     * "Reduce motion" keeps the light and removes everything that moves.
+     * Inside a building it is hidden (rooms have their own lighting).
+     * It is not part of "Save a picture", which saves the canvas alone.
+
+     Add ?perf=1 to the address to see the garden's own frame time on
+     screen. Laptop and headless numbers are NOT tablet numbers.
+     ============================================================ -->
+<style>
+  .gl-fx { position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden; border-radius: inherit; }
+  .gl-light { position: absolute; inset: 0;
+    background:
+      radial-gradient(120% 95% at 82% 4%, rgba(255, 214, 130, .30), rgba(255, 226, 170, .10) 45%, rgba(255, 226, 170, 0) 70%),
+      radial-gradient(ellipse at 50% 56%, rgba(20, 40, 30, 0) 52%, rgba(30, 55, 40, .13) 100%); }
+  .gl-night .gl-light {
+    background:
+      radial-gradient(110% 90% at 18% 5%, rgba(150, 185, 255, .22), rgba(150, 185, 255, 0) 65%),
+      radial-gradient(ellipse at 50% 56%, rgba(0, 8, 24, 0) 52%, rgba(0, 8, 24, .22) 100%); }
+
+  .gl-sunset .gl-light {
+    background:
+      radial-gradient(120% 95% at 85% 12%, rgba(255, 150, 80, .34), rgba(255, 170, 110, .12) 45%, rgba(255, 170, 110, 0) 72%),
+      radial-gradient(ellipse at 50% 56%, rgba(60, 25, 30, 0) 52%, rgba(60, 25, 30, .16) 100%); }
+
+  .gl-cloud { position: absolute; left: -45%; width: 45%; aspect-ratio: 3 / 1; border-radius: 50%; opacity: .08;
+    background: radial-gradient(closest-side, rgba(20, 40, 50, .9), rgba(20, 40, 50, 0));
+    animation: glDrift 70s linear infinite; will-change: transform; }
+  .gl-cloud:nth-of-type(1) { top: 46%; animation-duration: 74s; }
+  .gl-cloud:nth-of-type(2) { top: 62%; width: 52%; animation-duration: 96s; animation-delay: -38s; }
+  .gl-cloud:nth-of-type(3) { top: 74%; width: 38%; animation-duration: 58s; animation-delay: -21s; }
+  .gl-night .gl-cloud { display: none; }
+  @keyframes glDrift { to { transform: translateX(320%); } }
+
+  .gl-mote { position: absolute; width: 8px; height: 8px; border-radius: 50%; opacity: 0;
+    background: radial-gradient(closest-side, rgba(255, 246, 200, 1), rgba(255, 236, 160, 0));
+    animation: glFloat 14s ease-in-out infinite; will-change: transform, opacity; }
+  .gl-night .gl-mote { width: 14px; height: 14px; background: radial-gradient(closest-side, rgba(220, 255, 150, 1), rgba(200, 255, 120, 0)); }
+  @keyframes glFloat {
+    0%   { opacity: 0;   transform: translate(0, 0); }
+    30%  { opacity: .75; }
+    60%  { opacity: .35; transform: translate(14px, -18px); }
+    100% { opacity: 0;   transform: translate(-10px, -34px); }
+  }
+  .gl-mote:nth-of-type(n+4):nth-of-type(-n+6) { animation-duration: 18s; }
+  .gl-mote:nth-of-type(n+7) { animation-duration: 11s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gl-cloud, .gl-mote { animation: none !important; }
+    .gl-cloud { display: none; } .gl-mote { opacity: 0; }
+  }
+
+  #gPerf { position: fixed; left: 8px; top: 8px; z-index: 200; padding: 4px 9px; border-radius: 8px;
+           background: rgba(0, 0, 0, .72); color: #9dffb4; font: 600 12px/1.3 ui-monospace, Menlo, monospace;
+           pointer-events: none; }
+  #gPerf.slow { color: #ffb4a8; }
+</style>
+<script>
+"use strict";
+
+const GL = { perf: /[?&]perf=1\b/.test(location.search), ms: [], frames: 0 };
+
+/* where the 14 motes start, as fixed percentages: stable, nothing random per render */
+function glMarkup() {
+  let s = '<div class="gl-light"></div><i class="gl-cloud"></i><i class="gl-cloud"></i><i class="gl-cloud"></i>';
+  for (let i = 0; i < 12; i++) {
+    const x = (i * 61.8 + 9) % 94, y = 34 + (i * 38.2) % 52, d = -((i * 2.3) % 14);
+    s += '<i class="gl-mote" style="left:' + x.toFixed(1) + '%;top:' + y.toFixed(1) + '%;animation-delay:' + d.toFixed(1) + 's"></i>';
+  }
+  return s;
+}
+
+function glMountFx() {
+  const stage = document.querySelector("main > .garden-wrap .garden-stage");
+  if (!stage) return;
+  let fx = stage.querySelector(".gl-fx");
+  const inside = !!Garden.inside;
+  if (inside) { if (fx) fx.remove(); return; }
+  if (!fx) {
+    fx = document.createElement("div"); fx.className = "gl-fx"; fx.setAttribute("aria-hidden", "true");
+    fx.innerHTML = glMarkup();
+    stage.appendChild(fx);
+  }
+  /* the canvas decides night from the chosen sky, not from g.night, so follow the same thing */
+  const sky = (gState().style || {}).sky;
+  fx.classList.toggle("gl-night", typeof skyIsNight === "function" ? skyIsNight(sky) : !!gardenState().night);
+  fx.classList.toggle("gl-sunset", sky === "sunset");
+}
+
+const pageGardenLight = pageGarden;
+pageGarden = function () {
+  const html = pageGardenLight.apply(this, arguments);
+  mount(glMountFx);
+  return html;
+};
+PAGES.garden = pageGarden;
+
+/* the garden's own frame time, only when asked for */
+function glReadout(ms) {
+  if (!GL.perf || !GL.ms.length) return;
+  let el = document.getElementById("gPerf");
+  if (!el) { el = document.createElement("div"); el.id = "gPerf"; document.body.appendChild(el); }
+  const a = GL.ms.reduce((p, q) => p + q, 0) / GL.ms.length;
+  el.textContent = "garden frame " + a.toFixed(1) + " ms avg · " + ms.toFixed(1) + " now";
+  el.classList.toggle("slow", a > 12);
+}
+const gardenFrameLight = gardenFrame;
+gardenFrame = function (ctx, W, H, t) {
+  if (!GL.perf) return gardenFrameLight.apply(this, arguments);
+  const t0 = performance.now();
+  const out = gardenFrameLight.apply(this, arguments);
+  const ms = performance.now() - t0;
+  GL.ms.push(ms); if (GL.ms.length > 90) GL.ms.shift();
+  if (++GL.frames % 30 === 0) glReadout(ms);
+  return out;
+};
+render();
+</script>

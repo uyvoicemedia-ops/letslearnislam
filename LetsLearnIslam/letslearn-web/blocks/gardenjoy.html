@@ -1,0 +1,160 @@
+<!-- ============================================================
+     GARDENJOY — (d) a little delight when you build, and a taller phone garden
+     ------------------------------------------------------------
+     When something is bought and placed (a tree, a building):
+       * a few coins fly from the coin pill to the spot, and a ring ripples
+         out where it landed (direction B, "Township", borrowed for the
+         one moment that deserves it);
+       * the price floats up from the pill as "-25", and the number counts
+         down instead of jumping;
+       * a short chime as the coins arrive.
+     While you slide the ghost about, a very small tick marks each new
+     square (not more than ~8 a second).
+
+     With "reduce motion" on, nothing flies or ripples: the "-25" appears
+     in place and fades, the number updates at once. Sound still follows
+     the app's own sound switch, because it uses the app's own Snd.
+
+     The first time a child starts placing something they get one gentle
+     tip about the ghost, undo and pinch. It is remembered on this device
+     only, and only as a yes/no.
+
+     On a phone the garden used to be 52% as tall as it was wide (about
+     230px on a 390px screen), so most of the screen went to the controls.
+     It is now nearly square.
+     ============================================================ -->
+<style>
+  .gj-layer { position: absolute; inset: 0; z-index: 7; pointer-events: none; overflow: hidden; border-radius: inherit; }
+  .gj-coin { position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; will-change: transform, opacity;
+             background: radial-gradient(circle at 35% 30%, #ffe9a1, #f5b83d 60%, #d99512);
+             box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .12), 0 1px 3px rgba(0, 0, 0, .3); }
+  .gj-ring { position: absolute; left: 0; top: 0; width: 24px; height: 24px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .95);
+             box-shadow: 0 0 0 2px rgba(31, 122, 98, .5); will-change: transform, opacity; }
+  .gj-cost { position: absolute; left: 0; top: 0; font: 800 17px/1 var(--gui-font, system-ui, sans-serif); color: #8a3a00; white-space: nowrap;
+             text-shadow: 0 1px 0 #fff, 0 0 6px #fff; will-change: transform, opacity; }
+</style>
+<script>
+"use strict";
+
+const GJ = { still: () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches), last: null, tickAt: 0 };
+
+/* where a square is, in pixels inside the garden stage */
+function gjSpot(u, v) {
+  const c = Garden.canvas, stage = c && c.parentElement; if (!stage) return null;
+  const r = c.getBoundingClientRect(), s = stage.getBoundingClientRect(), q = isoPt(u, v, Garden.W, Garden.H);
+  return { x: r.left - s.left + q.x * r.width / Garden.W, y: r.top - s.top + q.y * r.height / Garden.H };
+}
+function gjPill(stage) {
+  const el = stage.querySelector(".gui-hud .deeds .coin") || document.querySelector(".deeds .coin");
+  if (!el) return null;
+  const r = el.getBoundingClientRect(), s = stage.getBoundingClientRect();
+  return { x: r.left - s.left + r.width / 2, y: r.top - s.top + r.height / 2 };
+}
+
+/* the number counts down to its new value instead of jumping */
+function gjCount(from, to) {
+  const el = document.getElementById("deedCount");
+  if (!el || GJ.still() || from === to) return;
+  const t0 = performance.now(), dur = 520;
+  el.textContent = from;
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / dur);
+    const live = document.getElementById("deedCount"); if (!live) return;
+    live.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3)));
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function gjBurst(u, v, cost, fromDeeds, toDeeds) {
+  const stage = document.querySelector("main > .garden-wrap .garden-stage");
+  const spot = stage && gjSpot(u, v), pill = stage && gjPill(stage);
+  if (!stage || !spot || !pill) return;
+  let layer = stage.querySelector(".gj-layer");
+  if (!layer) { layer = document.createElement("div"); layer.className = "gj-layer"; layer.setAttribute("aria-hidden", "true"); stage.appendChild(layer); }
+  const still = GJ.still();
+
+  const tag = document.createElement("div"); tag.className = "gj-cost"; tag.textContent = "−" + cost;
+  tag.style.transform = "translate(" + (pill.x + 20) + "px," + (pill.y - 8) + "px)";
+  layer.appendChild(tag);
+  tag.animate(still
+    ? [{ opacity: 1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }]
+    : [{ opacity: 0, transform: tag.style.transform + " translateY(6px)" },
+       { opacity: 1, offset: 0.2 },
+       { opacity: 0, transform: tag.style.transform + " translateY(-26px)" }],
+    { duration: still ? 900 : 1100, easing: "ease-out" }).onfinish = () => tag.remove();
+
+  gjCount(fromDeeds, toDeeds);
+  if (still) return;
+
+  const n = Math.min(8, Math.max(4, Math.round(cost / 12)));
+  for (let i = 0; i < n; i++) {
+    const coin = document.createElement("i"); coin.className = "gj-coin"; layer.appendChild(coin);
+    const sx = pill.x - 11, sy = pill.y - 11, ex = spot.x - 11 + (i % 3 - 1) * 5, ey = spot.y - 11 - 6;
+    const mx = (sx + ex) / 2 + (i % 2 ? 26 : -26), my = Math.min(sy, ey) - 34 - (i % 3) * 8;   // an arc, not a straight line
+    const a = coin.animate([
+      { transform: "translate(" + sx + "px," + sy + "px) scale(1)", opacity: 1 },
+      { transform: "translate(" + mx + "px," + my + "px) scale(1.15)", opacity: 1, offset: 0.5 },
+      { transform: "translate(" + ex + "px," + ey + "px) scale(.35)", opacity: 0.2 },
+    ], { duration: 640, delay: i * 45, easing: "cubic-bezier(.3,.1,.4,1)", fill: "backwards" });
+    a.onfinish = () => coin.remove();
+  }
+  const ring = document.createElement("i"); ring.className = "gj-ring"; layer.appendChild(ring);
+  const rx = spot.x - 12, ry = spot.y - 12;
+  ring.animate([
+    { transform: "translate(" + rx + "px," + ry + "px) scale(.4)", opacity: 0.95 },
+    { transform: "translate(" + rx + "px," + ry + "px) scale(3.4)", opacity: 0 },
+  ], { duration: 700, delay: 460, easing: "ease-out", fill: "backwards" }).onfinish = () => ring.remove();
+  setTimeout(() => { try { Snd.star(); } catch (e) {} }, 480);
+}
+
+/* ---------------- hooks ---------------- */
+const gardenPlaceHereGJ = gardenPlaceHere;
+gardenPlaceHere = function (p) {
+  const g = gState(), before = g.deeds, pl = Garden.placing, cost = pl && pl.cost;
+  const out = gardenPlaceHereGJ.apply(this, arguments);
+  try {
+    if (pl && g.deeds < before && p && p.u != null && !Garden.inside) {
+      /* the page has just re-rendered; the burst is drawn on the fresh stage */
+      gjBurst(p.u, p.v, cost || (before - g.deeds), before, g.deeds);
+    }
+  } catch (e) { /* never let a flourish stop a purchase */ }
+  return out;
+};
+
+/* a tick for each new square the ghost moves to */
+const gardenFrameGJ = gardenFrame;
+gardenFrame = function () {
+  const out = gardenFrameGJ.apply(this, arguments);
+  const h = Garden.placing && !Garden.inside && Garden.isoHover;
+  if (h) {
+    const k = h.u + "," + h.v;
+    if (GJ.last && GJ.last !== k && performance.now() - GJ.tickAt > 120) { GJ.tickAt = performance.now(); try { Snd.tap(); } catch (e) {} }
+    GJ.last = k;
+  } else GJ.last = null;
+  return out;
+};
+
+/* ---------------- one gentle tip, once ---------------- */
+function gjTipOnce() {
+  let seen = false;
+  try { seen = localStorage.getItem("ll_gj_tip1") === "1"; } catch (e) {}
+  if (seen) return;
+  try { localStorage.setItem("ll_gj_tip1", "1"); } catch (e) {}
+  setTimeout(() => toast("Tip: you can see where it will go first, take it back for a few seconds, and pinch to zoom."), 600);
+}
+const gardenPickItemGJ = gardenPickItem, gardenPickBuildingGJ = gardenPickBuilding;
+gardenPickItem = function () { const r = gardenPickItemGJ.apply(this, arguments); if (Garden.placing && !Garden.inside) gjTipOnce(); return r; };
+gardenPickBuilding = function () { const r = gardenPickBuildingGJ.apply(this, arguments); if (Garden.placing && !Garden.inside) gjTipOnce(); return r; };
+
+/* ---------------- a taller garden on a phone ---------------- */
+const gardenMountGJ = gardenMount;
+gardenMount = function () {
+  gardenMountGJ.apply(this, arguments);
+  const c = document.getElementById("gCanvas");
+  if (!c || window.innerWidth > 700) return;
+  const H = Math.round(Garden.W * 0.95);
+  if (H > Garden.H + 4) gardenRedrawAt(c, Garden.W, H);
+};
+render();
+</script>

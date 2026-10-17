@@ -1,0 +1,158 @@
+<!-- ============================================================
+     GARDENA11Y — the garden for people who cannot, or would rather not,
+     use it the default way
+     ------------------------------------------------------------
+     Found by measuring the garden page (text contrast against its real
+     background, and the size of everything you can press), not by guessing.
+
+       * CONTRAST. The app's green (#268c73) under white text is only 4.1:1,
+         under the 4.5:1 that ordinary text needs, and the grey notes were
+         4.47. In the garden, green buttons and chips go a shade deeper
+         (#1f7a62, 5.3:1), grey text a shade darker, red prices a shade
+         darker. Nothing else changes colour.
+       * TOUCH TARGETS. Everything pressable is at least 44px. The salah
+         "Tick" buttons (34px) and the Girl/Boy buttons (33px) were not.
+       * KEYBOARD. While placing something: arrow keys move the ghost along
+         the squares, Enter places it, Escape cancels. Ctrl/Cmd+Z takes back
+         the last thing placed (for nine seconds). + and - zoom and 0
+         centres. Keys in a text box are left alone.
+       * SCREEN READERS. The garden has a label, the zoom buttons say what
+         they do, and a polite live region says where the ghost is, whether
+         the square is free, and when something is placed or taken back.
+       * REDUCED MOTION. The sun, clouds, the sway of trees and the water
+         stand still. The child still walks and animates (walking is part of
+         playing, and its timing drives the movement). The page's own
+         flourishes (coins, ripples, confetti, drifting light) were already
+         switched off by the earlier blocks.
+       * FORCED COLOURS (Windows high contrast): controls keep a border.
+
+     Not done, and said so: the canvas is a picture, so a screen reader hears
+     a summary of what you have, not a description of where each tree is.
+     ============================================================ -->
+<style>
+  .ga-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  /* contrast: only inside the garden page */
+  main > .gui-head .btn.primary, .gui .btn.primary, .gui .chip[aria-pressed="true"], .gui .gfx-subtabs button[aria-pressed="true"],
+  .gui .land-cell.have { background: #1f7a62; border-color: #1f7a62; color: #fff; }
+  .gui .land-cell.next, .gui .mq-c, .gui .v { color: #1b6b56; }
+  .gui .mq-c.no { color: #b3342f; }
+  .gui .note, .gui .sub, main > .gui-head .sub { color: #5d6470; }
+  .gui .shop-item:disabled .nm { color: #6a665b; }
+  .gui .need .bar { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .28); }       /* the bar is visible even to someone who cannot tell its colour */
+
+  /* touch targets */
+  .gui .salah-tick, .gui .av-opt, .gui .btn, .gui .chip, .gui .shop-item, .gui .gfx-subtabs button { min-height: 44px; }
+  .gui .salah-tick, .gui .av-opt { min-width: 64px; }
+
+  @media (forced-colors: active) {
+    .gui .g-tabs .chip, .gui .shop-item, .gui .iso-btns button, .gui .stage-btn, .gp-bar button, .gui-hud .deeds, .gui-hud .needs { border: 2px solid ButtonText; }
+    .gui .g-tabs .chip[aria-pressed="true"], .gui .shop-item[aria-pressed="true"] { border-color: Highlight; outline: 2px solid Highlight; }
+  }
+</style>
+<script>
+"use strict";
+
+const GA = { reduce: () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) };
+
+/* ---------------- a polite voice ---------------- */
+function gaSay(text) {
+  let el = document.getElementById("gaLive");
+  if (!el) { el = document.createElement("div"); el.id = "gaLive"; el.className = "ga-sr"; el.setAttribute("role", "status"); el.setAttribute("aria-live", "polite"); document.body.appendChild(el); }
+  el.textContent = "";
+  setTimeout(() => { el.textContent = text; }, 40);          // clearing first makes a repeat message be read again
+}
+
+/* ---------------- names for the things that had none ---------------- */
+function gaMount() {
+  const wrap = document.querySelector("main > .garden-wrap");
+  if (!wrap) return;
+  const g = gState();
+  const canvas = document.getElementById("gCanvas");
+  if (canvas) {
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "Your garden. " + (g.items || []).length + " thing" + ((g.items || []).length === 1 ? "" : "s") + " planted and " +
+      (g.buildings || []).length + " building" + ((g.buildings || []).length === 1 ? "" : "s") + ". Use the buttons below to build. While placing something, the arrow keys move it, Enter places it and Escape cancels.");
+  }
+  const labels = ["Zoom in", "Zoom out", "Centre on my character"];
+  wrap.querySelectorAll(".iso-btns button").forEach((b, i) => { if (labels[i]) { b.setAttribute("aria-label", labels[i]); b.title = labels[i]; } });
+  const tabs = wrap.querySelector(".g-tabs"); if (tabs) { tabs.setAttribute("role", "group"); tabs.setAttribute("aria-label", "Garden menu"); }
+  wrap.querySelectorAll(".need").forEach(n => {
+    if (n.getAttribute("role")) return;
+    const txt = (n.textContent || "").replace(/\s+/g, " ").trim();
+    if (txt) n.setAttribute("aria-label", txt);
+  });
+}
+
+/* ---------------- keys ---------------- */
+const gaTyping = () => { const el = document.activeElement; return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable); };
+const gaOnControl = () => { const el = document.activeElement; return !!el && (el.tagName === "BUTTON" || el.tagName === "A" || el.tagName === "SUMMARY"); };
+
+function gaSquareWords(h) {
+  const free = gpFree(h.u, h.v);
+  return "Square " + Math.floor(h.u + 1) + " across, " + Math.floor(h.v + 1) + " down. " + (free ? "Free. Press Enter to place." : "Taken. Move somewhere else.");
+}
+
+window.addEventListener("keydown", (e) => {
+  if (page !== "garden" || role !== "student" || gaTyping() || e.altKey) return;
+  const k = e.key, mod = e.ctrlKey || e.metaKey;
+
+  if (mod && k.toLowerCase() === "z") {
+    if (GP.undo && Date.now() < GP.undo.until) { e.preventDefault(); e.stopImmediatePropagation(); const n = GP.undo.name; gpUndo(); gaSay(n + " taken back. Your coins are returned."); }
+    return;
+  }
+  if (mod) return;
+
+  if (gpOutdoors()) {
+    const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[k];
+    if (step) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      let h = Garden.isoHover;
+      if (!h) { const ch = gState().child || {}; h = gpSnap(ch.u == null ? 1 : ch.u, ch.v == null ? 1 : ch.v); }
+      else h = gpSnap(h.u + step[0], h.v + step[1]);
+      Garden.isoHover = h; GP.staged = false;
+      gaSay(gaSquareWords(h));
+      return;
+    }
+    if (k === "Enter" && !gaOnControl() && Garden.isoHover) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      const h = Garden.isoHover, name = Garden.placing.name, had = GP.undo;
+      GP.confirm = true; gardenPlaceHere({ u: h.u, v: h.v });
+      GP.confirm = false;
+      if (GP.undo && GP.undo !== had) gaSay(name + " placed. Press Control Z within nine seconds to take it back.");
+      else if (Garden.placing) gaSay("That square is taken. Move somewhere else.");
+      return;
+    }
+    if (k === "Escape" && !gaOnControl()) { e.preventDefault(); e.stopImmediatePropagation(); gpCancel(); gaSay("Cancelled."); return; }
+    return;
+  }
+
+  if (gaOnControl()) return;                                  // let buttons keep their own keys
+  if (k === "+" || k === "=") { e.preventDefault(); isoZoom(0.15); gaSay("Zoomed in."); }
+  else if (k === "-" || k === "_") { e.preventDefault(); isoZoom(-0.15); gaSay("Zoomed out."); }
+  else if (k === "0") { e.preventDefault(); isoCentre(); gaSay("Centred on your character."); }
+}, true);
+
+/* ---------------- reduced motion: the scenery stands still ---------------- */
+(function () {
+  const frozen = [[GD2, "sky", 3], [GD, "sky", 3], [GD, "river", 3], [IB, "mosque", 6], [IB, "school", 6], [IB, "house", 5], [IB, "tree", 5], [IB, "item", 6]];
+  frozen.forEach(([obj, name, at]) => {
+    const fn = obj && obj[name];
+    if (typeof fn !== "function") return;
+    obj[name] = function () {
+      if (GA.reduce() && arguments.length > at) { const a = Array.prototype.slice.call(arguments); a[at] = 0; return fn.apply(this, a); }
+      return fn.apply(this, arguments);
+    };
+  });
+})();
+
+/* ---------------- wiring ---------------- */
+const pageGardenGA = pageGarden;
+pageGarden = function () {
+  const html = pageGardenGA.apply(this, arguments);
+  mount(gaMount);
+  return html;
+};
+PAGES.garden = pageGarden;
+render();
+</script>

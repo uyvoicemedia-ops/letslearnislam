@@ -306,3 +306,41 @@ sign-in are untested by definition.
 - Easy numbers are refused in the database (`ll_pin_trivial`) and mirrored in the browser (`pnTrivial`). Keep the two lists identical.
 - Existing seeded PINs such as 1234 are not changed automatically; flagging them is a manual step to be run by hand after review.
 - Browser check: 52 stubbed-database assertions passed (child flow, adult page, temp number shown once and wiped, admin log, parent view).
+
+## Noticed outside the garden (garden-UI session, not touched)
+- Phone width: the top menu row is cut off ("My garde…"), and the connection chip shows only an empty dot with no label.
+- Phone width: the page title wraps to "My / garden" beside the coins and buttons.
+
+## Garden UI, direction A "Pocket Camp" — (a) HUD and shop chrome (block GARDENUI)
+- Adds class `gui` to `.garden-wrap` and `gui-head` to the header (student only), then `guiEnhance` (a mount job) moves the existing `.deeds` and `.needs` elements onto the canvas as a floating HUD (ids and handlers unchanged) and splits each tab's emoji into icon-over-label. `render` is wrapped only to set `body.gui-garden`.
+- Tabs are a fixed bottom dock at <=1000px, a tile grid beside the garden on desktop. Shop items are cards with a coin-tag price; zoom and "Move things" are 44px; "Move things" moved bottom-left so it no longer covers buildings.
+- **Trap:** the page entrance animation (`fadeUp ... both`) leaves an identity `transform` on `main > .garden-wrap`, and a transformed ancestor turns `position:fixed` into `absolute`, which hid the dock below the page. Fixed with `animation-fill-mode: backwards` on `.gui`.
+- Checked at 390, 820 and 1440 wide; Plant tab and picking an item still work, no page errors. Not yet measured: frame time (comes with block b).
+
+## Garden UI — (b) lighting and ambient life (block GARDENLIGHT)
+- A layer of plain elements (`.gl-fx`) above the canvas: warm light + vignette (cool moonlight at night, orange at sunset), three drifting cloud shadows, twelve dust motes by day and fireflies by night. All CSS: a gradient plus `transform`/`opacity` animations the compositor runs off the main thread. The garden's frame loop is untouched. Hidden inside buildings; `prefers-reduced-motion` keeps the light and removes everything that moves; not part of "Save a picture".
+- **Night follows `skyIsNight(style.sky)`, not `g.night`** — the canvas decides from the chosen sky, and the two can disagree.
+- **Why not on the canvas:** the first version drew the light and motes in `gardenFrame`. With the canvas flushed each frame (a 1px `getImageData` forces the raster) it cost +5-7ms on an 800px garden, of which the static light blit alone was 1.5-3.5ms. Without the flush a canvas timing is meaningless: it only measures queueing (0.15ms for a whole frame).
+- Measured after the move (headless, software raster, flushed): 2.3ms at 370px, 6.2ms at 796px, 6.9ms at 828px, the same as before the change. Those are laptop numbers, not tablet numbers. `?perf=1` shows the garden's own frame time on screen; use it on the device.
+- Not done in (b): per-object ambient shadows and grass sway. They would mean patching individual item drawers, which are many and chained; left for a later pass if wanted.
+
+## Garden UI — (c) placement (block GARDENPLACE)
+- Outdoors only (indoor furniture is unchanged). A ghost of the item follows the mouse/finger, snapped to a square, green if free and red with a cross if not (`isoWalkable` decides; a building or solid thing blocks, flowers do not). Placing on a taken square is now refused with a toast.
+- Touch: the first tap only stages the ghost; a "Place here / Cancel" bar commits. Mouse: click commits. `gardenPlaceHere` is wrapped, snapping `p.u/p.v` and registering an undo.
+- Undo lasts 9s and refunds the FULL price (selling still refunds half). It does not refund the energy `needsSpend` took.
+- **Found while testing:** the original pointer handlers never pan while `Garden.placing` — a finger drag only moves the hover. And a pan, when it does happen, eases home the moment you let go (the follow-camera skips easing only while `Garden.panning`). So "keep the pan" meant: two-finger pan/pinch while placing, camera held via `GP.hold` (frame wrapper sets `Garden.panning` for the duration of one frame) and an accessor on `Garden.cam2` that ignores the original's delayed `cam2 = null`.
+- Pinch zoom scales the camera offset with the zoom so the middle of the view stays put (the old `isoZoom` recentred on the character). Ctrl/Cmd+wheel zooms; a bare wheel still scrolls the page. Pinch handlers are capture-phase and `stopImmediatePropagation()` so the garden's own tap logic never sees a pinch; the first finger is cancelled by calling `canvas.onpointercancel()` (otherwise lifting the fingers places an item).
+- Tests (stubbed in-page, synthetic PointerEvents for pinch): 28 checks, all passing.
+
+## Garden UI — (d) delight (block GARDENJOY)
+- Coins fly from the HUD pill to the placed spot on a curve, a ring ripples there, "−25" floats up, the counter counts down, one short chime. Reduced motion: only the "−25" fades in place and the number updates at once. A tick sounds for each new square while the ghost moves (<=8/s). One-time tip (`ll_gj_tip1` in localStorage, yes/no only).
+- Phone garden canvas is now ~square (was 52% of the width, ~230px): `gardenRedrawAt` after `gardenMount` at <=700px.
+- Student tour text for the garden now says you see where it will go and can take it back (the guide must not describe things that are not there).
+
+## Garden UI — Step 4 accessibility (block GARDENA11Y)
+- **Measured, not guessed.** An audit of text contrast against the real background and the size of everything pressable, over every garden tab at phone and desktop width. Found: the brand green #268c73 under white is 4.13:1 (needs 4.5); grey notes 4.47; red prices 3.96; salah "Tick" 34px and Girl/Boy 33px tall. Fixed inside the garden only: green -> #1f7a62 (5.3:1), notes -> #5d6470, prices -> #b3342f, min-height 44px. Re-run: 0 small targets, 0 contrast failures except a decorative lock emoji (1.97, `aria-hidden` candidate). The brand green itself is used app-wide and was NOT changed outside the garden.
+- Keyboard: while placing, arrows move the ghost along the squares (grid axes, not screen directions), Enter places, Escape cancels; Ctrl/Cmd+Z undoes; +, -, 0 zoom and centre. Buttons keep their own keys, and typing in a field is left alone. The window listener is capture-phase with `stopImmediatePropagation()` so the old arrow-key walking does not also fire.
+- Screen readers: canvas has `role=img` and a summary label; zoom buttons are named; the menu is a labelled group; a polite live region (`#gaLive`) announces ghost square and free/taken, placed, taken back, cancelled.
+- Reduced motion: the canvas scenery stands still by wrapping the drawers that take a time argument (`GD2.sky`, `GD.sky`, `GD.river`, `IB.mosque/school/house/tree/item`) to pass `t = 0`. **The character still animates and walks**, because the garden derives movement `dt` from `t` differences in its frame; freezing `t` globally makes the child unable to move (a real trap — do not do that). Verified: idle garden differs between frames in 215 px (the child) vs 708 px with motion on.
+- Forced-colours (Windows high contrast): controls keep a 2px border; selected ones use Highlight.
+- Not done: a screen reader gets a summary of the garden, not a description of where each tree is; a pure-keyboard way to pick up and move an already-placed item (drag only); indoor furniture placement has no ghost/snap/undo.
