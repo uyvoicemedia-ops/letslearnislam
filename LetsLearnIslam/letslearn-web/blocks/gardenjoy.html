@@ -111,12 +111,12 @@ function gjBurst(u, v, cost, fromDeeds, toDeeds) {
 /* ---------------- hooks ---------------- */
 const gardenPlaceHereGJ = gardenPlaceHere;
 gardenPlaceHere = function (p) {
-  const g = gState(), before = g.deeds, pl = Garden.placing, cost = pl && pl.cost;
+  const g = gState(), before = g.deeds, pl = Garden.placing, cost = pl && pl.cost, had = GP.undo;
   const out = gardenPlaceHereGJ.apply(this, arguments);
   try {
-    if (pl && g.deeds < before && p && p.u != null && !Garden.inside) {
-      /* the page has just re-rendered; the burst is drawn on the fresh stage */
-      gjBurst(p.u, p.v, cost || (before - g.deeds), before, g.deeds);
+    if (pl && g.deeds < before && GP.undo && GP.undo !== had) {
+      /* the page has just re-rendered; the burst is drawn on the fresh stage, at the square it really landed on */
+      gjBurst(GP.undo.obj.u, GP.undo.obj.v, cost || (before - g.deeds), before, g.deeds);
     }
   } catch (e) { /* never let a flourish stop a purchase */ }
   return out;
@@ -126,7 +126,7 @@ gardenPlaceHere = function (p) {
 const gardenFrameGJ = gardenFrame;
 gardenFrame = function () {
   const out = gardenFrameGJ.apply(this, arguments);
-  const h = Garden.placing && !Garden.inside && Garden.isoHover;
+  const h = typeof gpOn === "function" && gpOn() && Garden.isoHover;
   if (h) {
     const k = h.u + "," + h.v;
     if (GJ.last && GJ.last !== k && performance.now() - GJ.tickAt > 120) { GJ.tickAt = performance.now(); try { Snd.tap(); } catch (e) {} }
@@ -144,8 +144,8 @@ function gjTipOnce() {
   setTimeout(() => toast("Tip: you can see where it will go first, take it back for a few seconds, and pinch to zoom."), 600);
 }
 const gardenPickItemGJ = gardenPickItem, gardenPickBuildingGJ = gardenPickBuilding;
-gardenPickItem = function () { const r = gardenPickItemGJ.apply(this, arguments); if (Garden.placing && !Garden.inside) gjTipOnce(); return r; };
-gardenPickBuilding = function () { const r = gardenPickBuildingGJ.apply(this, arguments); if (Garden.placing && !Garden.inside) gjTipOnce(); return r; };
+gardenPickItem = function () { const r = gardenPickItemGJ.apply(this, arguments); if (Garden.placing) gjTipOnce(); return r; };
+gardenPickBuilding = function () { const r = gardenPickBuildingGJ.apply(this, arguments); if (Garden.placing) gjTipOnce(); return r; };
 
 /* ---------------- a taller garden on a phone ---------------- */
 const gardenMountGJ = gardenMount;

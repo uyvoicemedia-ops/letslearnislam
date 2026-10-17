@@ -26,8 +26,15 @@
          switched off by the earlier blocks.
        * FORCED COLOURS (Windows high contrast): controls keep a border.
 
-     Not done, and said so: the canvas is a picture, so a screen reader hears
-     a summary of what you have, not a description of where each tree is.
+       * MOVING WHAT YOU HAVE PLACED. Tab to the garden, then [ and ] (or
+         , and .) choose the previous or next thing; the arrow keys move it
+         a square; Escape lets go. It is the keyboard version of dragging.
+       * WHAT IS THERE. A hidden list, after the garden, names everything
+         placed and the square it is on ("Date palm, square 3 across, 2
+         down"), indoors with the room it is in. A screen reader can walk it.
+
+     Not done, and said so: the house itself and the big buildings can still
+     only be moved by dragging.
      ============================================================ -->
 <style>
   .ga-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
@@ -41,6 +48,8 @@
   .gui .shop-item:disabled .nm { color: #6a665b; }
   .gui .need .bar { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .28); }       /* the bar is visible even to someone who cannot tell its colour */
 
+  .gui .garden-stage canvas:focus-visible { outline: 4px solid #1b57d1; outline-offset: -4px; }
+
   /* touch targets */
   .gui .salah-tick, .gui .av-opt, .gui .btn, .gui .chip, .gui .shop-item, .gui .gfx-subtabs button { min-height: 44px; }
   .gui .salah-tick, .gui .av-opt { min-width: 64px; }
@@ -53,7 +62,7 @@
 <script>
 "use strict";
 
-const GA = { reduce: () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) };
+const GA = { pickObj: null, refocus: false, reduce: () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) };
 
 /* ---------------- a polite voice ---------------- */
 function gaSay(text) {
@@ -65,15 +74,18 @@ function gaSay(text) {
 
 /* ---------------- names for the things that had none ---------------- */
 function gaMount() {
+  if (Garden.selected == null) GA.pickObj = null;
   const wrap = document.querySelector("main > .garden-wrap");
   if (!wrap) return;
   const g = gState();
   const canvas = document.getElementById("gCanvas");
   if (canvas) {
-    canvas.setAttribute("role", "img");
+    canvas.setAttribute("role", "application"); canvas.setAttribute("aria-roledescription", "garden"); canvas.tabIndex = 0;
     canvas.setAttribute("aria-label", "Your garden. " + (g.items || []).length + " thing" + ((g.items || []).length === 1 ? "" : "s") + " planted and " +
       (g.buildings || []).length + " building" + ((g.buildings || []).length === 1 ? "" : "s") + ". Use the buttons below to build. While placing something, the arrow keys move it, Enter places it and Escape cancels.");
   }
+  gaDescribe();
+  if (GA.refocus) { GA.refocus = false; if (canvas) canvas.focus({ preventScroll: true }); }
   const labels = ["Zoom in", "Zoom out", "Centre on my character"];
   wrap.querySelectorAll(".iso-btns button").forEach((b, i) => { if (labels[i]) { b.setAttribute("aria-label", labels[i]); b.title = labels[i]; } });
   const tabs = wrap.querySelector(".g-tabs"); if (tabs) { tabs.setAttribute("role", "group"); tabs.setAttribute("aria-label", "Garden menu"); }
@@ -82,6 +94,64 @@ function gaMount() {
     const txt = (n.textContent || "").replace(/\s+/g, " ").trim();
     if (txt) n.setAttribute("aria-label", txt);
   });
+}
+
+/* ---------------- what is there, in words ---------------- */
+function gaThings() {
+  const g = gState(), out = [];
+  const name = (t) => { try { return storeDef(t).name; } catch (e) { return String(t); } };
+  const sq = (o) => "square " + Math.floor(o.u + 1) + " across, " + Math.floor(o.v + 1) + " down";
+  if (gpPlanIn()) {
+    (g.planFurn || []).forEach((f, i) => {
+      const room = typeof planRoomAt === "function" ? planRoomAt(f.u, f.v) : null;
+      out.push({ list: g.planFurn, i, obj: f, text: name(f.type) + (room ? " in the " + room.name.toLowerCase() : "") + ", " + sq(f) });
+    });
+  } else if (!Garden.inside) {
+    (g.items || []).forEach((f, i) => out.push({ list: g.items, i, obj: f, text: name(f.type) + ", " + sq(f) }));
+  }
+  return out;
+}
+function gaDescribe() {
+  const stage = document.querySelector("main > .garden-wrap .garden-stage");
+  if (!stage) return;
+  let box = document.getElementById("gaList");
+  if (!box) { box = document.createElement("section"); box.id = "gaList"; box.className = "ga-sr"; box.setAttribute("aria-label", "What is in your garden"); }
+  if (box.parentElement !== stage.parentElement) stage.parentElement.insertBefore(box, stage.nextSibling);
+  const things = gaThings(), g = gState();
+  const cap = 60, shown = things.slice(0, cap);
+  const where = Garden.inside ? "this building" : "your garden";
+  const bits = [];
+  if (!Garden.inside) (g.buildings || []).forEach(b => { let nm = b.id; try { nm = (b.kind === "masjid" ? MOSQUES : SCHOOLS).find(x => x.id === b.id).name; } catch (e) {} bits.push("<li>" + esc(nm) + ", square " + Math.floor(b.u + 1) + " across, " + Math.floor(b.v + 1) + " down</li>"); });
+  box.innerHTML = "<h2>What is in " + where + "</h2><ul>" +
+    bits.join("") + shown.map(t => "<li>" + esc(t.text) + "</li>").join("") +
+    "</ul>" + (things.length > cap ? "<p>and " + (things.length - cap) + " more.</p>" : "") +
+    (!bits.length && !shown.length ? "<p>Nothing placed yet.</p>" : "");
+}
+
+/* choosing and moving a placed thing with the keyboard */
+function gaPick(dir) {
+  const things = gaThings();
+  if (!things.length) { gaSay("Nothing placed yet."); return; }
+  let at = things.findIndex(t => t.obj === GA.pickObj);
+  at = at < 0 ? (dir > 0 ? 0 : things.length - 1) : (at + dir + things.length) % things.length;
+  const t = things[at];
+  GA.pickObj = t.obj; Garden.selected = t.i; Garden.dragging = null;
+  GA.refocus = true; Snd.soft(); render();
+  gaSay(t.text + " selected, " + (at + 1) + " of " + things.length + ". Arrow keys move it. Escape to let go.");
+}
+function gaMoveSel(dx, dy) {
+  const things = gaThings(), t = things.find(x => x.obj === GA.pickObj);
+  if (!t) { GA.pickObj = null; return false; }
+  const o = t.obj, n = gpSnap(o.u + dx * (gpPlanIn() ? 0.5 : 1), o.v + dy * (gpPlanIn() ? 0.5 : 1));
+  if (n.u === o.u && n.v === o.v) { Snd.wrong(); gaSay("That is the edge."); return true; }
+  if (!gpFree(n.u, n.v, o)) { Snd.wrong(); gaSay("That square is taken."); return true; }
+  o.u = n.u; o.v = n.v;
+  try { isoSolidsDirty(); } catch (e) {}
+  llSave(); Snd.pop();
+  gaDescribe();
+  const room = gpPlanIn() && typeof planRoomAt === "function" ? planRoomAt(o.u, o.v) : null;
+  gaSay("Moved to square " + Math.floor(o.u + 1) + " across, " + Math.floor(o.v + 1) + " down" + (room ? ", in the " + room.name.toLowerCase() : "") + ".");
+  return true;
 }
 
 /* ---------------- keys ---------------- */
@@ -103,12 +173,12 @@ window.addEventListener("keydown", (e) => {
   }
   if (mod) return;
 
-  if (gpOutdoors()) {
+  if (gpOn()) {
     const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[k];
     if (step) {
       e.preventDefault(); e.stopImmediatePropagation();
       let h = Garden.isoHover;
-      if (!h) { const ch = gState().child || {}; h = gpSnap(ch.u == null ? 1 : ch.u, ch.v == null ? 1 : ch.v); }
+      if (!h) { const ch = gState().child || {}; h = gpSnap(ch.pu != null && gpPlanIn() ? ch.pu : (ch.u == null ? 1 : ch.u), ch.pv != null && gpPlanIn() ? ch.pv : (ch.v == null ? 1 : ch.v)); }
       else h = gpSnap(h.u + step[0], h.v + step[1]);
       Garden.isoHover = h; GP.staged = false;
       gaSay(gaSquareWords(h));
@@ -127,6 +197,16 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
+  /* a placed thing is being moved: it has the arrow keys until you let go */
+  if (GA.pickObj && Garden.selected != null && document.activeElement === document.getElementById("gCanvas")) {
+    const mv = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[k];
+    if (mv) { e.preventDefault(); e.stopImmediatePropagation(); gaMoveSel(mv[0], mv[1]); return; }
+    if (k === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); GA.pickObj = null; Garden.selected = null; GA.refocus = true; render(); gaSay("Let go."); return; }
+  }
+  if (document.activeElement === document.getElementById("gCanvas")) {
+    if (k === "]" || k === ".") { e.preventDefault(); gaPick(1); return; }
+    if (k === "[" || k === ",") { e.preventDefault(); gaPick(-1); return; }
+  }
   if (gaOnControl()) return;                                  // let buttons keep their own keys
   if (k === "+" || k === "=") { e.preventDefault(); isoZoom(0.15); gaSay("Zoomed in."); }
   else if (k === "-" || k === "_") { e.preventDefault(); isoZoom(-0.15); gaSay("Zoomed out."); }
