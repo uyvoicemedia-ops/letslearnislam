@@ -56,6 +56,32 @@ the garden; this file is the short operational version.
 - **`profiles` has COLUMN-level select grants (0001, 0005) so the PIN hash can never be read.**
   A new column on `profiles` is invisible to the app until you `grant select (col)` — the symptom
   is "permission denied for table profiles", not a missing column.
+- **Safari and iOS will not play audio from a server that ignores `Range`.** `python3 -m http.server`
+  (and `llserve.py` until now) answer `Range: bytes=0-1` with a whole-file 200; Safari gives up and
+  the clip never plays, while Chrome carries on and hides the bug. `llserve.py` now returns 206/416
+  and `python3 tools/llaudio.py selftest` proves it. Audio is also the one path allowed to cache
+  (`/audio/`, one hour); everything else stays `no-store`.
+- **Dua audio is found, not listed.** A play button exists only if `audio/<slug>.mp3|m4a` answers
+  `HEAD` with an `audio/*` type (a host that serves its home page for every missing path must not
+  conjure buttons). The answer is cached and cleared on window focus, so dropping a file in shows
+  up with no reload. Slugs: `dua-<kebab id>` for `DUAS`, `dhikr-<say>`, `salah-<id>`, and
+  `practice-…` from the `DA_PRACTICE` table, which `llaudio.py check` compares to the practice
+  data so a new step cannot be added without naming its recording. `llaudio.py list` prints the
+  Arabic from `index.html`, never from anyone's memory.
+- **Arabic appears in four places that are rebuilt differently** (the dua card replaces its HTML,
+  the practice card replaces it per step, the dhikr word rewrites one text node, the salah list is
+  a template). DUAAUDIO therefore does not wrap them; one `MutationObserver` + `daSync()` finds the
+  Arabic on screen and keeps exactly the right button beside each. "Stops when the card changes" is
+  just "the Arabic it belonged to is gone". While a card is open only its own Arabic counts, or a
+  clip could be started from underneath a modal.
+- **The eating duas already existed** (`DUAS.eat`, `DUAS.eatAfter`, with sources) and the kitchen's
+  Eat button already runs before -> food -> after. The kitchen entry only OFFERS them, through
+  `Garden.planWas`, the same room-change signal the washroom uses; it never touches `gardenEnter`
+  (DESIGN.md 7b). A forced dua on entry was rejected: a child passing through would be asked, and the
+  first-time-today +2 coins would be easy to farm.
+- **Testing browser behaviour that needs files:** build a throwaway copy of the app in the scratchpad
+  (`index.html` + generated mp3s via `ffmpeg`), serve it with `LL_ROOT=<dir> python3 tools/llserve.py
+  <port>`, and drive it with Playwright. Never put test audio in `audio/`.
 - **A statement cannot see its own volatile function's writes.** In a test, `perform
   t_assert(f() ->> 'ok' and (select … from t) = x)` reads `t` from the snapshot taken before
   `f()` ran. Call the function first, then assert in a second statement.
@@ -94,6 +120,7 @@ the garden; this file is the short operational version.
 
 | Block | What it does |
 |---|---|
+| `DUAAUDIO` | play button on every Arabic dua/step/dhikr/prayer name that has a recording; the eating-duas offer in the kitchen |
 | `TESTSTU` | test student: admin button on Classes, badge, auto test mode for `is_test` pupils |
 | `SCHED` | the Classes and Timetable pages (were `pageSimple` stubs); lanes for overlapping lessons |
 | `SESS` | class sessions with a meeting link; new `sessions` page on every role's menu |

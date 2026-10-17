@@ -1,0 +1,330 @@
+<!-- ============================================================
+     DUAAUDIO — a play button wherever a dua is shown in Arabic,
+     and the eating duas offered on the way into the kitchen
+     ------------------------------------------------------------
+     RECORDINGS, NOT SPEECH. The Arabic is played from a file a person
+     recorded. It is never spoken by the browser's text-to-speech, which
+     mangles Arabic and would be a machine reciting the words of the
+     Prophet ﷺ to a child. No file, no button.
+
+     Where a file goes:   audio/<slug>.mp3   (or .m4a)
+     Which names:         python3 tools/llaudio.py list
+     The slug is made from the thing being shown:
+       DUAS.eatAfter            -> dua-eat-after
+       a practice step          -> practice-salah-sujud (table below)
+       the dhikr phrase         -> dhikr-subhanallah
+       a prayer's name          -> salah-fajr
+     A dua, phrase or step may carry its own `audio: "file.mp3"` to
+     override the name; it is looked up inside audio/.
+
+     HOW THE BUTTON FINDS ITS PLACE. The dua card, the practice card, the
+     dhikr counter and the salah list are all rebuilt by different
+     renderers, some replacing their HTML and some rewriting one text
+     node. Rather than wrap each, one scanner looks for the Arabic on the
+     screen after any change and makes sure each has the right button, or
+     none. That is also how "stops when the card changes or the page is
+     left" works: when the Arabic a clip belongs to is no longer on
+     screen, the clip stops.
+
+     HOW IT KNOWS A FILE EXISTS. It asks the server (HEAD) and remembers
+     the answer, and asks again when the window regains focus, so a
+     recording dropped into audio/ appears with no list to edit. The
+     answer must actually be audio: a host that answers every missing
+     path with its home page does not conjure a button.
+
+     No autoplay, ever. One clip at a time. The button is 56px (44px in a
+     list row) with a spoken label.
+
+     Needs `tools/llserve.py` to answer Range requests: Safari and iOS
+     will not play audio from a server that cannot.
+     ============================================================ -->
+<style>
+  .da-row { display:flex; justify-content:center; margin:6px 0 4px; }
+  .da-row.in-line { display:inline-flex; margin:0 0 0 8px; vertical-align:middle; }
+  .da-btn { appearance:none; border:0; cursor:pointer; width:56px; height:56px; border-radius:50%;
+      display:inline-grid; place-items:center; color:#fff; background:var(--qaida-green, #268f73);
+      box-shadow:0 3px 0 rgba(0,0,0,.18), 0 8px 18px rgba(38,143,115,.28);
+      transition:transform .12s ease, box-shadow .12s ease; -webkit-tap-highlight-color:transparent; }
+  .da-btn.sm { width:44px; height:44px; }
+  .da-btn:hover { transform:translateY(-1px); }
+  .da-btn:active { transform:translateY(2px); box-shadow:0 1px 0 rgba(0,0,0,.18); }
+  .da-btn:focus-visible { outline:3px solid #f6d64a; outline-offset:3px; }
+  .da-btn svg { width:46%; height:46%; display:block; fill:currentColor; }
+  .da-btn[aria-pressed="true"] { background:var(--islam-blue, #2e6bbf); animation:daPulse 1.6s ease-in-out infinite; }
+  @keyframes daPulse { 50% { box-shadow:0 3px 0 rgba(0,0,0,.18), 0 0 0 9px rgba(46,107,191,.2); } }
+  @media (prefers-reduced-motion:reduce){ .da-btn { transition:none; } .da-btn[aria-pressed="true"] { animation:none; } }
+
+  .da-offer { position:fixed; left:50%; bottom:64px; transform:translateX(-50%); z-index:89;
+      display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center;
+      background:var(--card); border:1.5px solid var(--line); border-radius:18px; padding:10px 12px 10px 16px;
+      box-shadow:0 14px 38px rgba(0,0,0,.26); max-width:calc(100vw - 24px); animation:fadeUp .25s ease both; }
+  .da-offer .t { font-weight:800; font-size:14px; }
+  .da-offer .btn { min-height:44px; }
+  .da-offer .da-x { border:0; background:none; font-size:22px; line-height:1; cursor:pointer; color:var(--muted);
+      width:44px; height:44px; border-radius:50%; }
+  .da-offer .da-x:focus-visible { outline:3px solid #f6d64a; }
+</style>
+<script>
+"use strict";
+
+const DA = { audio: null, slug: null, url: {}, queued: false, offer: false };
+
+/* A practice step has no id of its own, so each line that carries Arabic is
+   named here, by module and step title. `tools/llaudio.py check` fails if this
+   table and the practice data ever disagree, so a new step cannot be added
+   without somebody deciding what its recording is called. */
+const DA_PRACTICE = {
+  "wudu|Begin": "practice-wudu-begin",
+  "miswak|Bismillah": "practice-miswak-bismillah",
+  "salah|Takbiratul-ihram": "practice-salah-takbir",
+  "salah|Ruku — bowing": "practice-salah-ruku",
+  "salah|Stand up again": "practice-salah-itidal",
+  "salah|Sujud — prostration": "practice-salah-sujud",
+  "salah|Sit up": "practice-salah-jalsa",
+  "salah|Salam": "practice-salah-salam",
+};
+
+const daKebabId = (id) => String(id).replace(/([A-Z])/g, "-$1").toLowerCase();
+const daKebabText = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+/* ---------------- is there a recording? ---------------- */
+
+function daCandidates(slug, override) {
+  if (override) return ["audio/" + String(override).replace(/^\/*(audio\/)?/, "")];
+  return ["audio/" + slug + ".mp3", "audio/" + slug + ".m4a"];
+}
+
+async function daProbe(slug, override) {
+  if (DA.url[slug] !== undefined) return DA.url[slug];
+  DA.url[slug] = null;                       // "asked, no answer yet" reads as none
+  DA.url["?" + slug] = true;
+  let found = null;
+  for (const u of daCandidates(slug, override)) {
+    try {
+      const r = await fetch(u, { method: "HEAD", cache: "no-store" });
+      const type = (r.headers.get("content-type") || "").toLowerCase();
+      if (r.ok && type.indexOf("audio/") === 0) { found = u; break; }
+    } catch (e) { /* offline, or file:// — no recording */ }
+  }
+  DA.url[slug] = found;
+  delete DA.url["?" + slug];
+  daSchedule();
+  return found;
+}
+
+/* ---------------- the player: one clip at a time ---------------- */
+
+function daAudio() {
+  if (DA.audio) return DA.audio;
+  const a = new Audio();
+  a.preload = "none";
+  a.addEventListener("ended", () => { a.currentTime = 0; daPaint(); });
+  a.addEventListener("pause", daPaint);
+  a.addEventListener("playing", daPaint);
+  a.addEventListener("error", () => {
+    // a file that will not load is not a button worth keeping
+    const bad = DA.slug;
+    if (bad) { DA.url[bad] = null; }
+    daStop(); daSchedule();
+  });
+  DA.audio = a;
+  return a;
+}
+
+function daStop() {
+  if (DA.audio) { try { DA.audio.pause(); DA.audio.currentTime = 0; } catch (e) {} }
+  DA.slug = null;
+  daPaint();
+}
+
+window.daToggle = function (slug) {
+  const url = DA.url[slug];
+  if (!url) return;
+  const a = daAudio();
+  if (DA.slug === slug && !a.paused) { a.pause(); return; }          // pause, keeping the place
+  if (DA.slug !== slug) {                                           // a different clip: the old one stops
+    try { a.pause(); } catch (e) {}
+    a.src = url; DA.slug = slug;
+  }
+  const p = a.play();
+  if (p && p.catch) p.catch(() => { daStop(); });
+  daPaint();
+};
+
+function daPaint() {
+  const playing = DA.audio && !DA.audio.paused && DA.slug;
+  document.querySelectorAll(".da-btn").forEach(b => {
+    const on = !!playing && b.dataset.slug === DA.slug;
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.setAttribute("aria-label", (on ? "Pause: " : "Play: ") + b.dataset.label);
+    b.innerHTML = on ? DA_PAUSE : DA_PLAY;
+  });
+}
+const DA_PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5.2v13.6a1 1 0 0 0 1.5.86l11-6.8a1 1 0 0 0 0-1.72l-11-6.8A1 1 0 0 0 8 5.2z"/></svg>';
+const DA_PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5.5" y="4.5" width="4.6" height="15" rx="1.3"/><rect x="13.9" y="4.5" width="4.6" height="15" rx="1.3"/></svg>';
+
+/* ---------------- finding the Arabic on the screen ---------------- */
+
+function daVisible(el) { return !!el && el.getClientRects().length > 0 && !el.closest("[hidden]"); }
+
+function daAnchors() {
+  const out = [];
+
+  // the dua card (the practice card shares its classes, so exclude it here)
+  if (typeof DUA_PENDING !== "undefined" && DUA_PENDING && typeof DUAS === "object" && DUAS[DUA_PENDING.id]) {
+    const d = DUAS[DUA_PENDING.id];
+    document.querySelectorAll(".dua-veil:not(.pr-veil) .dua-card .dua-ar").forEach(el => {
+      out.push({ el, slug: "dua-" + daKebabId(DUA_PENDING.id), override: d.audio, label: d.when });
+    });
+  }
+
+  // a practice step that has words to say
+  if (typeof PR !== "undefined" && PR && typeof PRACTICE === "object" && PRACTICE[PR.id]) {
+    const st = PRACTICE[PR.id].steps[PR.i];
+    const slug = st && st.say && (st.say.audio ? "practice-custom-" + PR.id + "-" + PR.i : DA_PRACTICE[PR.id + "|" + st.t]);
+    if (slug) document.querySelectorAll(".pr-say .ar").forEach(el =>
+      out.push({ el, slug, override: st.say.audio, label: st.t }));
+  }
+
+  // the dhikr phrase on show
+  const dw = document.getElementById("dhikrWord");
+  if (dw && typeof DHIKR === "object") {
+    let i = 0;
+    try { i = gState().dhikr.i || 0; } catch (e) {}
+    const d = DHIKR[i];
+    if (d) out.push({ el: dw, slug: "dhikr-" + daKebabText(d.say), override: d.audio, label: d.say, big: true });
+  }
+
+  // the five prayers, one row each
+  document.querySelectorAll(".salah-row").forEach(row => {
+    const nm = row.querySelector(".nm"), ar = row.querySelector(".ar");
+    if (!nm || !ar || typeof SALAH !== "object") return;
+    const s = SALAH.find(x => x.name === nm.textContent.trim());
+    if (s) out.push({ el: ar, slug: "salah-" + s.id, override: s.audio, label: s.name, small: true, inline: true });
+  });
+
+  /* While a card is open, only that card's Arabic counts. The prayer list
+     behind it is still in the page, but a child (or a screen reader) must
+     not be able to start a clip from underneath a modal. */
+  const veil = Array.from(document.querySelectorAll(".dua-veil")).find(v => v.getClientRects().length > 0);
+  return out.filter(a => daVisible(a.el) && (!veil || veil.contains(a.el)));
+}
+
+function daSync() {
+  DA.queued = false;
+  const here = daAnchors();
+  const wanted = new Set();
+
+  here.forEach(a => {
+    const url = DA.url[a.slug];
+    if (url === undefined) { daProbe(a.slug, a.override); return; }
+    const next = a.el.nextElementSibling;
+    const mine = next && next.classList && next.classList.contains("da-row") ? next : null;
+    if (!url) { if (mine) mine.remove(); return; }
+    wanted.add(a.slug);
+    if (mine && mine.dataset.slug === a.slug) return;               // already right: do nothing
+    if (mine) mine.remove();
+    const row = document.createElement("div");
+    row.className = "da-row" + (a.inline ? " in-line" : "");
+    row.dataset.slug = a.slug;
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "da-btn" + (a.small ? " sm" : "");
+    b.dataset.slug = a.slug; b.dataset.label = a.label;
+    row.appendChild(b);
+    a.el.insertAdjacentElement("afterend", row);
+  });
+
+  // a button whose Arabic has gone has nothing to say any more
+  document.querySelectorAll(".da-row").forEach(r => {
+    if (!here.some(a => a.el.nextElementSibling === r && a.slug === r.dataset.slug && DA.url[a.slug])) r.remove();
+  });
+  if (DA.slug && !wanted.has(DA.slug)) daStop();
+  daPaint();
+
+  daKitchenSync();
+}
+
+function daSchedule() {
+  if (DA.queued) return;
+  DA.queued = true;
+  (window.requestAnimationFrame || setTimeout)(daSync);
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest(".da-btn");
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  window.daToggle(b.dataset.slug);
+}, true);
+
+new MutationObserver(daSchedule).observe(document.body, { childList: true, subtree: true, characterData: true });
+document.addEventListener("visibilitychange", () => { if (document.hidden) daStop(); });
+window.addEventListener("pagehide", daStop);
+/* a recording dropped in while the app was open should show up when you come
+   back to it, not only after a reload */
+function daRecheck() {
+  Object.keys(DA.url).forEach(k => { if (DA.url[k] === null && k.charAt(0) !== "?") delete DA.url[k]; });
+  daSchedule();
+}
+window.addEventListener("focus", daRecheck);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) daRecheck(); });
+
+/* ============================================================
+   The kitchen
+   ------------------------------------------------------------
+   The duas for before and after eating already exist (DUAS.eat and
+   DUAS.eatAfter, with their sources) and the kitchen's Eat button already
+   runs through them. What was missing was any mention of them when you
+   walk in. This offers both and opens the SAME dua card the rest of the
+   game uses, so the words, the source line, the "I said it" and now the
+   play button are all the existing ones. Nothing is forced: a child
+   passing through is not interrogated, and nobody is asked for the
+   after-eating dua before they have eaten.
+
+   This lives in the plan view's room-change, like the washroom, and does
+   not touch gardenEnter: that one must not swap anything while a dua is
+   on screen (DESIGN.md 7b).
+   ============================================================ */
+
+function daKitchenSync() {
+  const el = document.getElementById("daOffer");
+  const inKitchen = typeof Garden === "object" && Garden.inside === "house" && Garden.planWas === "kitchen";
+  const busy = typeof DUA_PENDING !== "undefined" && DUA_PENDING;
+  const pupil = typeof role !== "undefined" && role === "student";
+  if (el && (!inKitchen || busy || !pupil || !DA.offer)) { el.remove(); if (!inKitchen) DA.offer = false; return; }
+  if (!el && inKitchen && !busy && pupil && DA.offer) daShowOffer();
+}
+
+function daShowOffer() {
+  if (document.getElementById("daOffer")) return;
+  const el = document.createElement("div");
+  el.id = "daOffer"; el.className = "da-offer"; el.setAttribute("role", "region");
+  el.setAttribute("aria-label", "Duas for eating");
+  el.innerHTML = '<span class="t">🍽 In the kitchen</span>' +
+    '<button type="button" class="btn" data-dua="eat">Before eating</button>' +
+    '<button type="button" class="btn" data-dua="eatAfter">After eating</button>' +
+    '<button type="button" class="da-x" data-close="1" aria-label="Not now">×</button>';
+  el.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.close) { DA.offer = false; el.remove(); return; }
+    if (b.dataset.dua && typeof duaAsk === "function") duaAsk(b.dataset.dua);
+  });
+  document.body.appendChild(el);
+}
+
+/* The washroom asks as you cross the threshold; the plan code records the
+   room you are in as Garden.planWas. Watch it change. */
+const planFrameDA = planFrame;
+planFrame = function (c, W, H, t) {
+  const was = Garden.planWas;
+  planFrameDA(c, W, H, t);
+  const now = Garden.planWas;
+  if (now !== was) {
+    DA.offer = now === "kitchen";
+    daSchedule();
+  }
+};
+
+daSchedule();
+</script>

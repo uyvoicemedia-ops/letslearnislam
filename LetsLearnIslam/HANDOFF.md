@@ -67,6 +67,10 @@ Facebook sign-in are untested by definition, because the handshake needs a live 
    real school uses this).
 6. The prayer hall does not read `g.wuduOn` in every place it could.
 
+Dua audio: play buttons are built and tested but there are **no recordings yet**. `python3
+tools/llaudio.py list` is the recording checklist (30 files); drop them in `letslearn-web/audio/`.
+A qualified reciter records them and a teacher listens before a class hears them.
+
 Declined on purpose, do not redo without asking: **migrating the garden to Phaser/PixiJS.**
 Considered 10 Oct 2026 and rejected — it is a ground-up rewrite of working code, and the
 engine is not what holds the garden back.
