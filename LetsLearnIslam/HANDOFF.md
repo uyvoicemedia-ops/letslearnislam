@@ -67,6 +67,11 @@ Facebook sign-in are untested by definition, because the handshake needs a live 
    real school uses this).
 6. The prayer hall does not read `g.wuduOn` in every place it could.
 
+Guidance: every screen with help has a ? Help button, and the tours open the screen and ring the
+control by themselves. The wording is in `GD_HELP` / `GD_TOURS` (block `GUIDE`) and is written from
+what each screen really does. Homework setting and marking, and an excused-absence button, are NOT
+built; the help says so. Keep it true when those are built.
+
 Dua audio: play buttons are built and tested but there are **no recordings yet**. `python3
 tools/llaudio.py list` is the recording checklist (30 files); drop them in `letslearn-web/audio/`.
 A qualified reciter records them and a teacher listens before a class hears them.

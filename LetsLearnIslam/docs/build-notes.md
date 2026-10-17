@@ -76,6 +76,21 @@ the garden; this file is the short operational version.
   (`ofAll`); a plain `select()` would silently drop attendance after a month in a big school.
 - **The quiz block puts its own link on the menu** (`a[data-quiz]`, no `data-page`), so it is not in
   `NAV`. The guide special-cases it. If another block does the same, add it there too.
+- **Help text is part of the product, and it must be true.** `GD_HELP` was written from what each
+  screen really does, including what it does not. Reading the code first found that the teacher
+  Homework screen's "Assign to whole class" and "Mark" buttons are placeholders (no handler), that
+  attendance's Clear only resets the buttons (it does not unsave), and that there is no excused
+  button. An earlier tour step claimed teachers could "set homework" and that marked work reached
+  the parent; it was false and has been corrected. When a screen changes, change its `GD_HELP`.
+- **The tour opens the screen by itself** (`gdArrive`): it navigates, lights the menu item, then
+  rings a control found by `point: { sel | text }`. A screen may build itself after the school
+  answers, so the control is looked for for ~4 seconds and, if it never appears (the demo shows
+  different screens), nothing happens. The page is scrolled to it once per step, because the ring
+  is re-applied on every `render()` and ticking a box must not yank the page about.
+- **When replacing a slice of a block, grep what lived inside it.** The coach-card rewrite swallowed
+  the Escape-key handler, and a follow-up `str.replace` that expected to find it matched nothing and
+  said nothing. Assert the old text is there (`assert old in s`) every time.
+- **`innerText` applies `text-transform`.** A heading styled uppercase reads "WATCH OUT" to a test.
 - **A guide that names menu items must resolve them.** `GD_TOURS` finds each "Show me" target by its
   menu label; the browser test fails if any label is missing from that role's menu.
 - **macOS `sed` has no `\b`.** `sed -E 's/\bGD\b/…/'` matches nothing and exits 0; use Python.
@@ -146,7 +161,7 @@ the garden; this file is the short operational version.
 |---|---|
 | `BOOKSEL` | the Pupils' books grid for staff; a pupil's shelf shows only the books they were given (0014) |
 | `QZUP` | upload a quiz from a CSV or a paste; hands it to the normal editor and `qaSave` |
-| `GUIDE` | a tour per role (student, teacher, admin, parent), a Guide page, quick answers; remembers progress per device |
+| `GUIDE` | a tour per role that opens each screen and rings the control by itself; "More about this"; a ? Help drawer on every screen with help (`GD_HELP`, richest for teachers); a Guide page; progress per device |
 | `OFFICE` | Teacher hours and Reports & email on real data (0012, 0013) |
 | `DUAAUDIO` | play button on every Arabic dua/step/dhikr/prayer name that has a recording; the eating-duas offer in the kitchen |
 | `TESTSTU` | test student: admin button on Classes, badge, auto test mode for `is_test` pupils |
