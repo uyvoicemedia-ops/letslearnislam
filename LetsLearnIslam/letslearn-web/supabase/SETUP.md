@@ -178,7 +178,7 @@ Docker and then tries to break them — a child reading another child's garden, 
 teacher opening a class they do not teach, a player reading the answer key, a
 parent giving points to somebody else's child, a home parent enumerating a
 school, a child session trying to add a child, a parent approving their own
-request for a class. 695 assertions, and it needs to stay green.
+request for a class. 970 assertions, and it needs to stay green.
 
 It also checks that the Supabase rules hold on plain Postgres: pgcrypto sits in an
 `extensions` schema there, as on a real project.
