@@ -316,29 +316,10 @@ begin
   select count(*) into n from garden where pupil_id = bilal;
   perform t_assert(n = 0, 'a parent cannot open somebody else''s child''s garden');
 
-  begin
-    insert into points (pupil_id, source, amount, reason, given_by)
-    values (aisha, 'parent_gift', 10, 'for praying on time', fatima);
-    perform t_assert(true, 'a parent may give their own child points');
-  exception when others then
-    perform t_assert(false, 'a parent may give their own child points');
-  end;
-
-  begin
-    insert into points (pupil_id, source, amount, reason, given_by)
-    values (bilal, 'parent_gift', 10, 'not my child', fatima);
-    perform t_assert(false, 'a parent cannot give points to another child');
-  exception when insufficient_privilege or check_violation then
-    perform t_assert(true, 'a parent cannot give points to another child');
-  end;
-
-  begin
-    insert into points (pupil_id, source, amount, reason, given_by)
-    values (aisha, 'parent_gift', 5000, 'a very large gift', fatima);
-    perform t_assert(false, 'the size of a gift is capped');
-  exception when insufficient_privilege or check_violation then
-    perform t_assert(true, 'the size of a gift is capped');
-  end;
+  -- (0023: nobody writes the ledger directly any more; an adult gives through points_give())
+  perform t_assert((points_give(aisha, 10, 'for praying on time') ->> 'ok')::boolean, 'a parent may give their own child points');
+  perform t_assert((points_give(bilal, 10, 'not my child') ->> 'error') = 'not_allowed', 'a parent cannot give points to another child');
+  perform t_assert((points_give(aisha, 5000, 'a very large gift') ->> 'error') = 'bad_amount', 'the size of a gift is capped');
 
   reset role;
 end $$;
@@ -454,8 +435,8 @@ begin
   perform t_be(mauluda_uid);
   set local role authenticated;
   got := points_balance(aisha);
-  perform t_assert(got = expected - 25,
-                   'the balance is the ledger minus what has been spent');
+  perform t_assert(got = expected,
+                   'the balance is the ledger alone: the garden''s own "spent" column, which a child writes, no longer moves it (0023)');
   reset role;
 
   -- and the same call from someone with no business asking
