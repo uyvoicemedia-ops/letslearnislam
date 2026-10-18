@@ -17,7 +17,7 @@ the garden; this file is the short operational version.
 - `tools/llinsert.py <block> TAG` — backs up, strips a prior copy by marker, inserts before
   `</body>`. Idempotent; refuses a block with unbalanced `<script>` tags.
 - `tools/llcheck.py` — `node --check` per block, duplicate lexical globals, assign-to-const.
-- `tools/testdb.sh` — applies the eighteen migrations to postgres:16 in Docker, then 601 RLS
+- `tools/testdb.sh` — applies the nineteen migrations to postgres:16 in Docker, then 601 RLS
   assertions (91 in `0100`, 93 in `0110_sessions`, 51 in `0120_timetable`, 21 in
   `0130_test_student`, 54 in `0140_hours`, 16 in `0150_reports`, 33 in `0160_books`, 54 in `0170_homework`, 32 in `0180_profiles_lockdown`, 30 in `0190_cross_school`). Needs Docker Desktop running (`open -a Docker`, then ~20 seconds). Its
   `supabase/test/0000_supabase_stub.sql` imitates Supabase, including pgcrypto living in an
@@ -359,3 +359,10 @@ sign-in are untested by definition.
 - Other traps hit: `pg_dump --schema=public` emits `CREATE SCHEMA public`, which fails because it already exists (stripped at dump time); `grep -q` in a pipe under `pipefail` reads as a failure when the dump is large (used one-pass `awk`); `pg_dump --table=auth.identities` aborts if the table is missing (the test stub gained a minimal `auth.identities`); a test comparing two query results must fail on a SQL error rather than treat "both empty" as equal.
 - Restore refuses a non-empty target, runs in one transaction, and keeps triggers off while old rows load (so append-only logs, guards and sign-up linking do not fire on history).
 - Not proved: a backup of a real Supabase project (the test stubs Supabase's roles and `auth` tables), and the `age` path (age is not installed here). Do the first real run on a fresh project, not in an emergency.
+
+## Child progress report (0019 + CHILDREPORT block)
+- `pupil_report(pupil, from, to)` returns one jsonb: attendance (counts, percentage excluding excused days, up to 60 missed/late dates), practice by module, books, homework with status and the teacher's note to the child, and coin TOTALS by kind. It is **SECURITY INVOKER** (it can show only what the caller could already read through RLS) plus an explicit `ll_can_see_pupil()` check; "not yours" and "does not exist" give the identical `{error: not_allowed}`. Range at most 400 days; lists capped. It never selects `points.reason` or `points.given_by`.
+- **Honest finding from the mutation checks:** removing the explicit `ll_can_see_pupil()` check is NOT caught by any test, because the invoker's own RLS already makes the profile lookup return nothing, so the answer is identical. The check is belt-and-braces; RLS is what does the work. The other three breakages (leaking coin reasons, letting `anon` execute, switching to security definer) are each caught.
+- The Report card page needs a connected project and says so offline rather than inventing numbers. The teacher's comment is typed on the page and printed, **not saved** (no table for it; a note about a child should not be kept somewhere nobody chose). Printing is not written to the report log yet.
+- Found by testing: seeded children have no `auth_uid` until they claim, so a "the child asks about themself" test must give one a session first; the seed already has a `reading` row for `qaida-1`, so a test needs its own book id.
+- Not done: the parent's own "Progress" page still shows the demo's fixed numbers (the new Report card is the real one); printing is not logged; no per-term dates (presets are 30/90 days, this school year from 1 Sept, or custom).

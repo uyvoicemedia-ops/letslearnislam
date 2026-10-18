@@ -55,9 +55,10 @@ run "0015 homework"    "$ROOT/supabase/migrations/0015_homework.sql"
 run "0016 profiles lockdown" "$ROOT/supabase/migrations/0016_profiles_lockdown.sql"
 run "0017 cross school" "$ROOT/supabase/migrations/0017_cross_school.sql"
 run "0018 pin reset"   "$ROOT/supabase/migrations/0018_pin_reset.sql"
+run "0019 pupil report" "$ROOT/supabase/migrations/0019_pupil_report.sql"
 
 echo "testing…"
-for t in 0100_rls_tests 0110_sessions_tests 0120_timetable_tests 0130_test_student_tests 0140_hours_tests 0150_reports_tests 0160_books_tests 0170_homework_tests 0180_profiles_lockdown_tests 0190_cross_school_tests 0200_pin_reset_tests; do
+for t in 0100_rls_tests 0110_sessions_tests 0120_timetable_tests 0130_test_student_tests 0140_hours_tests 0150_reports_tests 0160_books_tests 0170_homework_tests 0180_profiles_lockdown_tests 0190_cross_school_tests 0200_pin_reset_tests 0210_pupil_report_tests; do
   if out=$(docker exec -i $NAME psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres \
              < "$ROOT/supabase/test/$t.sql" 2>&1); then
     echo "$out" | sed 's/^/  /'
