@@ -60,7 +60,7 @@ Facebook sign-in are untested by definition, because the handshake needs a live 
 
 ## URGENT before real children use the live project
 
-1. **Apply `0016_profiles_lockdown.sql` and `0017_cross_school.sql`** (0016 first; both are independent of 0009-0015). Until it runs, a signed-in child can make themselves an
+1. **Apply `0016_profiles_lockdown.sql`, then `0009_class_sessions.sql`, then `0017_cross_school.sql`** (0016 stands alone; **0017 needs 0009**, which defines `ll_manages_class`: it fails without it, checked). Until it runs, a signed-in child can make themselves an
    admin and set their own PIN, and a teacher can overwrite any pupil's PIN hash (reproduced locally).
 2. **Turn "Confirm email" ON** (Authentication). With it off, `ll_link_new_user()` links a sign-up to a
    roster row by email alone, so anyone can sign up as a parent's or teacher's address and take that

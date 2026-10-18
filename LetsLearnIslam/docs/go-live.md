@@ -31,19 +31,21 @@ Do one phase, check it, then the next. Nothing here sends an email or touches a 
 - [ ] Authentication → Sign In / Providers: **Confirm email ON** (this is also what makes parent emails safe later).
 - [ ] **Allow anonymous sign-ins ON** (children use them).
 - [ ] Authentication → URL Configuration: **Site URL** and the Redirect URL are the address the app is really served from.
-- [ ] Apply **`0016_profiles_lockdown.sql`**, then **`0017_cross_school.sql`**. Paste each file whole into the SQL Editor and run it once.
-      Until they run, a signed-in child can make themselves an admin and a teacher can overwrite any pupil's PIN hash.
+- [ ] Apply, in this order, **`0016_profiles_lockdown.sql`**, then **`0009_class_sessions.sql`**, then **`0017_cross_school.sql`**. Paste each file whole
+      into the SQL Editor and run it once. (0016 stands alone. 0017 needs 0009, because it uses a function 0009 creates; this order was checked
+      against a fresh database, and 0017 on its own fails.) Until they run, a signed-in child can make themselves an admin and a teacher
+      can overwrite any pupil's PIN hash.
 - [ ] `LL_URL=https://<ref>.supabase.co LL_ANON_KEY=<the anon key> ./tools/livecheck.py` (or `check-all.sh` with those two set).
       It is read-only and uses only the public key. Everything it reports as open is a reason to stop.
 
 ## Phase 3: the rest of the migrations, in order, one file at a time
 
-Run each file whole, in this order. **Never paste two together.** After each, run the live check; a new "present" line
+Run each file whole, in this order, skipping any you already applied in Phase 2 (0009, 0016, 0017). **Never paste two together.** After each, run the live check; a new "present" line
 appears for it.
 
 | File | What it adds | Special |
 |---|---|---|
-| 0009 class sessions | online lessons with a meeting link | |
+| 0009 class sessions | online lessons with a meeting link | (already done in Phase 2) |
 | 0010 timetable and classes | weekly timetable, admins create classes | |
 | 0011 test student | a flagged test pupil | |
 | 0012 teacher hours | hours and pay rates | |
