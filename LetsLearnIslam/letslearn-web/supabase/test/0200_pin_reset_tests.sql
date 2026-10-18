@@ -306,7 +306,10 @@ begin
                    'typed and temporary resets are each recorded');
   perform t_assert((select count(*) from pin_reset_audit where actor_id = mauluda and actor_role = 'teacher') >= 3 and exists (select 1 from pin_reset_audit where actor_id = yusuf and actor_role = 'admin'),
                    'with who did it and in what role');
-  perform t_assert(not exists (select 1 from pin_reset_audit a where row_to_json(a)::text ~ '(7391|4821|8420|6035)'), 'no audit row holds any PIN that was set');
+  -- (this used to grep the whole row as text, and a random UUID or timestamp that happened to contain 7391 failed it, rarely and for no reason)
+  perform t_assert((select string_agg(column_name, ',' order by column_name) from information_schema.columns where table_name = 'pin_reset_audit')
+                   = 'actor_id,actor_role,at,id,method,pupil_id,request_id,school_id,sessions_cleared', 'the audit table has no column that could hold a PIN');
+  perform t_assert(not exists (select 1 from pin_reset_audit a where (a.method || ' ' || a.actor_role || ' ' || a.sessions_cleared::text) ~ '[0-9]{4}'), 'and the free-text fields of every row hold no four-digit number');
   perform t_assert((select count(*) from pin_reset_audit where school_id is distinct from sch) = 0, 'every row names the pupil''s school');
   perform t_be(yusuf_uid);
   set local role authenticated;
