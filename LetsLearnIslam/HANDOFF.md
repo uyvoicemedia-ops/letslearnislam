@@ -114,3 +114,6 @@ engine is not what holds the garden back.
   are always available.
 - Children under 13 never get a Google or Facebook account for this.
 - No bank details in the database, ever.
+
+## Backups (new)
+`tools/backup.sh` / `tools/restore.sh`, described in `docs/restore.md`. Nothing has been run against the real project: it needs a connection string file, a passphrase file (or an age key) and a backup folder outside the repo, all set up by you (see the doc). Take a backup before applying migrations 0009-0018, and practise a restore into a throwaway project once.

@@ -3,3 +3,11 @@ letslearn-web/backups/
 letslearn-web/index.html.bak-*
 letslearn-web/index.backup.html
 .DS_Store
+
+# Encrypted database backups. They should live OUTSIDE the repository (tools/backup.sh refuses
+# a folder inside one), but if one ever lands here it must not be committed.
+*.sql.age
+*.sql.enc
+*.sql.enc.sha256
+*.sql.age.sha256
+letslearn-*.sql*

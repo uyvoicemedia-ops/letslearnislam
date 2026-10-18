@@ -55,5 +55,13 @@ create table auth.sessions (
   user_id uuid not null references auth.users(id) on delete cascade
 );
 
+-- Supabase keeps one row per login method here. Nothing in the migrations uses it;
+-- the backup script dumps it, and pg_dump refuses to run if the table is missing.
+create table auth.identities (
+  id       uuid primary key default gen_random_uuid(),
+  user_id  uuid not null references auth.users(id) on delete cascade,
+  provider text not null default 'email'
+);
+
 grant usage on schema auth to anon, authenticated, service_role;
 grant select on auth.users to anon, authenticated, service_role;

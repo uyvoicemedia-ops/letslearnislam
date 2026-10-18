@@ -8,10 +8,11 @@
 #   1. llcheck.py   every block parses, no clashing names     (seconds)
 #   2. llaudio.py   the dua recording names match the app      (seconds)
 #   3. testdb.sh    every migration + every RLS test in Docker  (about 90 s; needs Docker)
+#      backup-selftest.sh  a backup made, damaged, and restored into an empty database (about 60 s; Docker)
 #   4. livecheck.py the LIVE project, read-only, public key only (only if LL_URL and LL_ANON_KEY are set)
 #
 # A skipped step is announced loudly and counted in the summary, so "skipped" is never mistaken for "green".
-# Exit codes: 10 llcheck, 20 database tests, 30 Docker not running, 40 live check, 50 audio names.
+# Exit codes: 10 llcheck, 20 database tests, 30 Docker not running, 40 live check, 50 audio names, 60 backup self-test.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -45,6 +46,8 @@ else
   docker info >/dev/null 2>&1 || fail 30 "Docker is not running. Start it with:  open -a Docker   (wait about 20 seconds), then run this again"
   ./tools/testdb.sh || fail 20 "the database tests failed, see above"
   RESULTS+=("passed  database tests (testdb.sh)")
+  ./tools/backup-selftest.sh || fail 60 "the backup self-test failed, see above"
+  RESULTS+=("passed  backup and restore self-test")
 fi
 
 step "4/4 livecheck (the live project, read-only)"
