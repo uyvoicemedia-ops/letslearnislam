@@ -1,0 +1,210 @@
+<!-- ============================================================
+     NOTIFY — emails to parents: their choices, the school's switch, one-click stop
+     ------------------------------------------------------------
+     The screens for migration 0021. They CHOOSE and SHOW; the database
+     decides and a separate scheduled function sends (and it is a dry run
+     until it is switched live, see docs/notifications.md).
+
+       * A parent's "Email alerts" page: four switches, all OFF until they
+         turn them on, the address shown masked, a plain warning if the
+         address is not confirmed or the school has not switched emails on,
+         and the last twenty emails with what happened to each.
+       * An admin's "Parent emails" page: the school's switch (off by
+         default, with three things to tick before it can be turned on),
+         counts, any failures, and a test email to the admin's own address.
+       * The unsubscribe link in every email opens the app on #unsubscribe=…
+         and switches that kind of email off without signing in. The token
+         is removed from the address bar straight away.
+
+     The older "Notifications" page (a made-up list of events) is a mock
+     and is left alone. These are different pages, with real data.
+     ============================================================ -->
+<style>
+  .nf-row { display:flex; align-items:center; gap:14px; padding:12px 0; border-bottom:1px solid var(--line); }
+  .nf-row:last-child { border-bottom:0; }
+  .nf-row .t { flex:1; } .nf-row .t b { display:block; font-size:15.5px; } .nf-row .t span { font-size:13px; color:#5d6470; }
+  .nf-sw { min-width:76px; min-height:44px; border-radius:999px; border:2px solid #9aa1ab; background:#fff; font:inherit; font-weight:800; cursor:pointer; color:#3b4350; }
+  .nf-sw[aria-pressed="true"] { background:#1f7a62; border-color:#1f7a62; color:#fff; }
+  .nf-sw:focus-visible { outline:3px solid #1b57d1; outline-offset:2px; }
+  .nf-stats { display:flex; gap:10px; flex-wrap:wrap; margin:10px 0; }
+  .nf-stat { flex:1 1 90px; background:#f6f4ee; border-radius:12px; padding:10px 12px; text-align:center; }
+  .nf-stat b { display:block; font-size:22px; } .nf-stat span { font-size:12.5px; color:#5d6470; }
+  .nf-veil { position:fixed; inset:0; z-index:99999; background:#f7f6f2; display:grid; place-items:center; padding:24px; }
+  .nf-box { background:#fff; border-radius:20px; box-shadow:0 12px 40px rgba(0,0,0,.15); max-width:460px; width:100%; padding:28px 26px; text-align:center; }
+  .nf-box h1 { margin:0 0 8px; font-size:24px; } .nf-box p { margin:0 0 16px; color:#4a5260; }
+  .nf-check { display:flex; gap:10px; align-items:flex-start; margin:8px 0; font-size:14.5px; }
+  .nf-check input { width:22px; height:22px; margin-top:1px; flex:none; }
+</style>
+<script>
+"use strict";
+
+const NF = {
+  prefs: null, hist: [], loaded: false, busy: false, err: "", ok: "",
+  status: null, sloaded: false, tick: [false, false, false],
+};
+const nfLive = () => { try { return typeof LLC !== "undefined" && !!(LLC.sb && LLC.profile); } catch (e) { return false; } };
+const nfRole = () => (nfLive() && LLC.profile.role) || "";
+
+const NF_KINDS = [
+  ["absence", "If my child is marked absent", "A short note the same day: their first name, the class and the date."],
+  ["homework", "When new homework is set", "The class and the title your child's teacher gave it."],
+  ["fees", "About fees and payments", "That a fee is due, or that a payment could not be collected. No bank details."],
+  ["session", "When an online lesson is added", "The day and time. The meeting link is never in an email: open the app to join."],
+];
+const NF_STATE = { queued: "Waiting to send", sending: "Sending", sent: "Sent", dry: "Prepared, not sent (emails are not live yet)", failed: "Could not be sent", skipped: "Not sent" };
+const NF_FAIL = {
+  not_allowed: "That is not available to you.", school_off: "Switch emails on for the school first.",
+  email_not_confirmed: "Your own email address has not been confirmed, so a test cannot be sent to it.", bad_event: "That is not something you can switch.",
+};
+const nfWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); };
+
+/* ---------------- the parent ---------------- */
+async function nfLoadParent() {
+  if (!nfLive() || nfRole() !== "parent") return;
+  try {
+    const p = await LLC.sb.rpc("notify_prefs_get");
+    if (p.error) throw p.error;
+    NF.prefs = p.data && !p.data.error ? p.data : null;
+    const h = await LLC.sb.from("notify_outbox").select("id, event, subject, state, created_at").order("created_at", { ascending: false }).limit(20);
+    NF.hist = (h && h.data) || [];
+    NF.err = NF.prefs ? "" : "Email alerts are for parents.";
+  } catch (e) { NF.err = "Could not load your choices: " + ((e && e.message) || "try again"); }
+  NF.loaded = true; render();
+}
+
+window.nfSwitch = async function (event, on) {
+  if (NF.busy || !NF.prefs) return;
+  NF.busy = true; NF.err = ""; NF.ok = ""; render();
+  try {
+    const { data, error } = await LLC.sb.rpc("notify_prefs_set", { p_event: event, p_enabled: on });
+    if (error) throw error;
+    if (data && data.error) NF.err = NF_FAIL[data.error] || "That did not work.";
+    else { NF.prefs.prefs[event] = !!data.enabled; NF.ok = data.enabled ? "Switched on." : "Switched off."; }
+  } catch (e) { NF.err = "That did not save: " + ((e && e.message) || "try again"); }
+  NF.busy = false; render();
+};
+
+function pageMailPrefs() {
+  if (!nfLive()) return `<h1>Email alerts</h1><p class="sub">Choose what the madrasah may email you</p>
+    <div class="callout warn">This device is not connected to a school project, so there is nothing to choose yet.</div>`;
+  if (nfRole() !== "parent") return `<h1>Email alerts</h1><div class="callout">Email alerts are chosen by parents.</div>`;
+  if (!NF.loaded) nfLoadParent();
+  const P = NF.prefs;
+  const rows = P ? NF_KINDS.map(([k, t, d]) => `<div class="nf-row"><div class="t"><b>${esc(t)}</b><span>${esc(d)}</span></div>
+      <button class="nf-sw" aria-pressed="${!!P.prefs[k]}" aria-label="${esc(t)}" ${NF.busy ? "disabled" : ""} onclick="nfSwitch('${k}', ${!P.prefs[k]})">${P.prefs[k] ? "On" : "Off"}</button></div>`).join("") : "";
+  const hist = NF.hist.map(h => `<div class="nf-row"><div class="t"><b>${esc(h.subject)}</b><span>${esc(nfWhen(h.created_at))} · ${esc(NF_STATE[h.state] || h.state)}</span></div></div>`).join("");
+  return `<h1>Email alerts</h1><p class="sub">Choose what the madrasah may email you. Everything starts off.</p>
+    ${NF.ok ? `<div class="callout" role="status" style="margin-bottom:12px">${esc(NF.ok)}</div>` : ""}
+    ${NF.err ? `<div class="callout warn" role="alert" style="margin-bottom:12px">${esc(NF.err)}</div>` : ""}
+    ${P ? `${!P.email ? `<div class="callout warn" style="margin-bottom:12px">There is no email address on your account, so nothing can be sent.</div>`
+        : !P.verified ? `<div class="callout warn" style="margin-bottom:12px">Your email address (${esc(P.email)}) has not been confirmed, so nothing will be sent until it is.</div>` : ""}
+      ${!P.school_enabled ? `<div class="callout" style="margin-bottom:12px">Your madrasah has not switched emails on yet. Your choices are saved and will start to apply when they do.</div>` : ""}
+      <div class="card"><p class="note" style="margin:0 0 6px">Emails go to <strong>${esc(P.email || "—")}</strong>. They never include scores, coin details, or links to lessons, and each has a link to stop that kind straight away. At most eight a day, and none overnight.</p>${rows}</div>
+      <h2 class="section">The last emails</h2>
+      <div class="card">${hist || `<p class="note" style="margin:0">Nothing has been prepared for you yet.</p>`}</div>`
+      : (!NF.loaded ? `<p class="note">Loading…</p>` : "")}`;
+}
+
+/* ---------------- the admin ---------------- */
+async function nfLoadAdmin(keepMessage) {
+  if (!nfLive() || nfRole() !== "admin") return;
+  try {
+    const { data, error } = await LLC.sb.rpc("notify_school_status");
+    if (error) throw error;
+    NF.status = data && !data.error ? data : null;
+    if (!NF.status) NF.err = "Only an admin can see this.";
+    else if (!keepMessage) NF.err = "";            // a refresh after an action must not wipe the action's own message
+  } catch (e) { NF.err = "Could not load the status: " + ((e && e.message) || "try again"); }
+  NF.sloaded = true; render();
+}
+window.nfSchool = async function (on) {
+  if (NF.busy) return;
+  if (on && !NF.tick.every(Boolean)) { NF.err = "Tick all three boxes first."; render(); return; }
+  NF.busy = true; NF.err = ""; NF.ok = ""; render();
+  try {
+    const { data, error } = await LLC.sb.rpc("notify_school_set", { p_enabled: !!on });
+    if (error) throw error;
+    if (data && data.error) NF.err = NF_FAIL[data.error] || "That did not work.";
+    else { NF.ok = on ? "Parent emails are switched on for your school." : "Parent emails are switched off, and anything waiting was cancelled."; NF.tick = [false, false, false]; }
+  } catch (e) { NF.err = "That did not save: " + ((e && e.message) || "try again"); }
+  NF.busy = false; await nfLoadAdmin(true);
+};
+window.nfTick = (i, v) => { NF.tick[i] = !!v; NF.err = ""; };
+window.nfTest = async function () {
+  if (NF.busy) return;
+  NF.busy = true; NF.err = ""; NF.ok = ""; render();
+  try {
+    const { data, error } = await LLC.sb.rpc("notify_send_test");
+    if (error) throw error;
+    if (data && data.error) NF.err = NF_FAIL[data.error] || "That did not work.";
+    else NF.ok = "A test email is queued for your own address. It leaves at the next run of the sender, if the sender is live.";
+  } catch (e) { NF.err = "That did not work: " + ((e && e.message) || "try again"); }
+  NF.busy = false; await nfLoadAdmin(true);
+};
+
+function pageMailAdmin() {
+  if (!nfLive()) return `<h1>Parent emails</h1><p class="sub">Whether the madrasah emails parents</p>
+    <div class="callout warn">This device is not connected to a school project.</div>`;
+  if (nfRole() !== "admin") return `<h1>Parent emails</h1><div class="callout">Only an admin can change this.</div>`;
+  if (!NF.sloaded) nfLoadAdmin();
+  const S = NF.status, c = (S && S.counts) || {}, o = (S && S.opted_in) || {};
+  const num = (k) => c[k] || 0;
+  const fails = ((S && S.failures) || []).map(f => `<tr><td>${esc(nfWhen(f.at))}</td><td>${esc(f.event)}</td><td>${esc(f.error)}</td></tr>`).join("");
+  const boxes = ["I have set Supabase's \"Confirm email\" to ON, so addresses are proved before anything is sent to them.",
+                 "I have tried it first: a test email to my own address arrived.",
+                 "Parents will be told, and each one chooses for themselves. Nobody is signed up by being on the roster."];
+  return `<h1>Parent emails</h1><p class="sub">Absences, homework, fees and online lessons, by email, only to parents who ask</p>
+    ${NF.ok ? `<div class="callout" role="status" style="margin-bottom:12px">${esc(NF.ok)}</div>` : ""}
+    ${NF.err ? `<div class="callout warn" role="alert" style="margin-bottom:12px">${esc(NF.err)}</div>` : ""}
+    ${S ? `<div class="card"><div class="between"><div><strong style="font-size:17px">${S.enabled ? "Switched ON for your school" : "Switched OFF for your school"}</strong>
+        <div class="note">${S.enabled ? "Parents who have opted in will be emailed." : "Nothing is prepared or sent while this is off."}</div></div>
+        ${S.enabled ? `<button class="btn" style="min-height:44px" ${NF.busy ? "disabled" : ""} onclick="nfSchool(false)">Switch off</button>` : ""}</div>
+      ${S.enabled ? "" : `<div style="margin-top:12px">${boxes.map((b, i) => `<label class="nf-check"><input type="checkbox" ${NF.tick[i] ? "checked" : ""} onchange="nfTick(${i}, this.checked)"><span>${esc(b)}</span></label>`).join("")}
+        <button class="btn primary" style="min-height:44px;margin-top:8px" ${NF.busy ? "disabled" : ""} onclick="nfSchool(true)">Switch on for my school</button></div>`}</div>
+      <h2 class="section">Last 7 days</h2>
+      <div class="card"><div class="nf-stats">
+        <div class="nf-stat"><b>${num("queued") + num("sending")}</b><span>waiting</span></div><div class="nf-stat"><b>${num("sent")}</b><span>sent</span></div>
+        <div class="nf-stat"><b>${num("dry")}</b><span>prepared, not sent</span></div><div class="nf-stat"><b>${num("failed")}</b><span>failed</span></div><div class="nf-stat"><b>${num("skipped")}</b><span>skipped</span></div></div>
+        <p class="note" style="margin:0">"Prepared, not sent" means the sender is still in test mode. Parents opted in: absence ${o.absence || 0}, homework ${o.homework || 0}, fees ${o.fees || 0}, lessons ${o.session || 0}. This page shows counts, never addresses or messages.</p>
+        ${fails ? `<table style="margin-top:12px"><thead><tr><th>When</th><th>Kind</th><th>Why</th></tr></thead><tbody>${fails}</tbody></table>` : ""}</div>
+      <h2 class="section">Check the whole thing</h2>
+      <div class="card"><p class="note" style="margin:0 0 10px">Sends one email to <strong>your own</strong> confirmed address, mentioning no child, through the same path real emails take.</p>
+        <button class="btn" style="min-height:44px" ${NF.busy || !S.enabled ? "disabled" : ""} onclick="nfTest()">Send a test email to me</button>
+        ${S.enabled ? "" : `<span class="note"> Switch emails on first.</span>`}</div>`
+      : (!NF.sloaded ? `<p class="note">Loading…</p>` : "")}`;
+}
+
+/* ---------------- one-click unsubscribe, from the link in an email ---------------- */
+const NF_UNSUB = /^#unsubscribe=([0-9a-f]{64})$/i.exec(location.hash || "");
+function nfShowUnsub(html) {
+  let v = document.getElementById("nfUnsub");
+  if (!v) { v = document.createElement("div"); v.id = "nfUnsub"; v.className = "nf-veil"; v.setAttribute("role", "dialog"); v.setAttribute("aria-modal", "true"); v.setAttribute("aria-label", "Stop emails"); document.body.appendChild(v); }
+  v.innerHTML = `<div class="nf-box">${html}</div>`;
+}
+window.nfUnsubClose = () => { const v = document.getElementById("nfUnsub"); if (v) v.remove(); };
+async function nfUnsub() {
+  try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}      // the token does not stay in the address bar or history
+  nfShowUnsub(`<h1>One moment…</h1><p>Stopping those emails.</p>`);
+  for (let i = 0; i < 40 && !(typeof LLC !== "undefined" && LLC.sb); i++) await new Promise(r => setTimeout(r, 150));
+  if (!(typeof LLC !== "undefined" && LLC.sb)) { nfShowUnsub(`<h1>Could not do that here</h1><p>This device is not connected to the madrasah. Open the app on the device you normally use, go to Email alerts and switch the emails off there.</p><button class="btn primary" style="min-height:44px" onclick="nfUnsubClose()">Close</button>`); return; }
+  let ok = false;
+  try { const { data, error } = await LLC.sb.rpc("notify_unsubscribe", { p_token: NF_UNSUB[1].toLowerCase() }); ok = !error && data && data.ok === true; } catch (e) {}
+  nfShowUnsub(ok
+    ? `<h1>Done</h1><p>You will not get that kind of email any more. You can change this any time in the app under Email alerts.</p><button class="btn primary" style="min-height:44px" onclick="nfUnsubClose()">Close</button>`
+    : `<h1>That did not go through</h1><p>Please try the link again, or switch the emails off in the app under Email alerts.</p><button class="btn primary" style="min-height:44px" onclick="nfUnsubClose()">Close</button>`);
+}
+if (NF_UNSUB) nfUnsub();
+
+/* ---------------- wire in ---------------- */
+if (typeof NAV === "object") {
+  const add = (r, label, id, ico, groupName) => {
+    if (!NAV[r]) return;
+    const g = NAV[r].find(x => x[0] === groupName) || NAV[r][NAV[r].length - 1];
+    if (g && !g[1].some(x => x[0] === id)) g[1].push([id, label, ico]);
+  };
+  add("parent", "Email alerts", "mailprefs", "✉️", "School");
+  add("admin", "Parent emails", "mailadmin", "✉️", "Comms");
+}
+PAGES.mailprefs = pageMailPrefs;
+PAGES.mailadmin = pageMailAdmin;
+</script>

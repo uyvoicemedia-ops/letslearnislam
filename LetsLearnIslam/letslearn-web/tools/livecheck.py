@@ -85,6 +85,7 @@ TABLES = [
   ("0010", "timetable_slots", "timetable"), ("0012", "hours_log", "salary hours"), ("0012", "teacher_rates", "salary rates"),
   ("0013", "report_recipients", "report addresses"), ("0013", "report_log", "report log"), ("0014", "pupil_books", "books given"),
   ("0020", "client_errors", "app error log"), ("0020", "client_error_limits", "error log counters"),
+  ("0021", "notify_outbox", "parent emails waiting"), ("0021", "notify_prefs", "parents' email choices"), ("0021", "notify_school_settings", "the school's email switch"),
 ]
 print("== what the public key can read")
 absent = []
@@ -109,6 +110,8 @@ FUNCS = [
   ("0015", "homework_set", {"p_class": "00000000-0000-0000-0000-000000000000", "p_title": "x", "p_details": None, "p_module": None, "p_due": None}),
   ("0015", "homework_mark", {"p_hw": "00000000-0000-0000-0000-000000000000", "p_pupil": "00000000-0000-0000-0000-000000000000", "p_score": 1, "p_feedback": None}),
   ("0015", "homework_hand_in", {"p_hw": "00000000-0000-0000-0000-000000000000", "p_score": None}),
+  ("0021", "notify_prefs_get", {}), ("0021", "notify_prefs_set", {"p_event": "absence", "p_enabled": True}), ("0021", "notify_school_set", {"p_enabled": True}),
+  ("0021", "notify_school_status", {}), ("0021", "notify_send_test", {}), ("0021", "notify_claim_batch", {"p_limit": 1}),
   ("0019", "pupil_report", {"p_pupil": "00000000-0000-0000-0000-000000000000", "p_from": "2020-01-01", "p_to": "2020-01-31"}),
 ]
 print("== functions an anonymous caller must be refused")

@@ -9,10 +9,11 @@
 #   2. llaudio.py   the dua recording names match the app      (seconds)
 #   3. testdb.sh    every migration + every RLS test in Docker  (about 90 s; needs Docker)
 #      backup-selftest.sh  a backup made, damaged, and restored into an empty database (about 60 s; Docker)
+#      notify-selftest.sh  the parent-email sender's logic, in Deno in Docker (about 20 s; first run downloads an image)
 #   4. livecheck.py the LIVE project, read-only, public key only (only if LL_URL and LL_ANON_KEY are set)
 #
 # A skipped step is announced loudly and counted in the summary, so "skipped" is never mistaken for "green".
-# Exit codes: 10 llcheck, 20 database tests, 30 Docker not running, 40 live check, 50 audio names, 60 backup self-test.
+# Exit codes: 10 llcheck, 20 database tests, 30 Docker not running, 40 live check, 50 audio names, 60 backup self-test, 70 parent-email sender.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -48,6 +49,8 @@ else
   RESULTS+=("passed  database tests (testdb.sh)")
   ./tools/backup-selftest.sh || fail 60 "the backup self-test failed, see above"
   RESULTS+=("passed  backup and restore self-test")
+  ./tools/notify-selftest.sh || fail 70 "the parent-email sender tests failed, see above"
+  RESULTS+=("passed  parent-email sender tests (Deno)")
 fi
 
 step "4/4 livecheck (the live project, read-only)"

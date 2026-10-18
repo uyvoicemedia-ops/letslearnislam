@@ -39,7 +39,10 @@ create table auth.users (
   email        text unique,
   -- Supabase adds this with anonymous auth. ll_adult_session() reads it
   -- to keep social sign-in away from children, so the stub needs it too.
-  is_anonymous boolean not null default false
+  is_anonymous boolean not null default false,
+  -- Supabase sets this when an address is confirmed. With "Confirm email" OFF it is set at sign-up,
+  -- so the stub defaults to confirmed; a test that wants "Confirm email ON" inserts null.
+  email_confirmed_at timestamptz default now()
 );
 
 -- In Supabase this reads the JWT. Here it reads a session setting, so a
