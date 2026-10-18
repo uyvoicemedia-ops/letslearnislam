@@ -1,0 +1,116 @@
+<!-- ============================================================
+     ATTREG — finishing the register pays the children
+     ------------------------------------------------------------
+     Coins for coming to class are paid by the SERVER when the teacher
+     presses "Finish register" (migration 0025: register_finish). Marking
+     a child present or late pays nothing by itself, so toggling a mark is
+     not a way to make coins, and a teacher can correct a mistake freely.
+
+       came to class (present or late) ... 5
+       on time (present, not late) ...... +10
+       camera on, as the teacher saw ..... +5
+
+     "Camera on" is a tick the TEACHER makes for a child during an online
+     lesson, from what they can see on their own screen. This app never
+     switches on, opens or reads anything from a camera. It is only a note
+     that this child had theirs on, and it is only available for children
+     marked present or late.
+
+     Pressing Finish again after a correction pays only what is new, and
+     nothing is taken back if a mark is changed afterwards. Today and
+     yesterday only. The amounts live in the database (reward_rates), not here.
+     ============================================================ -->
+<style>
+  .ar-card { border:1.5px solid var(--line); background:#fffaf0; border-radius:14px; padding:14px 16px; margin:0 0 12px; }
+  .ar-card p { margin:4px 0 10px; font-size:13.5px; color:#4a5260; }
+  .ar-cam { min-height:44px; padding:0 14px; border-radius:999px; border:1.5px solid var(--line); background:#fff; font:inherit; font-weight:700; cursor:pointer; margin-top:6px; }
+  .ar-cam[aria-pressed="true"] { background:#1f7a62; border-color:#1f7a62; color:#fff; }
+  .ar-cam:focus-visible { outline:3px solid #1b57d1; outline-offset:2px; }
+</style>
+<script>
+"use strict";
+
+const ATR = { cam: {}, key: "", busy: false, msg: "", err: "" };
+
+const arLive = () => { try { return typeof llvLive === "function" && llvLive() && typeof llvAdopted !== "undefined" && llvAdopted && ["teacher", "admin"].indexOf(LLC.profile.role) > -1; } catch (e) { return false; } };
+const arToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+function arShift(iso, d) { const p = iso.split("-"); const x = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0, 10); }
+const arDay = () => { try { return llvAttDate(); } catch (e) { return arToday(); } };
+const arClass = () => { try { return LLV_ATT.classId; } catch (e) { return null; } };
+const arInRange = (d) => d <= arToday() && d >= arShift(arToday(), -1);
+
+const ATR_ERR = { not_allowed: "Only the teacher of this class can do that.", bad_date: "A register can be finished for today or yesterday only.",
+  not_marked_here: "Mark them present or late first.", not_in_class: "That child is not in this class.", bad_value: "That did not work." };
+
+function arCard() {
+  const d = arDay(), okDate = arInRange(d);
+  return `<div class="ar-card" id="arCard"><strong>Finish the register</strong>
+    <p>Mark everyone first, then press Finish. Children are paid for coming to class: <strong>5 coins</strong>, <strong>+10</strong> if they were on time, <strong>+5</strong> if you ticked camera on. Marking alone pays nothing. You can press it again after a correction and only new coins are paid.</p>
+    <button class="btn primary" style="min-height:44px" ${ATR.busy || !okDate ? "disabled" : ""} onclick="arFinish()">${ATR.busy ? "Paying…" : "Finish register"}</button>
+    ${okDate ? "" : `<span class="note"> It can only be finished for today or yesterday.</span>`}
+    <div id="arMsg" role="status" class="note" style="margin-top:8px">${esc(ATR.err || ATR.msg)}</div></div>`;
+}
+
+window.arFinish = async function () {
+  const c = arClass(), d = arDay();
+  if (!arLive() || ATR.busy || !c) return;
+  ATR.busy = true; ATR.msg = ""; ATR.err = ""; arPaintMsg(true);
+  try {
+    const { data, error } = await LLC.sb.rpc("register_finish", { p_class: c, p_date: d });
+    if (error) throw error;
+    if (data && data.error) ATR.err = ATR_ERR[data.error] || "That did not work.";
+    else ATR.msg = data.children ? "Paid " + data.children + " child" + (data.children === 1 ? "" : "ren") + ", " + data.coins + " coins in all." : "Nothing new to pay. Everyone marked present or late has been paid already.";
+  } catch (e) { ATR.err = "Could not finish the register: " + ((e && e.message) || "check the connection"); }
+  ATR.busy = false; arPaintMsg(false);
+};
+function arPaintMsg(busy) {
+  const m = document.getElementById("arMsg"); if (m) m.textContent = ATR.err || ATR.msg;
+  const b = document.querySelector("#arCard button"); if (b) { b.disabled = !!busy || !arInRange(arDay()); b.textContent = busy ? "Paying…" : "Finish register"; }
+}
+
+window.arCamToggle = async function (pupil, btn) {
+  const c = arClass(), d = arDay();
+  if (!arLive() || !c || !pupil) return;
+  const on = !(ATR.cam[pupil] === true);
+  btn.disabled = true;
+  try {
+    const { data, error } = await LLC.sb.rpc("attendance_set_camera", { p_class: c, p_pupil: pupil, p_date: d, p_on: on });
+    if (error) throw error;
+    if (data && data.error) { ATR.err = ATR_ERR[data.error] || "That did not work."; if (typeof toast === "function") toast(ATR.err); }
+    else { ATR.cam[pupil] = on; ATR.err = ""; btn.setAttribute("aria-pressed", String(on)); }
+  } catch (e) { if (typeof toast === "function") toast("Could not save that. Check the connection."); }
+  btn.disabled = false;
+};
+
+/* what is already ticked for this class and day, then a camera button on every row */
+async function arMount() {
+  if (!arLive()) return;
+  const c = arClass(), d = arDay(), key = c + "|" + d;
+  if (key !== ATR.key) {
+    ATR.key = key; ATR.cam = {}; ATR.msg = ""; ATR.err = "";
+    try {
+      const { data } = await LLC.sb.from("attendance").select("pupil_id, camera_on").eq("class_id", c).eq("on_date", d);
+      (data || []).forEach(r => { ATR.cam[r.pupil_id] = !!r.camera_on; });
+    } catch (e) {}
+  }
+  document.querySelectorAll("#attList .att-row").forEach(row => {
+    const seg = row.querySelector(".seg[data-student]"); if (!seg || row.querySelector(".ar-cam")) return;
+    const id = seg.getAttribute("data-student");
+    const b = document.createElement("button"); b.type = "button"; b.className = "ar-cam";
+    b.setAttribute("aria-pressed", String(ATR.cam[id] === true));
+    b.setAttribute("aria-label", "Camera on for this child (as you saw them)");
+    b.textContent = "📷 Camera on";
+    b.onclick = () => arCamToggle(id, b);
+    row.appendChild(b);
+  });
+}
+
+const attendanceAr = PAGES.attendance;
+PAGES.attendance = function () {
+  let html = attendanceAr.apply(this, arguments);
+  if (!arLive()) return html;
+  html = html.replace('<div id="attList">', arCard() + '<div id="attList">');
+  mount(arMount);
+  return html;
+};
+</script>

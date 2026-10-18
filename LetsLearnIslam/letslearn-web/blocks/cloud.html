@@ -282,7 +282,10 @@ async function llcPullPupil() {
     if (serverAt > localAt) {
       // The child is looking at the local copy, so this only happens
       // when they have genuinely been playing somewhere else.
-      Object.assign(gState(), g.state);
+      const merged = Object.assign({}, g.state);
+      /* a connected child's coins are the wallet's, not whatever number the garden document last carried */
+      if (typeof walActive === "function" && walActive()) delete merged.deeds;
+      Object.assign(gState(), merged);
       gState()._at = serverAt;
       llSave();
     }

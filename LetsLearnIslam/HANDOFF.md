@@ -117,3 +117,6 @@ engine is not what holds the garden back.
 
 ## Backups (new)
 `tools/backup.sh` / `tools/restore.sh`, described in `docs/restore.md`. Nothing has been run against the real project: it needs a connection string file, a passphrase file (or an age key) and a backup folder outside the repo, all set up by you (see the doc). Take a backup before applying migrations 0009-0018, and practise a restore into a throwaway project once.
+
+## Coins (new)
+Server-held coins: `docs/coins.md`. Migrations 0022-0026 (apply 0022 and 0024 each on their own), then `supabase/manual/backfill_welcome.sql` if pupils already exist. Nothing applied yet. A connected child's balance is the server's; the demo and test students keep device coins.

@@ -1,0 +1,288 @@
+<!-- ============================================================
+     WALLET — the garden's coins are held by the server
+     ------------------------------------------------------------
+     The rule: a child must never be able to give themselves coins. For a
+     CONNECTED child (signed in to a school project, not a test student, not
+     in test mode) this block moves the balance off the device:
+
+       * the number the garden shows is the server's (coins_wallet), kept in
+         step by a small queue; typing a bigger number on the device changes
+         nothing the server believes;
+       * EARNING goes through the server's rules (migrations 0023-0026):
+         practice, dhikr, prayer and reading are claims the server checks and
+         caps; the register, marked homework, the welcome and teachers' gifts
+         arrive on their own. Every place that used to add coins on the
+         device (rooms, duas, sleep, reading corners, quiz, the "bring them
+         across" button) no longer does, and the "+N coins" messages that went
+         with them are removed;
+       * SPENDING stays exactly as it was in the garden's code, and is told to
+         the server (coins_spend) through a queue that survives being offline;
+         SELLING asks for half back by amount (coins_refund_pool): the server
+         will never give back more than half of everything spent.
+
+     How, without rewriting two dozen buying and selling paths: for a
+     connected child `gardenState().deeds` becomes a property. Reading it
+     gives the wallet. Lowering it is a spend. Raising it is a refund
+     request (the server clamps it). Anything else that tries to raise it,
+     such as an old earner nobody found, is only ever a refund request, so the
+     most it can do is be refused.
+
+     What this does NOT protect, said plainly: the garden's own contents (the
+     items and the layout) still live on the device, as they always did. A
+     determined child with developer tools can still place things in their own
+     garden without paying. What they can no longer do is have the BALANCE the
+     school sees, the gifts, or anything counted from the ledger be anything
+     but what the server says.
+
+     Demo mode, test students and test mode are untouched: their coins stay on
+     the device, as before.
+     ============================================================ -->
+<script>
+"use strict";
+
+const WAL = {
+  srv: 0, q: [], info: null, loaded: false, off: false, mute: 0, flushing: false, retry: 0, timer: 0,
+  said: false, attachedFor: "", lastSrv: null, backup: 40, own: false, loading: false, checking: false, last: false,
+};
+
+/* connected, a pupil, and not a test student.
+   tmOn() reads the garden through gState(), which is wrapped below and asks walActive() again: the guard
+   stops that circle (the inner question gets the last answer). */
+function walActive() {
+  if (WAL.checking) return !!WAL.last;
+  WAL.checking = true;
+  let r = false;
+  try {
+    r = !WAL.off && typeof llcLive === "function" && !!llcLive() && LLC.profile.role === "student"
+        && !(typeof TS === "object" && TS.isTest) && !(typeof tmOn === "function" && tmOn());
+  } catch (e) { r = false; }
+  finally { WAL.checking = false; }
+  WAL.last = r;
+  return r;
+}
+const walKey = () => "ll_wal:" + ((typeof LLC !== "undefined" && LLC.profile && LLC.profile.id) || "none");
+function walSave() { try { localStorage.setItem(walKey(), JSON.stringify({ srv: WAL.srv, q: WAL.q })); } catch (e) {} }
+function walLoad() {
+  try { const o = JSON.parse(localStorage.getItem(walKey()) || "null"); if (o) { WAL.srv = Number(o.srv) || 0; WAL.q = Array.isArray(o.q) ? o.q.filter(x => x && (x.k === "spend" || x.k === "refund") && x.n > 0 && /^[A-Za-z0-9:_-]{8,64}$/.test(x.ref)) : []; } } catch (e) {}
+}
+const walRef = () => "w-" + (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2, 12)));
+
+/* what the child sees: the server's balance, plus what is still on its way */
+function walBalance() {
+  let b = WAL.srv;
+  for (const o of WAL.q) b += o.k === "refund" ? o.n : -o.n;
+  return Math.max(0, Math.round(b));
+}
+
+/* ---------------- the garden's `deeds`, as a property ---------------- */
+function walSet(v) {
+  if (WAL.mute > 0) return;                                    // a local earner we have switched off
+  const n = Number(v);
+  if (!isFinite(n)) return;
+  const delta = Math.round(n) - walBalance();
+  if (!delta) return;
+  WAL.q.push({ k: delta < 0 ? "spend" : "refund", n: Math.abs(delta), ref: walRef() });
+  walSave(); walFlushSoon();
+}
+
+function walSync(g) {
+  if (!g || typeof g !== "object") return;
+  const d = Object.getOwnPropertyDescriptor(g, "deeds");
+  const attached = !!(d && d.get);
+  if (walActive()) {
+    if (!attached) {
+      if (WAL.attachedFor !== walKey()) { walLoad(); WAL.attachedFor = walKey(); }
+      WAL.backup = Number(g.deeds) || 0;
+      Object.defineProperty(g, "deeds", { configurable: true, enumerable: true, get() { return walBalance(); }, set(v) { walSet(v); } });
+      if (!WAL.loaded) walInit();
+    }
+  } else if (attached) {
+    Object.defineProperty(g, "deeds", { configurable: true, enumerable: true, writable: true, value: WAL.backup });   // back to the device's own number
+  }
+}
+const gardenStateWal = gardenState;
+gardenState = function () { const g = gardenStateWal.apply(this, arguments); walSync(g); return g; };
+/* some blocks keep their own reference to gardenState, so gState() is wrapped too, and the document is checked on a timer and at sign-in */
+const gStateWal = gState;
+gState = function () { const g = gStateWal.apply(this, arguments); walSync(g); return g; };
+function walAttachNow() { try { if (S && S.garden) walSync(S.garden); } catch (e) {} }
+setInterval(walAttachNow, 1000);
+
+/* ---------------- talking to the server ---------------- */
+function walSetSrv(b) {
+  if (typeof b !== "number" || !isFinite(b)) return;
+  if (WAL.lastSrv != null && b > WAL.lastSrv && WAL.loaded && !WAL.own) walGift(b - WAL.lastSrv);
+  WAL.srv = b; WAL.lastSrv = b; walSave(); walPaint();
+}
+function walGift(n) { if (n > 0 && typeof toastWal === "function") { toastWal("You were given " + n + " coin" + (n === 1 ? "" : "s")); try { Snd.coin(); } catch (e) {} } }
+function walSay(msg) { if (typeof toastWal === "function") toastWal(msg); }          // the original toast: these words are ours and must not be cleaned like the old coin messages
+
+let walShown = null;
+function walPaint() {
+  const b = walBalance();
+  const el = document.getElementById("deedCount"); if (el) el.textContent = b;
+  if (walShown !== null && b !== walShown && typeof coinPop === "function") coinPop();         // only when it changed, so the once-a-minute check is silent
+  walShown = b;
+}
+
+async function walInit() {
+  if (WAL.loading) return;
+  WAL.loading = true;
+  try { await walRefresh(true); } finally { WAL.loading = false; }
+}
+
+async function walRefresh(first) {
+  if (!walActive()) return;
+  try {
+    const { data, error } = await LLC.sb.rpc("coins_wallet");
+    if (error) throw error;
+    if (data && data.error === "test_student") { WAL.off = true; walSync(gardenStateWal()); return; }       // the server says: use the device's own coins
+    if (data && typeof data.balance === "number") {
+      WAL.info = data;
+      WAL.own = !!first;                                       // the first read is not "a gift"
+      walSetSrv(data.balance);
+      WAL.own = false; WAL.loaded = true;
+    }
+  } catch (e) { /* offline: the last known balance stands */ }
+}
+
+function walFlushSoon(ms) { clearTimeout(WAL.timer); WAL.timer = setTimeout(walFlush, ms == null ? 400 : ms); }
+
+async function walFlush() {
+  if (WAL.flushing || !walActive() || !WAL.q.length) return;
+  WAL.flushing = true;
+  try {
+    while (WAL.q.length) {
+      const o = WAL.q[0];
+      let res;
+      try {
+        res = o.k === "spend" ? await LLC.sb.rpc("coins_spend", { p_amount: o.n, p_ref: o.ref, p_what: "garden" })
+                              : await LLC.sb.rpc("coins_refund_pool", { p_amount: o.n, p_ref: o.ref });
+      } catch (e) { res = { error: { message: "offline" } }; }
+      if (res.error) { WAL.retry = Math.min(WAL.retry + 1, 5); WAL.flushing = false; walFlushSoon([5000, 15000, 60000, 120000, 300000][WAL.retry - 1]); return; }   // keep it; try again later
+      WAL.retry = 0;
+      const d = res.data || {};
+      WAL.q.shift();
+      if (d.error === "test_student") { WAL.off = true; WAL.q = []; WAL.flushing = false; walSave(); walSync(gardenStateWal()); return; }
+      if (d.error === "not_enough") {                          // the device thought there were more coins than the server holds
+        walSetSrv(Number(d.balance) || 0);
+        if (!WAL.said) { WAL.said = true; walSay("Some coins did not add up, so they were put right."); }
+      } else if (typeof d.balance === "number") WAL.srv = d.balance;
+      WAL.lastSrv = WAL.srv; walSave();
+    }
+  } finally { WAL.flushing = false; walPaint(); }
+}
+window.addEventListener("online", () => walFlushSoon(500));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { walFlushSoon(300); walRefresh(); } });
+setInterval(() => { if (!document.hidden && walActive()) { walFlush(); walRefresh(); } }, 60000);
+
+/* ---------------- earning: ask the server ---------------- */
+async function walEarn(fn, args) {
+  if (!walActive()) return null;
+  try {
+    const { data, error } = await LLC.sb.rpc(fn, args);
+    if (error || !data) return null;
+    if (data.error) return data;
+    WAL.own = true; walSetSrv(Number(data.balance)); WAL.own = false;
+    if (data.minted > 0) { walSay("You earned " + data.minted + " coin" + (data.minted === 1 ? "" : "s")); try { Snd.coin(); } catch (e) {} }
+    else if (data.capped) walSay("That is all the coins for today. Come back tomorrow!");
+    return data;
+  } catch (e) { return null; }
+}
+
+/* practice: the app records the practice row, then asks for the coins for THAT row */
+const llcPushPracticeWal = llcPushPractice;
+llcPushPractice = async function (moduleId, score, stars, label, letters) {
+  if (!walActive()) return llcPushPracticeWal.apply(this, arguments);
+  try {
+    const { data, error } = await LLC.sb.from("practice").insert({
+      pupil_id: LLC.profile.id, module_id: moduleId, label: label || null,
+      score: Math.max(0, Math.min(100, Math.round(score))), stars: stars || 0, letters: letters || [],
+    }).select("id").single();
+    if (error || !data) return;
+    const r = await walEarn("earn_practice", { p_id: data.id });
+    if (r && r.error === "too_fast") setTimeout(() => walEarn("earn_practice", { p_id: data.id }), 62000);       // one practice reward a minute: ask again once
+  } catch (e) { /* best effort, like the original */ }
+};
+
+/* dhikr: a completed set of 33 is a claim for the next set of the day */
+const gardenDhikrTapWal = gardenDhikrTap;
+gardenDhikrTap = function () {
+  if (!walActive()) return gardenDhikrTapWal.apply(this, arguments);
+  const g = gardenState(); const c0 = (g.dhikr && g.dhikr.count) | 0;
+  let out; WAL.mute++;
+  try { out = gardenDhikrTapWal.apply(this, arguments); } finally { WAL.mute--; }
+  if (c0 === 32 && ((g.dhikr.count | 0) === 0)) walDhikrSet();
+  return out;
+};
+async function walDhikrSet() {
+  const day = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+  const g = gardenStateWal(); const s = g.walDhikr && g.walDhikr.day === day ? g.walDhikr : (g.walDhikr = { day, n: 0 });
+  s.n = Math.min(3, s.n + 1);
+  let r = await walEarn("earn_dhikr", { p_set: s.n });
+  if (r && r.error === "out_of_order") { for (let k = 1; k <= s.n; k++) { r = await walEarn("earn_dhikr", { p_set: k }); if (r && r.error === "too_fast") break; } }
+  if (r && r.error === "too_fast") setTimeout(() => walEarn("earn_dhikr", { p_set: s.n }), 62000);
+}
+
+/* prayer: ticking one is a claim; un-ticking changes no coins */
+const salahTickWal = salahTick;
+salahTick = function (id) {
+  if (!walActive()) return salahTickWal.apply(this, arguments);
+  const before = (salahToday() || []).indexOf(id) > -1;
+  WAL.mute++;
+  try { salahTickWal.apply(this, arguments); } finally { WAL.mute--; }
+  if (!before) walEarn("earn_salah", { p_prayer: id });
+};
+
+/* the local earners that no longer add coins: rooms, duas, sleep, reading corners, quiz, practising the ibadah */
+["llRecord", "duaSaid", "roomSleep", "roomWake", "roomRead", "roomStudyHere", "prFinish", "qzcPay"].forEach(name => {
+  const f = window[name];
+  if (typeof f !== "function") return;
+  window[name] = function () {
+    if (!walActive()) return f.apply(this, arguments);
+    WAL.mute++;
+    try { return f.apply(this, arguments); } finally { WAL.mute--; }
+  };
+});
+
+/* the club-points bridge: the server now pays everything, so there is nothing to bring across */
+["gardenConvert", "gardenCollect"].forEach(name => {
+  const f = window[name];
+  if (typeof f !== "function") return;
+  window[name] = function () {
+    if (!walActive()) return f.apply(this, arguments);
+    walSay("Your coins arrive on their own now.");
+  };
+});
+const gardenConvertCardWal = gardenConvertCard;
+gardenConvertCard = function () {
+  if (!walActive()) return gardenConvertCardWal.apply(this, arguments);
+  const i = WAL.info || {};
+  return `<div class="card" style="margin-top:14px"><h3 class="card-title">Your coins</h3>
+      <div style="font-size:26px;font-weight:800">${walBalance()}</div>
+      <p class="note" style="margin:6px 0 10px">Coins come when you practise, say your dhikr, read, tick your prayers, come to class, and when your teacher marks your homework. There is a limit each day, so come back tomorrow for more.</p>
+      <div class="note">${i.earned != null ? "Earned " + i.earned + " · spent " + i.spent + " · given back " + i.refunded : ""}</div>
+      ${WAL.q.length ? `<div class="note" style="margin-top:6px">Saving your changes…</div>` : ""}</div>`;
+};
+
+/* the messages that went with the old coins */
+const toastWal = toast;
+function walCleanToast(msg) {
+  if (typeof msg !== "string") return msg;
+  if (/^You (?:earned|were given) \d+ coins?/.test(msg)) return msg;        // the wallet's own words
+  if (/^\+\d+ (?:coins?\b.*|for your garden)$/i.test(msg)) return "";
+  return msg.replace(/\s*(?:—|-|\.)?\s*\+?\d+ (?:extra )?coins?(?: for (?:the|your) garden)?(?:\s*\([^)]*\))?$/i, "").trim();
+}
+toast = function (msg) {
+  if (typeof msg === "string" && walActive()) { const m = walCleanToast(msg); if (!m) return; return toastWal.call(this, m); }
+  return toastWal.apply(this, arguments);
+};
+
+/* after every pull, ask the server for the balance */
+const llcPullPupilWal = llcPullPupil;
+llcPullPupil = async function () {
+  walAttachNow();                                              // attach BEFORE the pull merges the document, so its old "deeds" is dropped, not treated as a purchase
+  await llcPullPupilWal.apply(this, arguments);
+  await walRefresh();
+};
+</script>
