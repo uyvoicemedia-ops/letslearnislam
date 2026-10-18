@@ -280,7 +280,12 @@ async function pnPull() {
     }
     PNR.loaded = true; PNR.last = Date.now();
     return true;
-  } catch (e) { PNR.err = (e && e.message) || "could not read the requests"; return false; }
+  } catch (e) {
+    /* A failure must not read as "not loaded yet": the dashboard asks again whenever it paints and not-loaded
+       means "ask now", so a failing request became an endless retry loop that froze the page and hammered
+       the database. Count it as an attempt; it is tried again after 30 seconds, no sooner. */
+    PNR.err = (e && e.message) || "could not read the requests"; PNR.loaded = true; PNR.last = Date.now(); return false;
+  }
 }
 if (typeof llcPull === "function") {
   const llcPullPn = llcPull;

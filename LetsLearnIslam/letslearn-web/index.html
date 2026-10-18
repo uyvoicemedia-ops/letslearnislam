@@ -25627,167 +25627,6 @@ body.kid header { font-size: 13px; }
 }
 </style>
 <!-- KIDUI-BLOCK-END -->
-<!-- CLASSREQ-BLOCK-START --><!-- ============================================================
-     CLASSREQ — a parent asks, the madrasah answers
-     ------------------------------------------------------------
-     The backend half of this is in 0005: family_request_class() raises
-     a hand, class_request_decide() is the only thing that writes an
-     enrolment for a home child. Without the two screens below neither
-     is reachable from the app, and a child added at the kitchen table
-     could never join a class.
-
-     Both screens only appear when a real project is connected. With no
-     keys there are no schools to ask.
-     ============================================================ -->
-<style>
-.creq { display:flex; align-items:center; gap:12px; padding:11px 0;
-        border-bottom:1px solid var(--line); }
-.creq:last-child { border-bottom:0; }
-.creq .who { font-weight:750; }
-.creq .when { color:var(--muted); font-size:12.5px; }
-.creq .sp { flex:1; }
-</style>
-<script>
-"use strict";
-
-/* ---------- the parent's side, on the picker ---------- */
-
-const llaBodyReq = llaBody;
-llaBody = function () {
-  if (LLA.stage === "joinclass") {
-    const kids = LLA.people.filter(p => p.role === "student");
-    if (!kids.length) return `
-      <h1>No children yet</h1>
-      <p class="lla-sub">Add a child first, then you can ask for a class place.</p>
-      <div class="lla-row"><button class="lla-small"
-        onclick="llaShow('picker')">Back</button></div>`;
-    return `
-      <p class="lla-brand">LetsLearn</p>
-      <h1>Join a class</h1>
-      <p class="lla-sub">Type the code the madrasah gave you. A teacher has to
-        say yes before your child appears on their register.</p>
-      <label class="lla-field"><span>Which child</span></label>
-      <div class="lla-people">
-        ${kids.map(p => `<button class="lla-person"
-            style="${LLA.reqKid === p.id ? "background:#f1f7f3;outline:2px solid var(--qaida-green)" : ""}"
-            onclick="LLA.reqKid='${esc(p.id)}';llaPaint()">
-            ${llaFace(p, 72)}
-            <div class="lla-name">${esc(p.name)}</div></button>`).join("")}
-      </div>
-      <label class="lla-field"><span>Class code</span>
-        <input id="llaJoinCode" placeholder="QAIDA1" autocapitalize="characters"
-               style="text-transform:uppercase;letter-spacing:.16em;font-weight:800"></label>
-      ${llaMsg()}
-      <button class="lla-btn primary" onclick="llaAskClass()">Ask the madrasah</button>
-      <div class="lla-row"><button class="lla-small"
-        onclick="llaShow('picker')">Back</button></div>`;
-  }
-
-  let html = llaBodyReq.apply(this, arguments);
-
-  /* one extra line on the picker, for a parent with a project connected */
-  if (LLA.stage === "picker" && llaCloud() && LLC.profile
-      && LLC.profile.role === "parent") {
-    html = html.replace('<button class="lla-small" onclick="llaShow(\'signin\')">',
-      '<button class="lla-small" onclick="llaShow(\'joinclass\')">Join a class at the madrasah</button>'
-      + '<button class="lla-small" onclick="llaShow(\'signin\')">');
-  }
-  return html;
-};
-
-async function llaAskClass() {
-  const code = ((document.getElementById("llaJoinCode") || {}).value || "").trim();
-  LLA.err = ""; LLA.ok = "";
-  if (!LLA.reqKid) { LLA.err = "Pick which child first."; return llaPaint(); }
-  if (!code) { LLA.err = "Type the class code."; return llaPaint(); }
-
-  const { data, error } = await LLC.sb.rpc("family_request_class",
-                                           { p_pupil: LLA.reqKid, p_code: code });
-  if (error) { LLA.err = error.message; return llaPaint(); }
-  if (!data || !data.ok) {
-    LLA.err = ({
-      no_such_class: "No class has that code. Check it with the madrasah.",
-      not_your_child: "That is not one of your children.",
-      already_in_it: "They are already in that class.",
-    })[data && data.error] || "Could not ask.";
-    return llaPaint();
-  }
-  LLA.ok = data.already_asked
-    ? "You have already asked. The madrasah has it."
-    : "Asked. A teacher will say yes or no — nothing changes until they do.";
-  llaPaint();
-}
-
-/* ---------- the teacher's side, on their dashboard ---------- */
-
-const CREQ = { rows: [], loaded: false, busy: null };
-
-async function creqLoad() {
-  if (!llaCloud() || !LLC.profile) return;
-  if (!(LLC.profile.role === "teacher" || LLC.profile.role === "admin")) return;
-  try {
-    const { data } = await LLC.sb
-      .from("class_requests")
-      .select("id, created_at, pupil_id, class_id")
-      .eq("state", "pending")
-      .order("created_at", { ascending: true });
-    const rows = data || [];
-    /* the names come separately: a teacher may read a child offered to
-       their class, but only through the narrow window in 0005 */
-    if (rows.length) {
-      const ids = rows.map(r => r.pupil_id);
-      const { data: who } = await LLC.sb.from("profiles")
-        .select("id, full_name").in("id", ids);
-      const byId = {};
-      (who || []).forEach(p => { byId[p.id] = p.full_name; });
-      rows.forEach(r => { r.name = byId[r.pupil_id] || "A child"; });
-    }
-    CREQ.rows = rows;
-  } catch (e) { CREQ.rows = []; }
-  CREQ.loaded = true;
-  if (typeof render === "function"
-      && (role === "teacher" || role === "admin")) render();
-}
-
-async function creqDecide(id, yes) {
-  CREQ.busy = id; render();
-  try {
-    await LLC.sb.rpc("class_request_decide", { p_request: id, p_approve: !!yes });
-  } catch (e) {}
-  CREQ.busy = null;
-  await creqLoad();
-}
-
-function creqCard() {
-  if (!CREQ.rows.length) return "";
-  return `<h2 class="section">Waiting for you</h2>
-    <div class="card">
-      <p class="note" style="margin:0 0 6px">Parents asking for a place in one of
-        your classes. Nothing is on your register until you say yes.</p>
-      ${CREQ.rows.map(r => `<div class="creq">
-        <span class="who">${esc(r.name)}</span>
-        <span class="when">${esc(new Date(r.created_at).toLocaleDateString("en-GB"))}</span>
-        <span class="sp"></span>
-        ${CREQ.busy === r.id
-          ? '<span class="note">…</span>'
-          : `<button class="btn" onclick="creqDecide('${esc(r.id)}',false)">No</button>
-             <button class="btn primary" onclick="creqDecide('${esc(r.id)}',true)">Add them</button>`}
-      </div>`).join("")}
-    </div>`;
-}
-
-const pageDashCreq = pageDash;
-pageDash = function () {
-  const html = pageDashCreq.apply(this, arguments);
-  if (role !== "teacher" && role !== "admin") return html;
-  const extra = creqCard();
-  return extra ? html + extra : html;
-};
-if (typeof PAGES !== "undefined" && PAGES.dash) PAGES.dash = pageDash;
-
-window.addEventListener("load", () => { setTimeout(creqLoad, 1400); });
-</script>
-<!-- CLASSREQ-BLOCK-END -->
 <!-- AUTH-BLOCK-START --><!-- ============================================================
      AUTH — signing in, and "who's learning?"
      ------------------------------------------------------------
@@ -37020,426 +36859,6 @@ if (typeof tmMount === "function") {
 }
 </script>
 <!-- ECONFIX-BLOCK-END -->
-<!-- PINRESET-BLOCK-START --><!-- ============================================================
-     PINRESET — "I forgot my secret number"
-     ------------------------------------------------------------
-     On the database side (migration 0018) a child can ask, an adult who
-     is entitled to can answer, and nothing is ever revealed to anybody
-     who should not know it. This is the screens.
-
-     THE CHILD
-       On the PIN pad there is a small "I forgot my number". It asks
-       for help and shows the SAME kind words whatever happens (the
-       database gives the same answer whether or not anything was
-       recorded), so it cannot be used to find out who is in a class or
-       whether someone has already asked.
-       If a grown-up gave them a temporary number, signing in with it
-       does not sign them in: it asks them to choose their own, twice.
-       That is the only time a child sets a number, and the grown-up
-       never learns the one they keep.
-
-     THE GROWN-UP (a teacher of the class, a linked parent, a school admin)
-       A "Secret numbers" page lists who has asked, and everyone they may
-       help. They either generate a temporary number (shown ONCE, big,
-       and never again) or type one themselves. An admin also sees a log
-       of who changed whose number and how: never the number.
-
-     The block never stores, logs or sends a PIN anywhere except the one
-     call that sets it. A temporary number lives in memory until the panel
-     is closed.
-
-     It also fixes the "add a child" screen, which said "four to eight
-     digits": the pad can only type four, so a longer number could never be
-     used to sign in. It is exactly four now, and an easy one (1234, 0000,
-     4321...) is turned away with a kind word. The database is the judge;
-     the check here is only so the answer is immediate.
-     ============================================================ -->
-<style>
-  .pn-card { background:var(--card); border:1.5px solid #e6c98a; border-radius:16px; padding:14px 16px; margin:0 0 16px; }
-  .pn-card h3 { margin:0 0 6px; font-size:16px; }
-  .pn-row { display:flex; align-items:center; gap:10px; padding:9px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
-  .pn-row:first-of-type { border-top:0; }
-  .pn-row .who { flex:1; min-width:150px; font-weight:700; }
-  .pn-row .when { font-size:12.5px; color:var(--muted); }
-  .pn-row .btn { min-height:40px; }
-  .pn-group { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:16px 0 4px; }
-  .pn-veil { position:fixed; inset:0; z-index:890; background:rgba(30,25,15,.45); display:flex; align-items:flex-start; justify-content:center; padding:18px; overflow:auto; }
-  .pn-box { background:var(--card); border-radius:20px; padding:20px 22px 22px; width:min(480px,100%); box-shadow:0 22px 56px rgba(30,20,5,.3); }
-  .pn-box h2 { margin:0 0 4px; font-size:21px; }
-  .pn-big { font-family:ui-monospace,Menlo,monospace; font-size:58px; font-weight:800; letter-spacing:.28em; text-align:center; padding:16px 0 12px 12px;
-            background:var(--bg); border:2px dashed #e0bd2e; border-radius:16px; margin:14px 0 8px; user-select:all; }
-  .pn-box .opt { display:block; width:100%; text-align:left; padding:14px 16px; margin-top:10px; border-radius:14px; border:2px solid var(--line); background:var(--card);
-                 color:inherit; font:inherit; cursor:pointer; }
-  .pn-box .opt b { display:block; font-size:16px; }
-  .pn-box .opt span { font-size:13.5px; color:var(--muted); }
-  .pn-box .opt:hover, .pn-box .opt:focus-visible { border-color:var(--qaida-green, #268f73); outline:none; }
-  .pn-box input.pin { font:inherit; font-size:26px; letter-spacing:.4em; width:9ch; text-align:center; padding:8px 10px; border-radius:12px; border:2px solid var(--line); background:var(--bg); color:inherit; }
-  .pn-err { font-size:13px; font-weight:700; color:#c9483a; margin:10px 0; }
-  .pn-ok { font-size:13px; font-weight:700; color:#2a7a55; margin:10px 0; }
-  .pn-warn { font-size:13px; background:#fdf7e7; border:1.5px solid #e0c98a; border-radius:10px; padding:8px 12px; margin:8px 0; }
-  table.pn-log { width:100%; border-collapse:collapse; font-size:13.5px; }
-  table.pn-log th, table.pn-log td { padding:7px 8px; border-bottom:1px solid var(--line); text-align:left; }
-  table.pn-log th { font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
-</style>
-<script>
-"use strict";
-
-const PNR = { loaded: false, busy: false, err: "", ok: "", pending: [], pupils: [], classes: [], enrol: [], audit: [], names: {}, panel: null, last: 0 };
-const PN_NEW = { p: null, old: "", step: 1, first: "", cur: "", busy: false };     // a child choosing a new number: memory only
-
-function pnLive() { try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; } }
-const pnRole = () => (pnLive() ? LLC.profile.role : null);
-const pnAdult = () => ["teacher", "admin", "parent"].indexOf(pnRole()) >= 0;
-
-/* The same rule as the database (ll_pin_trivial), so the answer is instant.
-   The database is the one that decides. */
-function pnTrivial(p) {
-  if (!/^[0-9]{4}$/.test(p)) return false;
-  const d = p.split("").map(Number), df = (i) => (d[i + 1] - d[i] + 10) % 10;
-  if (d[0] === d[1] && d[1] === d[2] && d[2] === d[3]) return true;
-  if (df(0) === 1 && df(1) === 1 && df(2) === 1) return true;
-  if (df(0) === 9 && df(1) === 9 && df(2) === 9) return true;
-  if (d[0] === d[2] && d[1] === d[3]) return true;
-  if (d[0] === d[1] && d[2] === d[3]) return true;
-  return ["2580", "0852", "1357", "2468", "1379", "1478", "3698", "1590", "6969", "1004", "5683", "4200"].indexOf(p) >= 0;
-}
-const PN_EASY = "That one is too easy to guess. Try a different one.";
-
-/* ============================================================
-   The child
-   ============================================================ */
-
-function pnPad() {
-  const dots = [0, 1, 2, 3].map(i => `<i class="${i < PN_NEW.cur.length ? "on" : ""}"></i>`).join("");
-  const keys = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button onclick="pnKey('${n}')">${n}</button>`).join("");
-  return `<div class="lla-dots">${dots}</div>${llaMsg()}
-    <div class="lla-pad">${keys}<button class="ghost" onclick="pnCancel()">Back</button><button onclick="pnKey('0')">0</button><button class="ghost" onclick="pnKey('del')">⌫</button></div>`;
-}
-
-function pnBody(S) {
-  const p = LLA.target || {};
-  if (S === "pinhelp") return `
-    ${llaFace(p, 84)}
-    <h1>Forgot your secret number?</h1>
-    <p class="lla-sub">That is okay. We can ask a grown-up to help.</p>
-    <button class="lla-btn primary" onclick="pnAsk()">Ask for help</button>
-    <div class="lla-row"><button class="lla-small" onclick="llaShow('pin')">Back</button></div>`;
-  if (S === "pinhelpdone") return `
-    ${llaFace(p, 84)}
-    <h1>All done</h1>
-    <p class="lla-sub">Ask your teacher or a grown-up. We have told them.</p>
-    <button class="lla-btn primary" onclick="LLA.pin='';llaShow('picker')">OK</button>`;
-  if (S === "pinnew") {
-    const np = PN_NEW.p || {};
-    return `
-      ${llaFace(np, 84)}
-      <h1>Welcome back, ${esc((np.name || "").split(" ")[0])}!</h1>
-      <p class="lla-sub">${PN_NEW.step === 1 ? "Choose a new secret number that only you know." : "Type it once more to check."}</p>
-      ${pnPad()}`;
-  }
-  return null;
-}
-
-window.pnForgot = function () { LLA.err = ""; LLA.ok = ""; llaShow("pinhelp"); };
-
-window.pnAsk = async function () {
-  const p = LLA.target; if (!p) return;
-  try {
-    if (llaCloud()) {
-      if (!LLC.session) {
-        const { data } = await LLC.sb.auth.signInAnonymously();
-        if (data) LLC.session = data.session;
-      }
-      await LLC.sb.rpc("pin_reset_request", { p_pupil: p.id, p_code: p.code || null });
-    }
-  } catch (e) { /* the same kind words either way: nothing here may say whether it worked */ }
-  llaShow("pinhelpdone");
-};
-
-/* claiming, now understanding a temporary number. Mirrors the two originals in AUTH/CLOUD. */
-async function pnClaim(p, pin) {
-  if (!LLC.session) {
-    const { data, error } = await LLC.sb.auth.signInAnonymously();
-    if (error) return { msg: "Could not start a session: " + error.message };
-    LLC.session = data.session;
-  }
-  const code = p.code || null;
-  const { data, error } = code ? await LLC.sb.rpc("claim_pupil", { p_code: code, p_pupil: p.id, p_pin: String(pin) })
-                               : await LLC.sb.rpc("claim_child", { p_pupil: p.id, p_pin: String(pin) });
-  if (error) return { msg: error.message };
-  if (data && data.error === "must_change") return { mustChange: true };
-  if (!data || !data.ok) {
-    return { msg: ({
-      wrong_pin: code ? "That PIN is not right. Try again." : "That is not the right number. Have another go.",
-      not_in_class: "That name is not in this class.", not_a_family_child: "Use your class code for this one.",
-      locked: "Too many tries. Ask a grown-up, or wait fifteen minutes.",
-      expired: "That number has run out. Ask a grown-up for a new one.",
-      no_session: "Could not start a session.",
-    })[data && data.error] || "Could not sign in." };
-  }
-  await llcLoadProfile();
-  llcSetStatus("online", (LLC.profile && LLC.profile.full_name) || data.full_name);
-  if (typeof llcPull === "function") await llcPull();
-  return { ok: true };
-}
-
-/* replaces AUTH's llaPinTry: same offline behaviour, and a temporary number leads to choosing a new one */
-llaPinTry = async function () {
-  const p = LLA.target;
-  if (!p) return;
-  if (!p.cloud) {
-    if (String(p.pin || "") !== LLA.pin) { LLA.pin = ""; LLA.err = "That is not the right number. Have another go."; return llaPaint(); }
-    return llaEnter(p);
-  }
-  const r = await pnClaim(p, LLA.pin);
-  if (r.mustChange) {
-    Object.assign(PN_NEW, { p, old: LLA.pin, step: 1, first: "", cur: "", busy: false });
-    LLA.pin = ""; LLA.err = "";
-    return llaShow("pinnew");
-  }
-  if (r.msg) { LLA.pin = ""; LLA.err = r.msg; return llaPaint(); }
-  llaEnter(p);
-};
-
-window.pnCancel = function () { Object.assign(PN_NEW, { p: null, old: "", first: "", cur: "" }); LLA.pin = ""; llaShow("picker"); };
-
-window.pnKey = async function (k) {
-  if (PN_NEW.busy) return;
-  if (k === "del") { PN_NEW.cur = PN_NEW.cur.slice(0, -1); LLA.err = ""; return llaPaint(); }
-  if (PN_NEW.cur.length >= 4) return;
-  PN_NEW.cur += k; LLA.err = ""; llaPaint();
-  if (PN_NEW.cur.length < 4) return;
-  await new Promise(r => setTimeout(r, 140));
-  if (PN_NEW.step === 1) {
-    if (pnTrivial(PN_NEW.cur)) { PN_NEW.cur = ""; LLA.err = PN_EASY; return llaPaint(); }
-    if (PN_NEW.cur === PN_NEW.old) { PN_NEW.cur = ""; LLA.err = "Choose a different number from the one you were given."; return llaPaint(); }
-    PN_NEW.first = PN_NEW.cur; PN_NEW.cur = ""; PN_NEW.step = 2; return llaPaint();
-  }
-  if (PN_NEW.cur !== PN_NEW.first) { Object.assign(PN_NEW, { first: "", cur: "", step: 1 }); LLA.err = "They did not match. Let us try again."; return llaPaint(); }
-  PN_NEW.busy = true;
-  try {
-    const p = PN_NEW.p;
-    const { data, error } = await LLC.sb.rpc("pin_choose_new", { p_pupil: p.id, p_code: p.code || null, p_old_pin: PN_NEW.old, p_new_pin: PN_NEW.cur });
-    PN_NEW.busy = false;
-    if (error) { Object.assign(PN_NEW, { first: "", cur: "", step: 1 }); LLA.err = "Something went wrong. Try again."; return llaPaint(); }
-    if (!data || !data.ok) {
-      const e = data && data.error;
-      if (e === "trivial_pin") { Object.assign(PN_NEW, { first: "", cur: "", step: 1 }); LLA.err = PN_EASY; return llaPaint(); }
-      if (e === "same_pin") { Object.assign(PN_NEW, { first: "", cur: "", step: 1 }); LLA.err = "Choose a different number from the one you were given."; return llaPaint(); }
-      const msg = e === "expired" ? "That number has run out. Ask a grown-up for a new one."
-                : e === "locked" ? "Too many tries. Ask a grown-up, or wait fifteen minutes."
-                : "That did not work. Ask a grown-up.";
-      Object.assign(PN_NEW, { p: null, old: "", first: "", cur: "" });
-      llaShow("picker"); LLA.err = msg; return llaPaint();
-    }
-    await llcLoadProfile();
-    llcSetStatus("online", (LLC.profile && LLC.profile.full_name) || data.full_name);
-    if (typeof llcPull === "function") await llcPull();
-    Object.assign(PN_NEW, { old: "", first: "", cur: "" });        // forget it
-    llaEnter(p);
-  } catch (e) {
-    PN_NEW.busy = false; LLA.err = "Something went wrong. Try again."; llaPaint();
-  }
-};
-
-/* the gate: the new stages, the forgot link, and the four-digit add-a-child */
-const llaBodyPn = llaBody;
-llaBody = function () {
-  const mine = pnBody(LLA.stage);
-  if (mine != null) return mine;
-  let html = llaBodyPn.apply(this, arguments);
-  if (LLA.stage === "pin" && LLA.target && LLA.target.cloud) {
-    html = html.replace(/(<button class="ghost" onclick="llaPinKey\('del'\)">⌫<\/button>\s*<\/div>)/,
-      '$1<div class="lla-row"><button class="lla-small" onclick="pnForgot()">I forgot my number</button></div>');
-  }
-  if (LLA.stage === "addchild") {
-    html = html.replace('maxlength="8"', 'maxlength="4"').replace("A four-digit PIN", "A four-digit secret number");
-  }
-  return html;
-};
-
-/* "add a child" now insists on exactly four digits and turns away an easy one, kindly */
-const llaAddChildPn = llaAddChild;
-llaAddChild = async function () {
-  const d = LLA.draft || {}, pin = String(d.pin || "").trim();
-  if (pin && !/^[0-9]{4}$/.test(pin)) { LLA.err = "The secret number is exactly four digits."; return llaPaint(); }
-  if (pnTrivial(pin)) { LLA.err = PN_EASY; return llaPaint(); }
-  return llaAddChildPn.apply(this, arguments);
-};
-
-/* ============================================================
-   The grown-up
-   ============================================================ */
-
-async function pnAll(make) {
-  let out = [], from = 0;
-  for (let i = 0; i < 25; i++) {
-    const { data, error } = await make().range(from, from + 999);
-    if (error) throw error;
-    out = out.concat(data || []);
-    if (!data || data.length < 1000) return out;
-    from += 1000;
-  }
-  return out;
-}
-
-async function pnPull() {
-  if (!pnLive() || !pnAdult()) return false;
-  PNR.err = "";
-  try {
-    const sb = LLC.sb, r = LLC.profile.role;
-    const pend = await sb.rpc("pin_reset_pending");
-    if (pend.error) throw pend.error;
-    PNR.pending = pend.data || [];
-    PNR.pupils = await pnAll(() => sb.from("profiles").select("id, full_name").eq("role", "student").order("full_name"));
-    const cls = await sb.from("classes").select("id, name").order("name"); PNR.classes = cls.data || [];
-    PNR.enrol = await pnAll(() => sb.from("enrolments").select("class_id, pupil_id"));
-    if (r === "admin") {
-      const st = await sb.from("profiles").select("id, full_name").in("role", ["teacher", "admin"]); (st.data || []).forEach(x => { PNR.names[x.id] = x.full_name; });
-      const since = new Date(Date.now() - 30 * 864e5).toISOString();
-      const a = await sb.from("pin_reset_audit").select("id, at, pupil_id, actor_id, actor_role, method, sessions_cleared").gte("at", since).order("at", { ascending: false }).limit(100);
-      PNR.audit = a.data || [];
-    }
-    PNR.loaded = true; PNR.last = Date.now();
-    return true;
-  } catch (e) { PNR.err = (e && e.message) || "could not read the requests"; return false; }
-}
-if (typeof llcPull === "function") {
-  const llcPullPn = llcPull;
-  llcPull = async function () {
-    const out = await llcPullPn.apply(this, arguments);
-    try { if (pnLive() && pnAdult()) { await pnPull(); if (typeof render === "function") render(); } } catch (e) {}
-    return out;
-  };
-}
-
-const pnName = (id) => (PNR.pupils.find(p => p.id === id) || {}).full_name || PNR.names[id] || "Somebody";
-const pnWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); };
-
-window.pnOpen = function (pupil) { PNR.panel = { pupil, name: pnName(pupil), mode: "", temp: null, typed: "" }; PNR.err = ""; PNR.ok = ""; render(); };
-window.pnClose = function () { PNR.panel = null; PNR.err = ""; render(); pnPull().then(render); };   // the temporary number leaves memory here
-
-window.pnTemp = async function () {
-  const P = PNR.panel; if (!P || PNR.busy) return;
-  PNR.busy = true; PNR.err = ""; render();
-  try {
-    const { data, error } = await LLC.sb.rpc("pin_reset_temp", { p_pupil: P.pupil });
-    if (error) throw error;
-    if (!data || !data.ok) PNR.err = data && data.error === "not_allowed" ? "You cannot do that for this child." : "That did not work. Try again.";
-    else { P.temp = { pin: data.temp_pin, cleared: data.sessions_cleared }; P.mode = "temp"; }
-  } catch (e) { PNR.err = (e && e.message) || "That did not work."; }
-  PNR.busy = false; render();
-};
-
-window.pnTypeSave = async function () {
-  const P = PNR.panel; if (!P || PNR.busy) return;
-  const pin = String(P.typed || "").trim();
-  PNR.err = "";
-  if (!/^[0-9]{4}$/.test(pin)) { PNR.err = "Use four digits."; return render(); }
-  if (pnTrivial(pin)) { PNR.err = "That one is too easy to guess. Try another."; return render(); }
-  PNR.busy = true; render();
-  try {
-    const { data, error } = await LLC.sb.rpc("pin_reset_set", { p_pupil: P.pupil, p_pin: pin });
-    if (error) throw error;
-    if (!data || !data.ok) PNR.err = ({ not_allowed: "You cannot do that for this child.", bad_pin: "Use four digits.", trivial_pin: "That one is too easy to guess. Try another." })[data && data.error] || "That did not work.";
-    else { P.mode = "typed-done"; P.typed = ""; }
-  } catch (e) { PNR.err = (e && e.message) || "That did not work."; }
-  PNR.busy = false; render();
-};
-
-window.pnDismiss = async function (id) {
-  if (PNR.busy) return;
-  PNR.busy = true; render();
-  try { await LLC.sb.rpc("pin_reset_dismiss", { p_request: id }); await pnPull(); } catch (e) {}
-  PNR.busy = false; render();
-};
-
-function pnPanel() {
-  const P = PNR.panel; if (!P) return "";
-  const first = esc(P.name.split(" ")[0] || P.name);
-  let inner;
-  if (P.mode === "temp" && P.temp) {
-    inner = `<h2>Tell ${first} this number now</h2>
-      <div class="pn-big" role="status" aria-label="The temporary number is ${esc(P.temp.pin.split("").join(" "))}">${esc(P.temp.pin)}</div>
-      <p class="note" style="margin:0 0 6px"><strong>We will not show it again.</strong> ${first} will choose their own number when they sign in. This one works for 7 days.</p>
-      <p class="note" style="margin:0">${first}'s old number no longer works and ${first} is signed out of any other device.</p>
-      <div class="row" style="margin-top:14px"><button class="btn primary" onclick="pnClose()">Done</button></div>`;
-  } else if (P.mode === "typed-done") {
-    inner = `<h2>Done</h2><p style="margin:6px 0 0">${first}'s new number is set. The old one no longer works, and ${first} is signed out of any other device.</p>
-      <p class="note">Tell ${first} the number yourself. We cannot show it again.</p>
-      <div class="row" style="margin-top:14px"><button class="btn primary" onclick="pnClose()">Done</button></div>`;
-  } else if (P.mode === "typed") {
-    inner = `<h2>Type a number for ${first}</h2>
-      <p class="note" style="margin:0 0 10px">Four digits, and not an easy one like 1234 or 0000.</p>
-      <label for="pnTyped" class="note">New number</label><br>
-      <input id="pnTyped" class="pin" inputmode="numeric" maxlength="4" autocomplete="off" value="${esc(P.typed)}" oninput="PNR.panel.typed=this.value.replace(/\\D/g,'')">
-      ${PNR.err ? `<p class="pn-err" role="alert">${esc(PNR.err)}</p>` : ""}
-      <div class="row" style="margin-top:14px;gap:8px"><button class="btn primary" onclick="pnTypeSave()" ${PNR.busy ? "disabled" : ""}>Set it</button><button class="btn" onclick="PNR.panel.mode='';PNR.err='';render()">Back</button></div>`;
-  } else {
-    inner = `<h2>A new secret number for ${first}</h2>
-      <p class="note" style="margin:0">${first}'s old number stops working at once.</p>
-      ${PNR.err ? `<p class="pn-err" role="alert">${esc(PNR.err)}</p>` : ""}
-      <button class="opt" onclick="pnTemp()" ${PNR.busy ? "disabled" : ""}><b>Make a temporary one (recommended)</b><span>You tell ${first} a number. They choose their own the first time they sign in, so nobody else ever knows it.</span></button>
-      <button class="opt" onclick="PNR.panel.mode='typed';PNR.err='';render()"><b>Type one myself</b><span>You choose the number and tell ${first}. They keep it until you change it.</span></button>
-      <div class="row" style="margin-top:14px"><button class="btn" onclick="pnClose()">Cancel</button></div>`;
-  }
-  return `<div class="pn-veil" onclick="if(event.target===this && !PNR.panel.temp)pnClose()"><div class="pn-box" role="dialog" aria-modal="true">${inner}</div></div>`;
-}
-
-const PN_HOW = { typed: "Typed by an adult", temporary: "Temporary number", child_chose_new: "Chose their own", dismissed: "Not needed" };
-
-function pnRequests() {
-  if (!PNR.pending.length) return "";
-  return `<div class="pn-card" role="region" aria-label="Secret number requests"><h3>🔑 ${PNR.pending.length} ${PNR.pending.length === 1 ? "child has" : "children have"} asked for a new secret number</h3>` +
-    PNR.pending.map(r => `<div class="pn-row"><span class="who">${esc(r.full_name)}<div class="when">${esc((r.class_names || []).join(", "))} · asked ${esc(pnWhen(r.requested_at))}</div></span>
-      <button class="btn primary" onclick="pnOpen('${esc(r.pupil_id)}')">New number</button>
-      <button class="btn" onclick="pnDismiss('${esc(r.request_id)}')">Not needed</button></div>`).join("") + "</div>";
-}
-
-function pagePinReset() {
-  if (!pnLive()) return `<h1>Secret numbers</h1><p class="sub">Help a child who forgot theirs</p><div class="callout">This needs a school connected, and you signed in.</div>`;
-  if (!pnAdult()) return pageSimple("Secret numbers", "Grown-ups only", "A child who forgets their secret number asks a teacher or a grown-up at home.");
-  if (!PNR.loaded) return "<h1>Secret numbers</h1><p class=\"sub\">Loading…</p>" + (PNR.err ? `<p class="pn-err">${esc(PNR.err)}</p>` : "");
-  const role6 = pnRole();
-  const byClass = {};
-  PNR.pupils.forEach(p => {
-    const cs = PNR.enrol.filter(e => e.pupil_id === p.id).map(e => (PNR.classes.find(c => c.id === e.class_id) || {}).name || "Not in a class");
-    (cs.length ? cs : ["Not in a class"]).forEach(c => (byClass[c] = byClass[c] || []).push(p));
-  });
-  const groups = Object.keys(byClass).sort().map(c => `<div class="pn-group">${role6 === "parent" ? "" : esc(c)}</div><div class="card" style="padding:4px 16px">` +
-    byClass[c].map(p => `<div class="pn-row"><span class="who">${esc(p.full_name)}</span><button class="btn" onclick="pnOpen('${esc(p.id)}')">New number</button></div>`).join("") + "</div>").join("");
-  const log = role6 === "admin" ? `<h2 class="section">Changes in the last 30 days</h2><div class="card" style="overflow:auto">${PNR.audit.length ?
-    `<table class="pn-log"><thead><tr><th>When</th><th>Child</th><th>By</th><th>How</th></tr></thead><tbody>` +
-    PNR.audit.map(a => `<tr><td>${esc(pnWhen(a.at))}</td><td>${esc(pnName(a.pupil_id))}</td><td>${esc(a.actor_id === a.pupil_id ? "the child" : (PNR.names[a.actor_id] || a.actor_role))}</td><td>${esc(PN_HOW[a.method] || a.method)}${a.sessions_cleared === false ? ' <span class="note">(other devices may stay signed in for up to an hour)</span>' : ""}</td></tr>`).join("") + "</tbody></table>"
-    : '<p class="note" style="margin:8px 0">Nothing yet.</p>'}<p class="note" style="margin:8px 0 4px">This log never holds a number, and cannot be edited.</p></div>` : "";
-  return `<h1>Secret numbers</h1><p class="sub">Help a child who forgot theirs</p>` +
-    (PNR.err ? `<p class="pn-err" role="alert">${esc(PNR.err)}</p>` : "") + pnRequests() +
-    (PNR.pending.length ? "" : '<div class="callout">Nobody is waiting. A child who forgets their number taps <strong>I forgot my number</strong> on the sign-in screen, and it appears here.</div>') +
-    `<h2 class="section">${role6 === "parent" ? "Your children" : "Everyone you can help"}</h2>` + (groups || '<div class="callout">Nobody to show yet.</div>') + log + pnPanel();
-}
-
-/* a card on the dashboard when somebody is waiting */
-const pageDashPn = PAGES.dash;
-PAGES.dash = function () {
-  let html = pageDashPn.apply(this, arguments);
-  if (pnLive() && pnAdult()) {
-    if (!PNR.loaded || Date.now() - PNR.last > 30000) pnPull().then(() => { if (PNR.pending.length || !PNR.loaded) render(); });
-    const card = pnRequests();
-    if (card) html = html.replace("</h1>", "</h1>" + card);   // under the page title
-  }
-  return html;
-};
-if (typeof pageDash !== "undefined") { /* PAGES.dash holds its own reference, so only it is wrapped */ }
-
-/* ---------- on the menu ---------- */
-if (typeof NAV === "object") {
-  const add = (r, g) => { const grp = NAV[r] && NAV[r][g] && NAV[r][g][1]; if (grp && !grp.some(x => x[0] === "pinreset")) grp.push(["pinreset", "Secret numbers", "🔑"]); };
-  add("teacher", 1); add("admin", 0); add("parent", 0);
-}
-if (typeof PAGES === "object") PAGES.pinreset = pagePinReset;
-if (pnLive() && pnAdult() && !PNR.loaded) pnPull().then(() => render(), () => {});
-</script>
-<!-- PINRESET-BLOCK-END -->
 <!-- GARDENLIGHT-BLOCK-START --><!-- ============================================================
      GARDENLIGHT — (b) lighting and ambient life for the garden
      ------------------------------------------------------------
@@ -39494,5 +38913,762 @@ render = function () {
 setTimeout(() => { try { gdInvite(); gdHelpButton(); } catch (e) {} }, 600);
 </script>
 <!-- GUIDE-BLOCK-END -->
+<!-- ERRLOG-BLOCK-START --><!-- ============================================================
+     ERRLOG — find out when the app breaks, without collecting children
+     ------------------------------------------------------------
+     A JavaScript error on a child's tablet used to vanish into a console
+     nobody opens. This sends a SCRUBBED, minimal report of each one to the
+     school's own database (migration 0020), and gives an admin an "App
+     problems" page to read them.
+
+     What it sends, and nothing else: the error message, where it came from
+     (file:line:column), the stack, the current page's name, a version tag
+     and a coarse browser name such as "Chrome/macOS". Never who you are:
+     no name, no id, no email, no address, no cookies. It strips emails,
+     sign-in tokens, API keys, name=value secrets, URL queries and
+     fragments, UUIDs and four-or-more-digit numbers BEFORE sending, and the
+     database does it again on arrival.
+
+     It is polite about volume: the same error is sent once per ten minutes,
+     and at most fifteen reports leave one page load. If the report itself
+     fails, that failure is ignored: a broken log must never break the app
+     or loop.
+
+     Only when a school project is connected. In the offline demo nothing is
+     sent anywhere. A device can switch it off for itself (Settings on the
+     "App problems" page). Child data that happens to be inside an error
+     message (a JSON parse error quoting text, say) is the one thing this
+     cannot fully rule out, which is why messages are cut at 300 characters
+     and why the page says so.
+     ============================================================ -->
+<script>
+"use strict";
+
+const EL = {
+  version: "web-1",
+  sent: 0, maxPerLoad: 15, seen: {}, repeatMs: 10 * 60 * 1000, busy: false,
+  rows: [], loaded: false, err: "", ok: "", open: "",
+};
+
+const elOff = () => { try { return localStorage.getItem("ll_errlog_off") === "1"; } catch (e) { return false; } };
+/* LLC is a top-level const, so it is not on window */
+const elReady = () => { try { return typeof LLC !== "undefined" && !!(LLC.sb && typeof LLC.sb.rpc === "function"); } catch (e) { return false; } };
+
+/* the same rules as the database's ll_scrub(). No look-behind: older Safari would refuse the whole block. */
+function elScrub(p, max) {
+  let t = String(p == null ? "" : p);
+  t = t.replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, "<token>");
+  t = t.replace(/sb_(?:publishable|secret)_[A-Za-z0-9_-]{6,}|sbp_[A-Za-z0-9]{16,}/g, "<key>");
+  t = t.replace(/(bearer)\s+[A-Za-z0-9._~+\/=-]+/gi, "$1 <redacted>");
+  t = t.replace(/(access_token|refresh_token|id_token|apikey|api_key|token|password|passwd|pwd|pin|secret|authorization)(["' ]*[:=]["' ]*)[^\s&"',;)]+/gi, "$1$2<redacted>");
+  t = t.replace(/((?:https?:\/\/|file:\/\/)[^\s"'?#)]*)[?#][^\s"')]*/g, "$1?<redacted>");
+  t = t.replace(/([A-Za-z0-9_.\/-]+\.(?:html|js))[?#][^\s"')]*/g, "$1?<redacted>");
+  t = t.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "<email>");
+  t = t.replace(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g, "<id>");
+  t = t.replace(/(^|[^:0-9])[0-9]{4,}/g, "$1<n>");
+  t = t.replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ").replace(/[ \t]+/g, " ").trim();
+  return t.slice(0, max);
+}
+
+function elBrowser() {
+  const u = navigator.userAgent || "", b = /Edg\//.test(u) ? "Edge" : /Chrome\//.test(u) ? "Chrome" : /Firefox\//.test(u) ? "Firefox" : /Safari\//.test(u) ? "Safari" : "Other";
+  const o = /iPhone|iPad|iPod/.test(u) ? "iOS" : /Android/.test(u) ? "Android" : /Mac OS X/.test(u) ? "macOS" : /Windows/.test(u) ? "Windows" : /Linux/.test(u) ? "Linux" : "Other";
+  return b + "/" + o;
+}
+const elPage = () => { try { return String(typeof page === "string" ? page : ""); } catch (e) { return ""; } };
+
+/* things that are not our bugs */
+function elIgnore(msg, file) {
+  const m = String(msg || "");
+  if (!m || /^script error\.?$/i.test(m)) return true;                       // a cross-origin error with nothing in it
+  if (/ResizeObserver loop/i.test(m)) return true;                           // harmless, browser-made
+  if (/extension:\/\//i.test(String(file || "")) || /extension:\/\//i.test(m)) return true;
+  return false;
+}
+
+async function elSend(r) {
+  if (EL.busy || EL.sent >= EL.maxPerLoad) return;
+  EL.busy = true; EL.sent++;
+  try { await LLC.sb.rpc("log_client_error", r); } catch (e) { /* a broken log must never break anything */ }
+  EL.busy = false;
+}
+
+function elReport(message, source, stack) {
+  try {
+    if (elOff() || !elReady()) return;
+    const msg = elScrub(String(message == null ? "" : message).replace(/^Uncaught /, ""), 300);   // the browser adds "Uncaught "; drop it so repeats match
+    if (!msg || elIgnore(msg, source)) return;
+    const src = elScrub(source, 80), key = msg + "|" + src, now = Date.now();
+    if (EL.seen[key] && now - EL.seen[key] < EL.repeatMs) return;
+    EL.seen[key] = now;
+    elSend({ p_message: msg, p_source: src, p_stack: elScrub(stack, 1200), p_page: elPage(), p_version: EL.version, p_browser: elBrowser() });
+  } catch (e) { /* never */ }
+}
+
+window.addEventListener("error", (e) => {
+  if (e && e.target && e.target !== window) return;                          // a picture or script that failed to load, not code
+  if (elIgnore(e.message, e.filename)) return;                              // judged on the full address, before it is shortened
+  const file = (e.filename || "").split("/").pop();
+  elReport(e.message, file ? file + ":" + (e.lineno || 0) + ":" + (e.colno || 0) : "", e.error && e.error.stack);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e && e.reason;
+  elReport("Unhandled promise: " + ((r && r.message) || String(r)), "promise", r && r.stack);
+});
+
+/* ---------------- the admin's page ---------------- */
+const EL_ROLE = { admin: "admin", teacher: "teacher", parent: "parent", student: "pupil" };
+async function elLoad() {
+  if (!elReady() || EL.busy) return;
+  try {
+    const { data, error } = await LLC.sb.from("client_errors").select("id, last_at, count, page, message, source, stack, role, version, browser")
+      .order("last_at", { ascending: false }).limit(100);
+    if (error) throw error;
+    EL.rows = data || []; EL.err = "";
+  } catch (e) { EL.err = "Could not load the list: " + ((e && e.message) || "try again"); }
+  EL.loaded = true; render();
+}
+window.elRefresh = () => { EL.loaded = false; EL.ok = ""; elLoad(); };
+window.elToggle = (id) => { EL.open = EL.open === String(id) ? "" : String(id); render(); };
+window.elDevice = (off) => { try { localStorage.setItem("ll_errlog_off", off ? "1" : "0"); } catch (e) {} EL.ok = off ? "This device will not send error reports." : "This device will send error reports."; render(); };
+window.elTest = async () => {
+  if (!elReady()) return;
+  EL.seen = {}; EL.sent = 0;
+  try { const { error } = await LLC.sb.rpc("log_client_error", { p_message: "Test report from the App problems page", p_source: "errlog-test", p_stack: null, p_page: "errlog", p_version: EL.version, p_browser: elBrowser() }); EL.ok = error ? "" : "Sent. Refresh in a moment to see it."; EL.err = error ? "The test did not go through: " + error.message : ""; }
+  catch (e) { EL.err = "The test did not go through."; }
+  render();
+};
+window.elCopy = (id) => {
+  const r = EL.rows.find(x => String(x.id) === String(id)); if (!r) return;
+  const t = [r.message, "page: " + (r.page || "?"), "where: " + (r.source || "?"), "seen " + r.count + "×, last " + String(r.last_at).slice(0, 16).replace("T", " "), "version " + (r.version || "?") + ", " + (r.browser || "?"), "", r.stack || ""].join("\n");
+  try { navigator.clipboard.writeText(t); EL.ok = "Copied. Paste it to whoever is fixing the app."; } catch (e) { EL.ok = "Could not copy; select the text instead."; }
+  render();
+};
+
+function pageErrLog() {
+  if (!elReady()) return `<h1>App problems</h1><p class="sub">Errors the app has hit on your school's devices</p>
+    <div class="callout warn">This device is not connected to a school project, so nothing is collected or shown. Errors are only reported from connected devices.</div>`;
+  const admin = typeof LLC !== "undefined" && LLC.profile && LLC.profile.role === "admin";
+  if (admin && !EL.loaded) elLoad();
+  const off = elOff();
+  const rows = EL.rows.map(r => `<tr>
+      <td style="white-space:nowrap">${esc(String(r.last_at).slice(0, 16).replace("T", " "))}</td>
+      <td class="num">${r.count}</td><td>${esc(r.page || "")}</td><td>${esc(EL_ROLE[r.role] || "")}</td>
+      <td><button class="btn" style="min-height:44px;text-align:left;white-space:normal" onclick="elToggle('${r.id}')" aria-expanded="${EL.open === String(r.id)}">${esc(r.message)}</button>
+        ${EL.open === String(r.id) ? `<div style="margin-top:8px"><div class="note">${esc(r.source || "")} · ${esc(r.version || "")} · ${esc(r.browser || "")}</div>
+          <pre style="white-space:pre-wrap;font-size:12px;background:#f6f4ee;padding:10px;border-radius:8px;max-height:220px;overflow:auto">${esc(r.stack || "(no stack)")}</pre>
+          <button class="btn" style="min-height:44px" onclick="elCopy('${r.id}')">Copy for support</button></div>` : ""}</td></tr>`).join("");
+  return `<h1>App problems</h1><p class="sub">Errors the app has hit on your school's devices, last 30 days</p>
+    ${EL.ok ? `<div class="callout" role="status" style="margin-bottom:12px">${esc(EL.ok)}</div>` : ""}
+    ${EL.err ? `<div class="callout warn" role="alert" style="margin-bottom:12px">${esc(EL.err)}</div>` : ""}
+    ${admin ? `<div class="card"><div class="row"><button class="btn primary" style="min-height:44px" onclick="elRefresh()">Refresh</button>
+        <button class="btn" style="min-height:44px" onclick="elTest()">Send a test report</button></div>
+      ${EL.rows.length ? `<table style="margin-top:12px"><thead><tr><th>Last seen</th><th class="num">Times</th><th>Page</th><th>Who</th><th>What went wrong</th></tr></thead><tbody>${rows}</tbody></table>`
+        : `<p class="note" style="margin-top:12px">${EL.loaded ? "Nothing reported. That is good news." : "Loading…"}</p>`}</div>`
+      : `<div class="callout">Only an admin can read this list.</div>`}
+    <h2 class="section">What is collected</h2>
+    <div class="card"><p class="note" style="margin:0">When the app hits an error on a connected device it sends the error message, which file and line it came from, the technical trace, the name of the page, a version tag and the browser (for example "Chrome/macOS"). It does <strong>not</strong> send a name, an id, an email address, an IP address or anything typed. Emails, sign-in tokens, keys, PINs, long numbers and the part of a web address after "?" or "#" are removed first, on the device and again in the database. The same error counts up instead of repeating, and everything is deleted after 30 days. Reports from before anyone signed in are not shown here.</p>
+      <p class="note" style="margin:8px 0 0">One thing it cannot promise: an error message can sometimes quote a few characters of what was on screen. Messages are cut at 300 characters for that reason.</p>
+      <div class="row" style="margin-top:12px"><span class="note">This device is currently <strong>${off ? "not sending" : "sending"}</strong> reports.</span>
+        <button class="btn" style="min-height:44px" onclick="elDevice(${off ? "false" : "true"})">${off ? "Turn reports on" : "Turn reports off for this device"}</button></div></div>`;
+}
+
+/* ---------------- wire in ---------------- */
+if (typeof NAV === "object" && NAV.admin) {
+  const grp = NAV.admin.find(g => g[1].some(x => x[0] === "reports")) || NAV.admin[NAV.admin.length - 1];
+  if (grp && !grp[1].some(x => x[0] === "errlog")) grp[1].push(["errlog", "App problems", "🩺"]);
+}
+PAGES.errlog = pageErrLog;
+</script>
+<!-- ERRLOG-BLOCK-END -->
+<!-- CLASSREQ-BLOCK-START --><!-- ============================================================
+     CLASSREQ — a parent asks, the madrasah answers
+     ------------------------------------------------------------
+     The backend half of this is in 0005: family_request_class() raises
+     a hand, class_request_decide() is the only thing that writes an
+     enrolment for a home child. Without the two screens below neither
+     is reachable from the app, and a child added at the kitchen table
+     could never join a class.
+
+     Both screens only appear when a real project is connected. With no
+     keys there are no schools to ask.
+     ============================================================ -->
+<style>
+.creq { display:flex; align-items:center; gap:12px; padding:11px 0;
+        border-bottom:1px solid var(--line); }
+.creq:last-child { border-bottom:0; }
+.creq .who { font-weight:750; }
+.creq .when { color:var(--muted); font-size:12.5px; }
+.creq .sp { flex:1; }
+</style>
+<script>
+"use strict";
+
+/* ---------- the parent's side, on the picker ---------- */
+
+const llaBodyReq = llaBody;
+llaBody = function () {
+  if (LLA.stage === "joinclass") {
+    const kids = LLA.people.filter(p => p.role === "student");
+    if (!kids.length) return `
+      <h1>No children yet</h1>
+      <p class="lla-sub">Add a child first, then you can ask for a class place.</p>
+      <div class="lla-row"><button class="lla-small"
+        onclick="llaShow('picker')">Back</button></div>`;
+    return `
+      <p class="lla-brand">LetsLearn</p>
+      <h1>Join a class</h1>
+      <p class="lla-sub">Type the code the madrasah gave you. A teacher has to
+        say yes before your child appears on their register.</p>
+      <label class="lla-field"><span>Which child</span></label>
+      <div class="lla-people">
+        ${kids.map(p => `<button class="lla-person"
+            style="${LLA.reqKid === p.id ? "background:#f1f7f3;outline:2px solid var(--qaida-green)" : ""}"
+            onclick="LLA.reqKid='${esc(p.id)}';llaPaint()">
+            ${llaFace(p, 72)}
+            <div class="lla-name">${esc(p.name)}</div></button>`).join("")}
+      </div>
+      <label class="lla-field"><span>Class code</span>
+        <input id="llaJoinCode" placeholder="QAIDA1" autocapitalize="characters"
+               style="text-transform:uppercase;letter-spacing:.16em;font-weight:800"></label>
+      ${llaMsg()}
+      <button class="lla-btn primary" onclick="llaAskClass()">Ask the madrasah</button>
+      <div class="lla-row"><button class="lla-small"
+        onclick="llaShow('picker')">Back</button></div>`;
+  }
+
+  let html = llaBodyReq.apply(this, arguments);
+
+  /* one extra line on the picker, for a parent with a project connected */
+  if (LLA.stage === "picker" && llaCloud() && LLC.profile
+      && LLC.profile.role === "parent") {
+    html = html.replace('<button class="lla-small" onclick="llaShow(\'signin\')">',
+      '<button class="lla-small" onclick="llaShow(\'joinclass\')">Join a class at the madrasah</button>'
+      + '<button class="lla-small" onclick="llaShow(\'signin\')">');
+  }
+  return html;
+};
+
+async function llaAskClass() {
+  const code = ((document.getElementById("llaJoinCode") || {}).value || "").trim();
+  LLA.err = ""; LLA.ok = "";
+  if (!LLA.reqKid) { LLA.err = "Pick which child first."; return llaPaint(); }
+  if (!code) { LLA.err = "Type the class code."; return llaPaint(); }
+
+  const { data, error } = await LLC.sb.rpc("family_request_class",
+                                           { p_pupil: LLA.reqKid, p_code: code });
+  if (error) { LLA.err = error.message; return llaPaint(); }
+  if (!data || !data.ok) {
+    LLA.err = ({
+      no_such_class: "No class has that code. Check it with the madrasah.",
+      not_your_child: "That is not one of your children.",
+      already_in_it: "They are already in that class.",
+    })[data && data.error] || "Could not ask.";
+    return llaPaint();
+  }
+  LLA.ok = data.already_asked
+    ? "You have already asked. The madrasah has it."
+    : "Asked. A teacher will say yes or no — nothing changes until they do.";
+  llaPaint();
+}
+
+/* ---------- the teacher's side, on their dashboard ---------- */
+
+const CREQ = { rows: [], loaded: false, busy: null };
+
+async function creqLoad() {
+  if (!llaCloud() || !LLC.profile) return;
+  if (!(LLC.profile.role === "teacher" || LLC.profile.role === "admin")) return;
+  try {
+    const { data } = await LLC.sb
+      .from("class_requests")
+      .select("id, created_at, pupil_id, class_id")
+      .eq("state", "pending")
+      .order("created_at", { ascending: true });
+    const rows = data || [];
+    /* the names come separately: a teacher may read a child offered to
+       their class, but only through the narrow window in 0005 */
+    if (rows.length) {
+      const ids = rows.map(r => r.pupil_id);
+      const { data: who } = await LLC.sb.from("profiles")
+        .select("id, full_name").in("id", ids);
+      const byId = {};
+      (who || []).forEach(p => { byId[p.id] = p.full_name; });
+      rows.forEach(r => { r.name = byId[r.pupil_id] || "A child"; });
+    }
+    CREQ.rows = rows;
+  } catch (e) { CREQ.rows = []; }
+  CREQ.loaded = true;
+  if (typeof render === "function"
+      && (role === "teacher" || role === "admin")) render();
+}
+
+async function creqDecide(id, yes) {
+  CREQ.busy = id; render();
+  try {
+    await LLC.sb.rpc("class_request_decide", { p_request: id, p_approve: !!yes });
+  } catch (e) {}
+  CREQ.busy = null;
+  await creqLoad();
+}
+
+function creqCard() {
+  if (!CREQ.rows.length) return "";
+  return `<h2 class="section">Waiting for you</h2>
+    <div class="card">
+      <p class="note" style="margin:0 0 6px">Parents asking for a place in one of
+        your classes. Nothing is on your register until you say yes.</p>
+      ${CREQ.rows.map(r => `<div class="creq">
+        <span class="who">${esc(r.name)}</span>
+        <span class="when">${esc(new Date(r.created_at).toLocaleDateString("en-GB"))}</span>
+        <span class="sp"></span>
+        ${CREQ.busy === r.id
+          ? '<span class="note">…</span>'
+          : `<button class="btn" onclick="creqDecide('${esc(r.id)}',false)">No</button>
+             <button class="btn primary" onclick="creqDecide('${esc(r.id)}',true)">Add them</button>`}
+      </div>`).join("")}
+    </div>`;
+}
+
+/* PAGES.dash holds its own reference and other blocks wrap THAT, so wrap what it holds now.
+   This block used to wrap pageDash (the bare function) and then overwrite PAGES.dash with the
+   result, which threw away every wrapper added to PAGES.dash in between. */
+const pageDashCreq = PAGES.dash;
+PAGES.dash = function () {
+  const html = pageDashCreq.apply(this, arguments);
+  if (role !== "teacher" && role !== "admin") return html;
+  const extra = creqCard();
+  return extra ? html + extra : html;
+};
+pageDash = PAGES.dash;
+
+window.addEventListener("load", () => { setTimeout(creqLoad, 1400); });
+</script>
+<!-- CLASSREQ-BLOCK-END -->
+<!-- PINRESET-BLOCK-START --><!-- ============================================================
+     PINRESET — "I forgot my secret number"
+     ------------------------------------------------------------
+     On the database side (migration 0018) a child can ask, an adult who
+     is entitled to can answer, and nothing is ever revealed to anybody
+     who should not know it. This is the screens.
+
+     THE CHILD
+       On the PIN pad there is a small "I forgot my number". It asks
+       for help and shows the SAME kind words whatever happens (the
+       database gives the same answer whether or not anything was
+       recorded), so it cannot be used to find out who is in a class or
+       whether someone has already asked.
+       If a grown-up gave them a temporary number, signing in with it
+       does not sign them in: it asks them to choose their own, twice.
+       That is the only time a child sets a number, and the grown-up
+       never learns the one they keep.
+
+     THE GROWN-UP (a teacher of the class, a linked parent, a school admin)
+       A "Secret numbers" page lists who has asked, and everyone they may
+       help. They either generate a temporary number (shown ONCE, big,
+       and never again) or type one themselves. An admin also sees a log
+       of who changed whose number and how: never the number.
+
+     The block never stores, logs or sends a PIN anywhere except the one
+     call that sets it. A temporary number lives in memory until the panel
+     is closed.
+
+     It also fixes the "add a child" screen, which said "four to eight
+     digits": the pad can only type four, so a longer number could never be
+     used to sign in. It is exactly four now, and an easy one (1234, 0000,
+     4321...) is turned away with a kind word. The database is the judge;
+     the check here is only so the answer is immediate.
+     ============================================================ -->
+<style>
+  .pn-card { background:var(--card); border:1.5px solid #e6c98a; border-radius:16px; padding:14px 16px; margin:0 0 16px; }
+  .pn-card h3 { margin:0 0 6px; font-size:16px; }
+  .pn-row { display:flex; align-items:center; gap:10px; padding:9px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .pn-row:first-of-type { border-top:0; }
+  .pn-row .who { flex:1; min-width:150px; font-weight:700; }
+  .pn-row .when { font-size:12.5px; color:var(--muted); }
+  .pn-row .btn { min-height:40px; }
+  .pn-group { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:16px 0 4px; }
+  .pn-veil { position:fixed; inset:0; z-index:890; background:rgba(30,25,15,.45); display:flex; align-items:flex-start; justify-content:center; padding:18px; overflow:auto; }
+  .pn-box { background:var(--card); border-radius:20px; padding:20px 22px 22px; width:min(480px,100%); box-shadow:0 22px 56px rgba(30,20,5,.3); }
+  .pn-box h2 { margin:0 0 4px; font-size:21px; }
+  .pn-big { font-family:ui-monospace,Menlo,monospace; font-size:58px; font-weight:800; letter-spacing:.28em; text-align:center; padding:16px 0 12px 12px;
+            background:var(--bg); border:2px dashed #e0bd2e; border-radius:16px; margin:14px 0 8px; user-select:all; }
+  .pn-box .opt { display:block; width:100%; text-align:left; padding:14px 16px; margin-top:10px; border-radius:14px; border:2px solid var(--line); background:var(--card);
+                 color:inherit; font:inherit; cursor:pointer; }
+  .pn-box .opt b { display:block; font-size:16px; }
+  .pn-box .opt span { font-size:13.5px; color:var(--muted); }
+  .pn-box .opt:hover, .pn-box .opt:focus-visible { border-color:var(--qaida-green, #268f73); outline:none; }
+  .pn-box input.pin { font:inherit; font-size:26px; letter-spacing:.4em; width:9ch; text-align:center; padding:8px 10px; border-radius:12px; border:2px solid var(--line); background:var(--bg); color:inherit; }
+  .pn-err { font-size:13px; font-weight:700; color:#c9483a; margin:10px 0; }
+  .pn-ok { font-size:13px; font-weight:700; color:#2a7a55; margin:10px 0; }
+  .pn-warn { font-size:13px; background:#fdf7e7; border:1.5px solid #e0c98a; border-radius:10px; padding:8px 12px; margin:8px 0; }
+  table.pn-log { width:100%; border-collapse:collapse; font-size:13.5px; }
+  table.pn-log th, table.pn-log td { padding:7px 8px; border-bottom:1px solid var(--line); text-align:left; }
+  table.pn-log th { font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+</style>
+<script>
+"use strict";
+
+const PNR = { loaded: false, busy: false, err: "", ok: "", pending: [], pupils: [], classes: [], enrol: [], audit: [], names: {}, panel: null, last: 0 };
+const PN_NEW = { p: null, old: "", step: 1, first: "", cur: "", busy: false };     // a child choosing a new number: memory only
+
+function pnLive() { try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; } }
+const pnRole = () => (pnLive() ? LLC.profile.role : null);
+const pnAdult = () => ["teacher", "admin", "parent"].indexOf(pnRole()) >= 0;
+
+/* The same rule as the database (ll_pin_trivial), so the answer is instant.
+   The database is the one that decides. */
+function pnTrivial(p) {
+  if (!/^[0-9]{4}$/.test(p)) return false;
+  const d = p.split("").map(Number), df = (i) => (d[i + 1] - d[i] + 10) % 10;
+  if (d[0] === d[1] && d[1] === d[2] && d[2] === d[3]) return true;
+  if (df(0) === 1 && df(1) === 1 && df(2) === 1) return true;
+  if (df(0) === 9 && df(1) === 9 && df(2) === 9) return true;
+  if (d[0] === d[2] && d[1] === d[3]) return true;
+  if (d[0] === d[1] && d[2] === d[3]) return true;
+  return ["2580", "0852", "1357", "2468", "1379", "1478", "3698", "1590", "6969", "1004", "5683", "4200"].indexOf(p) >= 0;
+}
+const PN_EASY = "That one is too easy to guess. Try a different one.";
+
+/* ============================================================
+   The child
+   ============================================================ */
+
+function pnPad() {
+  const dots = [0, 1, 2, 3].map(i => `<i class="${i < PN_NEW.cur.length ? "on" : ""}"></i>`).join("");
+  const keys = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button onclick="pnKey('${n}')">${n}</button>`).join("");
+  return `<div class="lla-dots">${dots}</div>${llaMsg()}
+    <div class="lla-pad">${keys}<button class="ghost" onclick="pnCancel()">Back</button><button onclick="pnKey('0')">0</button><button class="ghost" onclick="pnKey('del')">⌫</button></div>`;
+}
+
+function pnBody(S) {
+  const p = LLA.target || {};
+  if (S === "pinhelp") return `
+    ${llaFace(p, 84)}
+    <h1>Forgot your secret number?</h1>
+    <p class="lla-sub">That is okay. We can ask a grown-up to help.</p>
+    <button class="lla-btn primary" onclick="pnAsk()">Ask for help</button>
+    <div class="lla-row"><button class="lla-small" onclick="llaShow('pin')">Back</button></div>`;
+  if (S === "pinhelpdone") return `
+    ${llaFace(p, 84)}
+    <h1>All done</h1>
+    <p class="lla-sub">Ask your teacher or a grown-up. We have told them.</p>
+    <button class="lla-btn primary" onclick="LLA.pin='';llaShow('picker')">OK</button>`;
+  if (S === "pinnew") {
+    const np = PN_NEW.p || {};
+    return `
+      ${llaFace(np, 84)}
+      <h1>Welcome back, ${esc((np.name || "").split(" ")[0])}!</h1>
+      <p class="lla-sub">${PN_NEW.step === 1 ? "Choose a new secret number that only you know." : "Type it once more to check."}</p>
+      ${pnPad()}`;
+  }
+  return null;
+}
+
+window.pnForgot = function () { LLA.err = ""; LLA.ok = ""; llaShow("pinhelp"); };
+
+window.pnAsk = async function () {
+  const p = LLA.target; if (!p) return;
+  try {
+    if (llaCloud()) {
+      if (!LLC.session) {
+        const { data } = await LLC.sb.auth.signInAnonymously();
+        if (data) LLC.session = data.session;
+      }
+      await LLC.sb.rpc("pin_reset_request", { p_pupil: p.id, p_code: p.code || null });
+    }
+  } catch (e) { /* the same kind words either way: nothing here may say whether it worked */ }
+  llaShow("pinhelpdone");
+};
+
+/* claiming, now understanding a temporary number. Mirrors the two originals in AUTH/CLOUD. */
+async function pnClaim(p, pin) {
+  if (!LLC.session) {
+    const { data, error } = await LLC.sb.auth.signInAnonymously();
+    if (error) return { msg: "Could not start a session: " + error.message };
+    LLC.session = data.session;
+  }
+  const code = p.code || null;
+  const { data, error } = code ? await LLC.sb.rpc("claim_pupil", { p_code: code, p_pupil: p.id, p_pin: String(pin) })
+                               : await LLC.sb.rpc("claim_child", { p_pupil: p.id, p_pin: String(pin) });
+  if (error) return { msg: error.message };
+  if (data && data.error === "must_change") return { mustChange: true };
+  if (!data || !data.ok) {
+    return { msg: ({
+      wrong_pin: code ? "That PIN is not right. Try again." : "That is not the right number. Have another go.",
+      not_in_class: "That name is not in this class.", not_a_family_child: "Use your class code for this one.",
+      locked: "Too many tries. Ask a grown-up, or wait fifteen minutes.",
+      expired: "That number has run out. Ask a grown-up for a new one.",
+      no_session: "Could not start a session.",
+    })[data && data.error] || "Could not sign in." };
+  }
+  await llcLoadProfile();
+  llcSetStatus("online", (LLC.profile && LLC.profile.full_name) || data.full_name);
+  if (typeof llcPull === "function") await llcPull();
+  return { ok: true };
+}
+
+/* replaces AUTH's llaPinTry: same offline behaviour, and a temporary number leads to choosing a new one */
+llaPinTry = async function () {
+  const p = LLA.target;
+  if (!p) return;
+  if (!p.cloud) {
+    if (String(p.pin || "") !== LLA.pin) { LLA.pin = ""; LLA.err = "That is not the right number. Have another go."; return llaPaint(); }
+    return llaEnter(p);
+  }
+  const r = await pnClaim(p, LLA.pin);
+  if (r.mustChange) {
+    Object.assign(PN_NEW, { p, old: LLA.pin, step: 1, first: "", cur: "", busy: false });
+    LLA.pin = ""; LLA.err = "";
+    return llaShow("pinnew");
+  }
+  if (r.msg) { LLA.pin = ""; LLA.err = r.msg; return llaPaint(); }
+  llaEnter(p);
+};
+
+window.pnCancel = function () { Object.assign(PN_NEW, { p: null, old: "", first: "", cur: "" }); LLA.pin = ""; llaShow("picker"); };
+
+window.pnKey = async function (k) {
+  if (PN_NEW.busy) return;
+  if (k === "del") { PN_NEW.cur = PN_NEW.cur.slice(0, -1); LLA.err = ""; return llaPaint(); }
+  if (PN_NEW.cur.length >= 4) return;
+  PN_NEW.cur += k; LLA.err = ""; llaPaint();
+  if (PN_NEW.cur.length < 4) return;
+  await new Promise(r => setTimeout(r, 140));
+  if (PN_NEW.step === 1) {
+    if (pnTrivial(PN_NEW.cur)) { PN_NEW.cur = ""; LLA.err = PN_EASY; return llaPaint(); }
+    if (PN_NEW.cur === PN_NEW.old) { PN_NEW.cur = ""; LLA.err = "Choose a different number from the one you were given."; return llaPaint(); }
+    PN_NEW.first = PN_NEW.cur; PN_NEW.cur = ""; PN_NEW.step = 2; return llaPaint();
+  }
+  if (PN_NEW.cur !== PN_NEW.first) { Object.assign(PN_NEW, { first: "", cur: "", step: 1 }); LLA.err = "They did not match. Let us try again."; return llaPaint(); }
+  PN_NEW.busy = true;
+  try {
+    const p = PN_NEW.p;
+    const { data, error } = await LLC.sb.rpc("pin_choose_new", { p_pupil: p.id, p_code: p.code || null, p_old_pin: PN_NEW.old, p_new_pin: PN_NEW.cur });
+    PN_NEW.busy = false;
+    if (error) { Object.assign(PN_NEW, { first: "", cur: "", step: 1 }); LLA.err = "Something went wrong. Try again."; return llaPaint(); }
+    if (!data || !data.ok) {
+      const e = data && data.error;
+      if (e === "trivial_pin") { Object.assign(PN_NEW, { first: "", cur: "", step: 1 }); LLA.err = PN_EASY; return llaPaint(); }
+      if (e === "same_pin") { Object.assign(PN_NEW, { first: "", cur: "", step: 1 }); LLA.err = "Choose a different number from the one you were given."; return llaPaint(); }
+      const msg = e === "expired" ? "That number has run out. Ask a grown-up for a new one."
+                : e === "locked" ? "Too many tries. Ask a grown-up, or wait fifteen minutes."
+                : "That did not work. Ask a grown-up.";
+      Object.assign(PN_NEW, { p: null, old: "", first: "", cur: "" });
+      llaShow("picker"); LLA.err = msg; return llaPaint();
+    }
+    await llcLoadProfile();
+    llcSetStatus("online", (LLC.profile && LLC.profile.full_name) || data.full_name);
+    if (typeof llcPull === "function") await llcPull();
+    Object.assign(PN_NEW, { old: "", first: "", cur: "" });        // forget it
+    llaEnter(p);
+  } catch (e) {
+    PN_NEW.busy = false; LLA.err = "Something went wrong. Try again."; llaPaint();
+  }
+};
+
+/* the gate: the new stages, the forgot link, and the four-digit add-a-child */
+const llaBodyPn = llaBody;
+llaBody = function () {
+  const mine = pnBody(LLA.stage);
+  if (mine != null) return mine;
+  let html = llaBodyPn.apply(this, arguments);
+  if (LLA.stage === "pin" && LLA.target && LLA.target.cloud) {
+    html = html.replace(/(<button class="ghost" onclick="llaPinKey\('del'\)">⌫<\/button>\s*<\/div>)/,
+      '$1<div class="lla-row"><button class="lla-small" onclick="pnForgot()">I forgot my number</button></div>');
+  }
+  if (LLA.stage === "addchild") {
+    html = html.replace('maxlength="8"', 'maxlength="4"').replace("A four-digit PIN", "A four-digit secret number");
+  }
+  return html;
+};
+
+/* "add a child" now insists on exactly four digits and turns away an easy one, kindly */
+const llaAddChildPn = llaAddChild;
+llaAddChild = async function () {
+  const d = LLA.draft || {}, pin = String(d.pin || "").trim();
+  if (pin && !/^[0-9]{4}$/.test(pin)) { LLA.err = "The secret number is exactly four digits."; return llaPaint(); }
+  if (pnTrivial(pin)) { LLA.err = PN_EASY; return llaPaint(); }
+  return llaAddChildPn.apply(this, arguments);
+};
+
+/* ============================================================
+   The grown-up
+   ============================================================ */
+
+async function pnAll(make) {
+  let out = [], from = 0;
+  for (let i = 0; i < 25; i++) {
+    const { data, error } = await make().range(from, from + 999);
+    if (error) throw error;
+    out = out.concat(data || []);
+    if (!data || data.length < 1000) return out;
+    from += 1000;
+  }
+  return out;
+}
+
+async function pnPull() {
+  if (!pnLive() || !pnAdult()) return false;
+  PNR.err = "";
+  try {
+    const sb = LLC.sb, r = LLC.profile.role;
+    const pend = await sb.rpc("pin_reset_pending");
+    if (pend.error) throw pend.error;
+    PNR.pending = pend.data || [];
+    PNR.pupils = await pnAll(() => sb.from("profiles").select("id, full_name").eq("role", "student").order("full_name"));
+    const cls = await sb.from("classes").select("id, name").order("name"); PNR.classes = cls.data || [];
+    PNR.enrol = await pnAll(() => sb.from("enrolments").select("class_id, pupil_id"));
+    if (r === "admin") {
+      const st = await sb.from("profiles").select("id, full_name").in("role", ["teacher", "admin"]); (st.data || []).forEach(x => { PNR.names[x.id] = x.full_name; });
+      const since = new Date(Date.now() - 30 * 864e5).toISOString();
+      const a = await sb.from("pin_reset_audit").select("id, at, pupil_id, actor_id, actor_role, method, sessions_cleared").gte("at", since).order("at", { ascending: false }).limit(100);
+      PNR.audit = a.data || [];
+    }
+    PNR.loaded = true; PNR.last = Date.now();
+    return true;
+  } catch (e) {
+    /* A failure must not read as "not loaded yet": the dashboard asks again whenever it paints and not-loaded
+       means "ask now", so a failing request became an endless retry loop that froze the page and hammered
+       the database. Count it as an attempt; it is tried again after 30 seconds, no sooner. */
+    PNR.err = (e && e.message) || "could not read the requests"; PNR.loaded = true; PNR.last = Date.now(); return false;
+  }
+}
+if (typeof llcPull === "function") {
+  const llcPullPn = llcPull;
+  llcPull = async function () {
+    const out = await llcPullPn.apply(this, arguments);
+    try { if (pnLive() && pnAdult()) { await pnPull(); if (typeof render === "function") render(); } } catch (e) {}
+    return out;
+  };
+}
+
+const pnName = (id) => (PNR.pupils.find(p => p.id === id) || {}).full_name || PNR.names[id] || "Somebody";
+const pnWhen = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); };
+
+window.pnOpen = function (pupil) { PNR.panel = { pupil, name: pnName(pupil), mode: "", temp: null, typed: "" }; PNR.err = ""; PNR.ok = ""; render(); };
+window.pnClose = function () { PNR.panel = null; PNR.err = ""; render(); pnPull().then(render); };   // the temporary number leaves memory here
+
+window.pnTemp = async function () {
+  const P = PNR.panel; if (!P || PNR.busy) return;
+  PNR.busy = true; PNR.err = ""; render();
+  try {
+    const { data, error } = await LLC.sb.rpc("pin_reset_temp", { p_pupil: P.pupil });
+    if (error) throw error;
+    if (!data || !data.ok) PNR.err = data && data.error === "not_allowed" ? "You cannot do that for this child." : "That did not work. Try again.";
+    else { P.temp = { pin: data.temp_pin, cleared: data.sessions_cleared }; P.mode = "temp"; }
+  } catch (e) { PNR.err = (e && e.message) || "That did not work."; }
+  PNR.busy = false; render();
+};
+
+window.pnTypeSave = async function () {
+  const P = PNR.panel; if (!P || PNR.busy) return;
+  const pin = String(P.typed || "").trim();
+  PNR.err = "";
+  if (!/^[0-9]{4}$/.test(pin)) { PNR.err = "Use four digits."; return render(); }
+  if (pnTrivial(pin)) { PNR.err = "That one is too easy to guess. Try another."; return render(); }
+  PNR.busy = true; render();
+  try {
+    const { data, error } = await LLC.sb.rpc("pin_reset_set", { p_pupil: P.pupil, p_pin: pin });
+    if (error) throw error;
+    if (!data || !data.ok) PNR.err = ({ not_allowed: "You cannot do that for this child.", bad_pin: "Use four digits.", trivial_pin: "That one is too easy to guess. Try another." })[data && data.error] || "That did not work.";
+    else { P.mode = "typed-done"; P.typed = ""; }
+  } catch (e) { PNR.err = (e && e.message) || "That did not work."; }
+  PNR.busy = false; render();
+};
+
+window.pnDismiss = async function (id) {
+  if (PNR.busy) return;
+  PNR.busy = true; render();
+  try { await LLC.sb.rpc("pin_reset_dismiss", { p_request: id }); await pnPull(); } catch (e) {}
+  PNR.busy = false; render();
+};
+
+function pnPanel() {
+  const P = PNR.panel; if (!P) return "";
+  const first = esc(P.name.split(" ")[0] || P.name);
+  let inner;
+  if (P.mode === "temp" && P.temp) {
+    inner = `<h2>Tell ${first} this number now</h2>
+      <div class="pn-big" role="status" aria-label="The temporary number is ${esc(P.temp.pin.split("").join(" "))}">${esc(P.temp.pin)}</div>
+      <p class="note" style="margin:0 0 6px"><strong>We will not show it again.</strong> ${first} will choose their own number when they sign in. This one works for 7 days.</p>
+      <p class="note" style="margin:0">${first}'s old number no longer works and ${first} is signed out of any other device.</p>
+      <div class="row" style="margin-top:14px"><button class="btn primary" onclick="pnClose()">Done</button></div>`;
+  } else if (P.mode === "typed-done") {
+    inner = `<h2>Done</h2><p style="margin:6px 0 0">${first}'s new number is set. The old one no longer works, and ${first} is signed out of any other device.</p>
+      <p class="note">Tell ${first} the number yourself. We cannot show it again.</p>
+      <div class="row" style="margin-top:14px"><button class="btn primary" onclick="pnClose()">Done</button></div>`;
+  } else if (P.mode === "typed") {
+    inner = `<h2>Type a number for ${first}</h2>
+      <p class="note" style="margin:0 0 10px">Four digits, and not an easy one like 1234 or 0000.</p>
+      <label for="pnTyped" class="note">New number</label><br>
+      <input id="pnTyped" class="pin" inputmode="numeric" maxlength="4" autocomplete="off" value="${esc(P.typed)}" oninput="PNR.panel.typed=this.value.replace(/\\D/g,'')">
+      ${PNR.err ? `<p class="pn-err" role="alert">${esc(PNR.err)}</p>` : ""}
+      <div class="row" style="margin-top:14px;gap:8px"><button class="btn primary" onclick="pnTypeSave()" ${PNR.busy ? "disabled" : ""}>Set it</button><button class="btn" onclick="PNR.panel.mode='';PNR.err='';render()">Back</button></div>`;
+  } else {
+    inner = `<h2>A new secret number for ${first}</h2>
+      <p class="note" style="margin:0">${first}'s old number stops working at once.</p>
+      ${PNR.err ? `<p class="pn-err" role="alert">${esc(PNR.err)}</p>` : ""}
+      <button class="opt" onclick="pnTemp()" ${PNR.busy ? "disabled" : ""}><b>Make a temporary one (recommended)</b><span>You tell ${first} a number. They choose their own the first time they sign in, so nobody else ever knows it.</span></button>
+      <button class="opt" onclick="PNR.panel.mode='typed';PNR.err='';render()"><b>Type one myself</b><span>You choose the number and tell ${first}. They keep it until you change it.</span></button>
+      <div class="row" style="margin-top:14px"><button class="btn" onclick="pnClose()">Cancel</button></div>`;
+  }
+  return `<div class="pn-veil" onclick="if(event.target===this && !PNR.panel.temp)pnClose()"><div class="pn-box" role="dialog" aria-modal="true">${inner}</div></div>`;
+}
+
+const PN_HOW = { typed: "Typed by an adult", temporary: "Temporary number", child_chose_new: "Chose their own", dismissed: "Not needed" };
+
+function pnRequests() {
+  if (!PNR.pending.length) return "";
+  return `<div class="pn-card" role="region" aria-label="Secret number requests"><h3>🔑 ${PNR.pending.length} ${PNR.pending.length === 1 ? "child has" : "children have"} asked for a new secret number</h3>` +
+    PNR.pending.map(r => `<div class="pn-row"><span class="who">${esc(r.full_name)}<div class="when">${esc((r.class_names || []).join(", "))} · asked ${esc(pnWhen(r.requested_at))}</div></span>
+      <button class="btn primary" onclick="pnOpen('${esc(r.pupil_id)}')">New number</button>
+      <button class="btn" onclick="pnDismiss('${esc(r.request_id)}')">Not needed</button></div>`).join("") + "</div>";
+}
+
+function pagePinReset() {
+  if (!pnLive()) return `<h1>Secret numbers</h1><p class="sub">Help a child who forgot theirs</p><div class="callout">This needs a school connected, and you signed in.</div>`;
+  if (!pnAdult()) return pageSimple("Secret numbers", "Grown-ups only", "A child who forgets their secret number asks a teacher or a grown-up at home.");
+  if (!PNR.loaded) return "<h1>Secret numbers</h1><p class=\"sub\">Loading…</p>" + (PNR.err ? `<p class="pn-err">${esc(PNR.err)}</p>` : "");
+  const role6 = pnRole();
+  const byClass = {};
+  PNR.pupils.forEach(p => {
+    const cs = PNR.enrol.filter(e => e.pupil_id === p.id).map(e => (PNR.classes.find(c => c.id === e.class_id) || {}).name || "Not in a class");
+    (cs.length ? cs : ["Not in a class"]).forEach(c => (byClass[c] = byClass[c] || []).push(p));
+  });
+  const groups = Object.keys(byClass).sort().map(c => `<div class="pn-group">${role6 === "parent" ? "" : esc(c)}</div><div class="card" style="padding:4px 16px">` +
+    byClass[c].map(p => `<div class="pn-row"><span class="who">${esc(p.full_name)}</span><button class="btn" onclick="pnOpen('${esc(p.id)}')">New number</button></div>`).join("") + "</div>").join("");
+  const log = role6 === "admin" ? `<h2 class="section">Changes in the last 30 days</h2><div class="card" style="overflow:auto">${PNR.audit.length ?
+    `<table class="pn-log"><thead><tr><th>When</th><th>Child</th><th>By</th><th>How</th></tr></thead><tbody>` +
+    PNR.audit.map(a => `<tr><td>${esc(pnWhen(a.at))}</td><td>${esc(pnName(a.pupil_id))}</td><td>${esc(a.actor_id === a.pupil_id ? "the child" : (PNR.names[a.actor_id] || a.actor_role))}</td><td>${esc(PN_HOW[a.method] || a.method)}${a.sessions_cleared === false ? ' <span class="note">(other devices may stay signed in for up to an hour)</span>' : ""}</td></tr>`).join("") + "</tbody></table>"
+    : '<p class="note" style="margin:8px 0">Nothing yet.</p>'}<p class="note" style="margin:8px 0 4px">This log never holds a number, and cannot be edited.</p></div>` : "";
+  return `<h1>Secret numbers</h1><p class="sub">Help a child who forgot theirs</p>` +
+    (PNR.err ? `<p class="pn-err" role="alert">${esc(PNR.err)}</p>` : "") + pnRequests() +
+    (PNR.pending.length ? "" : '<div class="callout">Nobody is waiting. A child who forgets their number taps <strong>I forgot my number</strong> on the sign-in screen, and it appears here.</div>') +
+    `<h2 class="section">${role6 === "parent" ? "Your children" : "Everyone you can help"}</h2>` + (groups || '<div class="callout">Nobody to show yet.</div>') + log + pnPanel();
+}
+
+/* a card on the dashboard when somebody is waiting */
+const pageDashPn = PAGES.dash;
+PAGES.dash = function () {
+  let html = pageDashPn.apply(this, arguments);
+  if (pnLive() && pnAdult()) {
+    if (!PNR.loaded || Date.now() - PNR.last > 30000) pnPull().then(() => { if (PNR.pending.length || !PNR.loaded) render(); });
+    const card = pnRequests();
+    if (card) html = html.replace("</h1>", "</h1>" + card);   // under the page title
+  }
+  return html;
+};
+if (typeof pageDash !== "undefined") { /* PAGES.dash holds its own reference, so only it is wrapped */ }
+
+/* ---------- on the menu ---------- */
+if (typeof NAV === "object") {
+  const add = (r, g) => { const grp = NAV[r] && NAV[r][g] && NAV[r][g][1]; if (grp && !grp.some(x => x[0] === "pinreset")) grp.push(["pinreset", "Secret numbers", "🔑"]); };
+  add("teacher", 1); add("admin", 0); add("parent", 0);
+}
+if (typeof PAGES === "object") PAGES.pinreset = pagePinReset;
+if (pnLive() && pnAdult() && !PNR.loaded) pnPull().then(() => render(), () => {});
+</script>
+<!-- PINRESET-BLOCK-END -->
 </body>
 </html>

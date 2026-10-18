@@ -147,14 +147,17 @@ function creqCard() {
     </div>`;
 }
 
-const pageDashCreq = pageDash;
-pageDash = function () {
+/* PAGES.dash holds its own reference and other blocks wrap THAT, so wrap what it holds now.
+   This block used to wrap pageDash (the bare function) and then overwrite PAGES.dash with the
+   result, which threw away every wrapper added to PAGES.dash in between. */
+const pageDashCreq = PAGES.dash;
+PAGES.dash = function () {
   const html = pageDashCreq.apply(this, arguments);
   if (role !== "teacher" && role !== "admin") return html;
   const extra = creqCard();
   return extra ? html + extra : html;
 };
-if (typeof PAGES !== "undefined" && PAGES.dash) PAGES.dash = pageDash;
+pageDash = PAGES.dash;
 
 window.addEventListener("load", () => { setTimeout(creqLoad, 1400); });
 </script>

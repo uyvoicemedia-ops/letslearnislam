@@ -1,0 +1,167 @@
+<!-- ============================================================
+     ERRLOG — find out when the app breaks, without collecting children
+     ------------------------------------------------------------
+     A JavaScript error on a child's tablet used to vanish into a console
+     nobody opens. This sends a SCRUBBED, minimal report of each one to the
+     school's own database (migration 0020), and gives an admin an "App
+     problems" page to read them.
+
+     What it sends, and nothing else: the error message, where it came from
+     (file:line:column), the stack, the current page's name, a version tag
+     and a coarse browser name such as "Chrome/macOS". Never who you are:
+     no name, no id, no email, no address, no cookies. It strips emails,
+     sign-in tokens, API keys, name=value secrets, URL queries and
+     fragments, UUIDs and four-or-more-digit numbers BEFORE sending, and the
+     database does it again on arrival.
+
+     It is polite about volume: the same error is sent once per ten minutes,
+     and at most fifteen reports leave one page load. If the report itself
+     fails, that failure is ignored: a broken log must never break the app
+     or loop.
+
+     Only when a school project is connected. In the offline demo nothing is
+     sent anywhere. A device can switch it off for itself (Settings on the
+     "App problems" page). Child data that happens to be inside an error
+     message (a JSON parse error quoting text, say) is the one thing this
+     cannot fully rule out, which is why messages are cut at 300 characters
+     and why the page says so.
+     ============================================================ -->
+<script>
+"use strict";
+
+const EL = {
+  version: "web-1",
+  sent: 0, maxPerLoad: 15, seen: {}, repeatMs: 10 * 60 * 1000, busy: false,
+  rows: [], loaded: false, err: "", ok: "", open: "",
+};
+
+const elOff = () => { try { return localStorage.getItem("ll_errlog_off") === "1"; } catch (e) { return false; } };
+/* LLC is a top-level const, so it is not on window */
+const elReady = () => { try { return typeof LLC !== "undefined" && !!(LLC.sb && typeof LLC.sb.rpc === "function"); } catch (e) { return false; } };
+
+/* the same rules as the database's ll_scrub(). No look-behind: older Safari would refuse the whole block. */
+function elScrub(p, max) {
+  let t = String(p == null ? "" : p);
+  t = t.replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, "<token>");
+  t = t.replace(/sb_(?:publishable|secret)_[A-Za-z0-9_-]{6,}|sbp_[A-Za-z0-9]{16,}/g, "<key>");
+  t = t.replace(/(bearer)\s+[A-Za-z0-9._~+\/=-]+/gi, "$1 <redacted>");
+  t = t.replace(/(access_token|refresh_token|id_token|apikey|api_key|token|password|passwd|pwd|pin|secret|authorization)(["' ]*[:=]["' ]*)[^\s&"',;)]+/gi, "$1$2<redacted>");
+  t = t.replace(/((?:https?:\/\/|file:\/\/)[^\s"'?#)]*)[?#][^\s"')]*/g, "$1?<redacted>");
+  t = t.replace(/([A-Za-z0-9_.\/-]+\.(?:html|js))[?#][^\s"')]*/g, "$1?<redacted>");
+  t = t.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "<email>");
+  t = t.replace(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g, "<id>");
+  t = t.replace(/(^|[^:0-9])[0-9]{4,}/g, "$1<n>");
+  t = t.replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ").replace(/[ \t]+/g, " ").trim();
+  return t.slice(0, max);
+}
+
+function elBrowser() {
+  const u = navigator.userAgent || "", b = /Edg\//.test(u) ? "Edge" : /Chrome\//.test(u) ? "Chrome" : /Firefox\//.test(u) ? "Firefox" : /Safari\//.test(u) ? "Safari" : "Other";
+  const o = /iPhone|iPad|iPod/.test(u) ? "iOS" : /Android/.test(u) ? "Android" : /Mac OS X/.test(u) ? "macOS" : /Windows/.test(u) ? "Windows" : /Linux/.test(u) ? "Linux" : "Other";
+  return b + "/" + o;
+}
+const elPage = () => { try { return String(typeof page === "string" ? page : ""); } catch (e) { return ""; } };
+
+/* things that are not our bugs */
+function elIgnore(msg, file) {
+  const m = String(msg || "");
+  if (!m || /^script error\.?$/i.test(m)) return true;                       // a cross-origin error with nothing in it
+  if (/ResizeObserver loop/i.test(m)) return true;                           // harmless, browser-made
+  if (/extension:\/\//i.test(String(file || "")) || /extension:\/\//i.test(m)) return true;
+  return false;
+}
+
+async function elSend(r) {
+  if (EL.busy || EL.sent >= EL.maxPerLoad) return;
+  EL.busy = true; EL.sent++;
+  try { await LLC.sb.rpc("log_client_error", r); } catch (e) { /* a broken log must never break anything */ }
+  EL.busy = false;
+}
+
+function elReport(message, source, stack) {
+  try {
+    if (elOff() || !elReady()) return;
+    const msg = elScrub(String(message == null ? "" : message).replace(/^Uncaught /, ""), 300);   // the browser adds "Uncaught "; drop it so repeats match
+    if (!msg || elIgnore(msg, source)) return;
+    const src = elScrub(source, 80), key = msg + "|" + src, now = Date.now();
+    if (EL.seen[key] && now - EL.seen[key] < EL.repeatMs) return;
+    EL.seen[key] = now;
+    elSend({ p_message: msg, p_source: src, p_stack: elScrub(stack, 1200), p_page: elPage(), p_version: EL.version, p_browser: elBrowser() });
+  } catch (e) { /* never */ }
+}
+
+window.addEventListener("error", (e) => {
+  if (e && e.target && e.target !== window) return;                          // a picture or script that failed to load, not code
+  if (elIgnore(e.message, e.filename)) return;                              // judged on the full address, before it is shortened
+  const file = (e.filename || "").split("/").pop();
+  elReport(e.message, file ? file + ":" + (e.lineno || 0) + ":" + (e.colno || 0) : "", e.error && e.error.stack);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e && e.reason;
+  elReport("Unhandled promise: " + ((r && r.message) || String(r)), "promise", r && r.stack);
+});
+
+/* ---------------- the admin's page ---------------- */
+const EL_ROLE = { admin: "admin", teacher: "teacher", parent: "parent", student: "pupil" };
+async function elLoad() {
+  if (!elReady() || EL.busy) return;
+  try {
+    const { data, error } = await LLC.sb.from("client_errors").select("id, last_at, count, page, message, source, stack, role, version, browser")
+      .order("last_at", { ascending: false }).limit(100);
+    if (error) throw error;
+    EL.rows = data || []; EL.err = "";
+  } catch (e) { EL.err = "Could not load the list: " + ((e && e.message) || "try again"); }
+  EL.loaded = true; render();
+}
+window.elRefresh = () => { EL.loaded = false; EL.ok = ""; elLoad(); };
+window.elToggle = (id) => { EL.open = EL.open === String(id) ? "" : String(id); render(); };
+window.elDevice = (off) => { try { localStorage.setItem("ll_errlog_off", off ? "1" : "0"); } catch (e) {} EL.ok = off ? "This device will not send error reports." : "This device will send error reports."; render(); };
+window.elTest = async () => {
+  if (!elReady()) return;
+  EL.seen = {}; EL.sent = 0;
+  try { const { error } = await LLC.sb.rpc("log_client_error", { p_message: "Test report from the App problems page", p_source: "errlog-test", p_stack: null, p_page: "errlog", p_version: EL.version, p_browser: elBrowser() }); EL.ok = error ? "" : "Sent. Refresh in a moment to see it."; EL.err = error ? "The test did not go through: " + error.message : ""; }
+  catch (e) { EL.err = "The test did not go through."; }
+  render();
+};
+window.elCopy = (id) => {
+  const r = EL.rows.find(x => String(x.id) === String(id)); if (!r) return;
+  const t = [r.message, "page: " + (r.page || "?"), "where: " + (r.source || "?"), "seen " + r.count + "×, last " + String(r.last_at).slice(0, 16).replace("T", " "), "version " + (r.version || "?") + ", " + (r.browser || "?"), "", r.stack || ""].join("\n");
+  try { navigator.clipboard.writeText(t); EL.ok = "Copied. Paste it to whoever is fixing the app."; } catch (e) { EL.ok = "Could not copy; select the text instead."; }
+  render();
+};
+
+function pageErrLog() {
+  if (!elReady()) return `<h1>App problems</h1><p class="sub">Errors the app has hit on your school's devices</p>
+    <div class="callout warn">This device is not connected to a school project, so nothing is collected or shown. Errors are only reported from connected devices.</div>`;
+  const admin = typeof LLC !== "undefined" && LLC.profile && LLC.profile.role === "admin";
+  if (admin && !EL.loaded) elLoad();
+  const off = elOff();
+  const rows = EL.rows.map(r => `<tr>
+      <td style="white-space:nowrap">${esc(String(r.last_at).slice(0, 16).replace("T", " "))}</td>
+      <td class="num">${r.count}</td><td>${esc(r.page || "")}</td><td>${esc(EL_ROLE[r.role] || "")}</td>
+      <td><button class="btn" style="min-height:44px;text-align:left;white-space:normal" onclick="elToggle('${r.id}')" aria-expanded="${EL.open === String(r.id)}">${esc(r.message)}</button>
+        ${EL.open === String(r.id) ? `<div style="margin-top:8px"><div class="note">${esc(r.source || "")} · ${esc(r.version || "")} · ${esc(r.browser || "")}</div>
+          <pre style="white-space:pre-wrap;font-size:12px;background:#f6f4ee;padding:10px;border-radius:8px;max-height:220px;overflow:auto">${esc(r.stack || "(no stack)")}</pre>
+          <button class="btn" style="min-height:44px" onclick="elCopy('${r.id}')">Copy for support</button></div>` : ""}</td></tr>`).join("");
+  return `<h1>App problems</h1><p class="sub">Errors the app has hit on your school's devices, last 30 days</p>
+    ${EL.ok ? `<div class="callout" role="status" style="margin-bottom:12px">${esc(EL.ok)}</div>` : ""}
+    ${EL.err ? `<div class="callout warn" role="alert" style="margin-bottom:12px">${esc(EL.err)}</div>` : ""}
+    ${admin ? `<div class="card"><div class="row"><button class="btn primary" style="min-height:44px" onclick="elRefresh()">Refresh</button>
+        <button class="btn" style="min-height:44px" onclick="elTest()">Send a test report</button></div>
+      ${EL.rows.length ? `<table style="margin-top:12px"><thead><tr><th>Last seen</th><th class="num">Times</th><th>Page</th><th>Who</th><th>What went wrong</th></tr></thead><tbody>${rows}</tbody></table>`
+        : `<p class="note" style="margin-top:12px">${EL.loaded ? "Nothing reported. That is good news." : "Loading…"}</p>`}</div>`
+      : `<div class="callout">Only an admin can read this list.</div>`}
+    <h2 class="section">What is collected</h2>
+    <div class="card"><p class="note" style="margin:0">When the app hits an error on a connected device it sends the error message, which file and line it came from, the technical trace, the name of the page, a version tag and the browser (for example "Chrome/macOS"). It does <strong>not</strong> send a name, an id, an email address, an IP address or anything typed. Emails, sign-in tokens, keys, PINs, long numbers and the part of a web address after "?" or "#" are removed first, on the device and again in the database. The same error counts up instead of repeating, and everything is deleted after 30 days. Reports from before anyone signed in are not shown here.</p>
+      <p class="note" style="margin:8px 0 0">One thing it cannot promise: an error message can sometimes quote a few characters of what was on screen. Messages are cut at 300 characters for that reason.</p>
+      <div class="row" style="margin-top:12px"><span class="note">This device is currently <strong>${off ? "not sending" : "sending"}</strong> reports.</span>
+        <button class="btn" style="min-height:44px" onclick="elDevice(${off ? "false" : "true"})">${off ? "Turn reports on" : "Turn reports off for this device"}</button></div></div>`;
+}
+
+/* ---------------- wire in ---------------- */
+if (typeof NAV === "object" && NAV.admin) {
+  const grp = NAV.admin.find(g => g[1].some(x => x[0] === "reports")) || NAV.admin[NAV.admin.length - 1];
+  if (grp && !grp[1].some(x => x[0] === "errlog")) grp[1].push(["errlog", "App problems", "🩺"]);
+}
+PAGES.errlog = pageErrLog;
+</script>

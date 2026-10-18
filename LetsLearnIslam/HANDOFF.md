@@ -43,7 +43,7 @@ Working and verified locally:
 - the live Kahoot-style quiz — room code, LAN relay, server-side scoring, podium
 - the solo practice quiz, now on the same coloured tiles as the live one
 - a sign-in gate with a child PIN flow
-- Supabase schema: 18 migrations, 601 RLS assertions green against Postgres in Docker
+- Supabase schema: 20 migrations, 695 RLS assertions green against Postgres in Docker
   (0009 class sessions, 0010 timetable/classes, 0011 test student, 0012 teacher hours, 0013 reports, 0014 pupil books, 0015 homework and 0016 profiles lockdown and 0017 cross-school and 0018 PIN reset are written and tested but NOT yet applied to the real project)
 - every records screen reads the school when connected, and says so when it doesn't
 - fees by Direct Debit: schema, policies, edge function, parent and admin screens

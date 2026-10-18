@@ -84,6 +84,7 @@ TABLES = [
   ("0009", "class_sessions", "meeting links"), ("0009", "school_link_hosts", "approved platforms"),
   ("0010", "timetable_slots", "timetable"), ("0012", "hours_log", "salary hours"), ("0012", "teacher_rates", "salary rates"),
   ("0013", "report_recipients", "report addresses"), ("0013", "report_log", "report log"), ("0014", "pupil_books", "books given"),
+  ("0020", "client_errors", "app error log"), ("0020", "client_error_limits", "error log counters"),
 ]
 print("== what the public key can read")
 absent = []
