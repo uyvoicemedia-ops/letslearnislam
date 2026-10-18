@@ -60,9 +60,11 @@ run "0020 client errors" "$ROOT/supabase/migrations/0020_client_errors.sql"
 run "0021 parent notifications" "$ROOT/supabase/migrations/0021_parent_notifications.sql"
 run "0022 points enum" "$ROOT/supabase/migrations/0022_points_enum.sql"
 run "0023 coin ledger" "$ROOT/supabase/migrations/0023_coin_ledger.sql"
+run "0024 points enum 2" "$ROOT/supabase/migrations/0024_points_enum2.sql"
+run "0025 earning rules" "$ROOT/supabase/migrations/0025_earning_rules.sql"
 
 echo "testing…"
-for t in 0100_rls_tests 0110_sessions_tests 0120_timetable_tests 0130_test_student_tests 0140_hours_tests 0150_reports_tests 0160_books_tests 0170_homework_tests 0180_profiles_lockdown_tests 0190_cross_school_tests 0200_pin_reset_tests 0210_pupil_report_tests 0220_client_errors_tests 0230_notifications_tests 0240_coin_ledger_tests; do
+for t in 0100_rls_tests 0110_sessions_tests 0120_timetable_tests 0130_test_student_tests 0140_hours_tests 0150_reports_tests 0160_books_tests 0170_homework_tests 0180_profiles_lockdown_tests 0190_cross_school_tests 0200_pin_reset_tests 0210_pupil_report_tests 0220_client_errors_tests 0230_notifications_tests 0240_coin_ledger_tests 0250_earning_rules_tests; do
   if out=$(docker exec -i $NAME psql -v ON_ERROR_STOP=1 -q -U postgres -d postgres \
              < "$ROOT/supabase/test/$t.sql" 2>&1); then
     echo "$out" | sed 's/^/  /'

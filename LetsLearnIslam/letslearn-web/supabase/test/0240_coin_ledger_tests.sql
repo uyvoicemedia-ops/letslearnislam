@@ -127,9 +127,11 @@ begin
   reset role; perform t_be(null); set local role anon;
   perform t_assert(t_say($q$select coins_spend(1, 'spend-h-0001', 'x')$q$) like '42501%', 'nor a visitor');
   reset role;
+  b1 := ll_balance(hamza);                                              -- (joining a class pays a welcome now, so a classmate may have coins)
   perform t_be(kid2); set local role authenticated;
-  perform t_assert((coins_spend(1, 'spend-a-0001', 'x') ->> 'error') = 'not_enough', 'a classmate with no coins is not affected by a reference somebody else used');
+  j := coins_spend(b1 + 1, 'spend-a-0001', 'x');
   reset role;
+  perform t_assert((j ->> 'error') = 'not_enough' and (j ->> 'balance')::int = b1, 'a classmate is not affected by a reference somebody else used: they are asked for the money like anyone');
 
   raise notice 'taking half back';
   delete from points where pupil_id = aisha and source in ('spend', 'refund'); perform ll_mint(aisha, 'practice', 500, 'seed-refund');
@@ -238,7 +240,7 @@ begin
   reset role;
 
   raise notice 'the report counts coins EARNED';
-  delete from points where pupil_id = aisha and source in ('spend', 'refund', 'practice') and (at at time zone 'Europe/London')::date = current_date;
+  delete from points where pupil_id = aisha and (at at time zone 'Europe/London')::date = current_date;      -- (including a welcome that an earlier test's re-enrolment paid today)
   perform ll_mint(aisha, 'practice', 40, 'rep-1');
   perform t_be(kid); set local role authenticated; perform coins_spend(25, 'rep-spend-0001', 'x'); perform coins_refund('rep-spend-0001'); reset role;
   perform t_be(mauluda_uid); set local role authenticated;
