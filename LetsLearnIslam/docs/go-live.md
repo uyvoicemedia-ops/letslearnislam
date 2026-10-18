@@ -9,7 +9,8 @@ Do one phase, check it, then the next. Nothing here sends an email or touches a 
 - [ ] **Free disk space** (the Mac this was built on ran out and Docker stopped). Restart Docker Desktop.
 - [ ] `cd letslearn-web && ./tools/check-all.sh` says everything passed (the "live check skipped" line is normal for now).
 - [ ] You can sign in to the Supabase dashboard and open the SQL Editor for the **letslearn** project.
-- [ ] You know which migrations are already applied. Run in the SQL Editor:
+- [ ] You know which migrations are already applied. **Easiest:** paste `letslearn-web/supabase/manual/which_migrations.sql` into the SQL Editor and
+      Run: one true/false row per migration, 0009 to 0026 (read-only). Or run this smaller one:
   ```sql
   select to_regclass('public.class_sessions') as m0009, to_regclass('public.timetable_slots') as m0010,
          to_regclass('public.hours_log') as m0012, to_regclass('public.report_log') as m0013,
