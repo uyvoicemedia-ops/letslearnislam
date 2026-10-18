@@ -6,6 +6,10 @@ prototype that is where all current work happens.
 
 Git root is the **parent** directory (`repos/Claude-Repo`), not this folder. No remote yet.
 
+## Going live
+
+**`docs/go-live.md` is the ordered checklist.** Nothing past migration 0008 has been applied to the real project.
+
 ## Read these first, in this order
 
 1. `docs/build-notes.md` — how the file is structured, the tooling, and the traps. The
@@ -21,7 +25,7 @@ Git root is the **parent** directory (`repos/Claude-Repo`), not this folder. No 
 
 ## The shape of the thing
 
-`letslearn-web/index.html` is one file, ~33,200 lines, 123 `<script>` blocks, no build step.
+`letslearn-web/index.html` is one file, ~33,200 lines, about 150 `<script>` blocks, no build step.
 You do not edit it directly. You write a block to `letslearn-web/blocks/<name>.html` and
 insert it:
 
@@ -43,7 +47,7 @@ Working and verified locally:
 - the live Kahoot-style quiz — room code, LAN relay, server-side scoring, podium
 - the solo practice quiz, now on the same coloured tiles as the live one
 - a sign-in gate with a child PIN flow
-- Supabase schema: 20 migrations, 695 RLS assertions green against Postgres in Docker
+- Supabase schema: 26 migrations (0001-0026); the database tests were green against Postgres in Docker, see `./tools/check-all.sh` for the current count
   (0009 class sessions, 0010 timetable/classes, 0011 test student, 0012 teacher hours, 0013 reports, 0014 pupil books, 0015 homework and 0016 profiles lockdown and 0017 cross-school and 0018 PIN reset are written and tested but NOT yet applied to the real project)
 - every records screen reads the school when connected, and says so when it doesn't
 - fees by Direct Debit: schema, policies, edge function, parent and admin screens
