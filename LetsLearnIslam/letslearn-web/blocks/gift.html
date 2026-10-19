@@ -159,8 +159,36 @@ window.gvCustom = function () {
   const P = GV.panel; if (!P) return;
   P.custom = true; P.pick = -1; P.amount = Math.min(P.amount || 5, gvKind().max); P.why = ""; GV.err = ""; render();
 };
-window.gvAmt = function (v) { const P = GV.panel; if (P) P.amount = Math.round(Number(v) || 0); };
-window.gvWhy = function (v) { const P = GV.panel; if (P) P.why = String(v || "").slice(0, 120); };
+/* What is wrong right now, in plain words, or "" if nothing. Used live as the adult types, and again on the button. */
+function gvProblem() {
+  const P = GV.panel, K = gvKind(); if (!P || !K) return "";
+  const room = Math.max(0, K.perChild - gvGivenToday(P.pupil)), first = gvFirst(P.name);
+  if (P.pick < 0 && !P.custom) return "Choose what it is for first, or pick “Something else”.";
+  const n = Number(P.amount), why = String(P.why || "").trim();
+  if (P.custom && (!(n >= 1) || n !== Math.round(n))) return "Type how many coins, as a whole number from 1 to " + K.max + ".";
+  if (n > K.max) return "One gift can be at most " + K.max + " coins. Type " + K.max + " or fewer.";
+  if (n > room) return room > 0 ? "You can give " + first + " only " + room + " more coin" + (room === 1 ? "" : "s") + " today (the most is " + K.perChild + " a day to one child)." : "You have already given " + first + " the most you can today (" + K.perChild + " coins). Try again tomorrow.";
+  if (!why) return "Say what it is for. " + first + " will see it.";
+  return "";
+}
+/* shown without redrawing, so typing is never interrupted and the cursor stays put */
+function gvHintUpdate() {
+  const h = document.getElementById("gvHint"), b = document.getElementById("gvGo"), P = GV.panel; if (!P) return;
+  const msg = (P.pick >= 0 || P.custom) ? gvProblem() : "";
+  if (h) { h.textContent = msg; h.style.display = msg ? "" : "none"; }
+  if (b && !GV.busy) b.textContent = gvLabel();
+}
+function gvLabel() {
+  const P = GV.panel; if (!P) return "Give coins";
+  const n = Number(P.amount);
+  return (P.pick >= 0 || P.custom) && n >= 1 && n <= 1000 ? "Give " + n + " coin" + (n === 1 ? "" : "s") + " to " + gvFirst(P.name) : "Give coins to " + gvFirst(P.name);
+}
+window.gvAmt = function (v) { const P = GV.panel; if (!P) return; P.amount = v === "" ? "" : Number(v); GV.err = ""; gvHintUpdate(); };
+window.gvAmtDone = function (el) {            // leaving the box: a number over the cap is brought back to the cap, and said so
+  const P = GV.panel, K = gvKind(); if (!P || !K) return;
+  if (Number(el.value) > K.max) { el.value = K.max; P.amount = K.max; const h = document.getElementById("gvHint"); if (h) { h.textContent = "Changed to " + K.max + ", the most for one gift."; h.style.display = ""; } }
+};
+window.gvWhy = function (v) { const P = GV.panel; if (!P) return; P.why = String(v || "").slice(0, 120); GV.err = ""; gvHintUpdate(); };
 
 /* the database's own words, said kindly */
 function gvSay(data, K) {
@@ -169,17 +197,15 @@ function gvSay(data, K) {
   if (e === "daily_limit_total") return `You have given a lot today (${K.perDay} coins in all). Try again tomorrow.`;
   if (e === "bad_amount") return `One gift can be up to ${K.max} coins.`;
   if (e === "not_allowed") return "You cannot give coins to this child.";
-  return "That did not work. Nothing was given. Try again.";
+  return "That did not work. Nothing was given." + (e ? " (" + e + ")" : "");
 }
 
 window.gvGive = async function () {
   const P = GV.panel, K = gvKind(); if (!P || !K || GV.busy) return;
-  GV.err = "";
+  const problem = gvProblem();
+  if (problem) { GV.err = problem; return render(); }   // never silent: say what is wrong, and nothing is sent
   const n = Math.round(Number(P.amount)), why = String(P.why || "").trim();
-  if (!(n >= 1)) { GV.err = "Choose how many coins."; return render(); }
-  if (n > K.max) { GV.err = `One gift can be up to ${K.max} coins.`; return render(); }
-  if (!why) { GV.err = "Say what it is for. The child sees it."; return render(); }
-  GV.busy = true; render();                         // locked from here: a second tap cannot give twice
+  GV.err = ""; GV.busy = true; render();               // locked from here: a second tap cannot give twice
   try {
     const { data, error } = await LLC.sb.rpc("points_give", { p_pupil: P.pupil, p_amount: n, p_reason: why });
     if (error) throw error;
@@ -188,7 +214,7 @@ window.gvGive = async function () {
       GV.mine.push({ pupil_id: P.pupil, amount: n, at: new Date().toISOString() });
       P.done = { n, why, left: Math.max(0, K.perChild - gvGivenToday(P.pupil)) };
     }
-  } catch (e) { GV.err = "That did not work. Nothing was given. Try again."; }
+  } catch (e) { GV.err = "That did not work. Nothing was given. (" + ((e && e.message) || "no reason given") + ")"; }
   GV.busy = false; render();
 };
 
@@ -207,17 +233,18 @@ function gvPanel() {
     const opts = K.presets.map((p, i) => `<button class="opt ${P.pick === i ? "on" : ""}" aria-pressed="${P.pick === i}" onclick="gvPick(${i})" ${GV.busy ? "disabled" : ""}><b>${esc(p.why)}</b><span class="amt">${p.n} coins</span></button>`).join("");
     const custom = `<button class="opt ${P.custom ? "on" : ""}" aria-pressed="${P.custom}" onclick="gvCustom()" ${GV.busy ? "disabled" : ""}><b>Something else</b><span class="amt">you choose</span></button>`;
     const free = P.custom ? `<div style="margin-top:10px"><label for="gvAmt" class="note">Coins (1 to ${K.max})</label><br>
-        <input id="gvAmt" type="number" inputmode="numeric" min="1" max="${K.max}" value="${esc(P.amount)}" oninput="gvAmt(this.value)"></div>
+        <input id="gvAmt" type="number" inputmode="numeric" min="1" max="${K.max}" value="${esc(P.amount)}" oninput="gvAmt(this.value)" onchange="gvAmtDone(this)" onblur="gvAmtDone(this)"></div>
       <div style="margin-top:10px"><label for="gvWhy" class="note">What is it for?</label>
         <input id="gvWhy" type="text" maxlength="120" value="${esc(P.why)}" oninput="gvWhy(this.value)" placeholder="${gvRole() === "parent" ? "for helping with the shopping" : "for helping tidy the classroom"}"></div>` : "";
-    const ready = room > 0 && (P.pick >= 0 || (P.custom && P.why.trim() && P.amount >= 1));
     inner = `<h2>${first}</h2>
-      <p class="note" style="margin:0 0 4px">${esc(K.lead)} ${room > 0 ? `You can give ${first} up to ${room} more coins today.` : ""}</p>
+      <p class="note" style="margin:0 0 4px">${esc(K.lead)}</p>
+      <p class="note" style="margin:0 0 4px">One gift: up to ${K.max} coins. Today you have given ${first} ${given} of a possible ${K.perChild}${room > 0 ? `, so ${room} more is allowed` : ""}.</p>
       ${room <= 0 ? `<p class="gv-limit">You have already given ${first} the most you can today (${K.perChild} coins). Try again tomorrow.</p>` : ""}
       ${room > 0 ? opts + custom + free : ""}
+      <p id="gvHint" class="gv-limit" role="status" style="display:none"></p>
       ${GV.err ? `<p class="gv-err" role="alert">${esc(GV.err)}</p>` : ""}
       ${room > 0 ? `<p class="note" style="margin:12px 0 0">Coins cannot be taken back, so check before you give.</p>` : ""}
-      <div class="row" style="margin-top:14px;gap:8px"><button class="btn primary" onclick="gvGive()" ${ready && !GV.busy ? "" : "disabled"}>${GV.busy ? "Giving…" : `Give ${esc(P.amount >= 1 && ready ? P.amount : "")} coins to ${first}`}</button><button class="btn" onclick="gvClose()" ${GV.busy ? "disabled" : ""}>Cancel</button></div>`;
+      <div class="row" style="margin-top:14px;gap:8px"><button id="gvGo" class="btn primary" onclick="gvGive()" ${room <= 0 || GV.busy ? "disabled" : ""}>${GV.busy ? "Giving…" : esc(gvLabel())}</button><button class="btn" onclick="gvClose()" ${GV.busy ? "disabled" : ""}>Cancel</button></div>`;
   }
   return `<div class="gv-veil" onclick="if(event.target===this && !GV.busy)gvClose()"><div class="gv-box" role="dialog" aria-modal="true">${inner}</div></div>`;
 }
