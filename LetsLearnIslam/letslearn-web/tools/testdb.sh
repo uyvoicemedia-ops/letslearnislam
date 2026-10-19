@@ -63,6 +63,7 @@ run "0023 coin ledger" "$ROOT/supabase/migrations/0023_coin_ledger.sql"
 run "0024 points enum 2" "$ROOT/supabase/migrations/0024_points_enum2.sql"
 run "0025 earning rules" "$ROOT/supabase/migrations/0025_earning_rules.sql"
 run "0026 refund pool" "$ROOT/supabase/migrations/0026_refund_pool.sql"
+run "0027 gift limits" "$ROOT/supabase/migrations/0027_gift_limits.sql"
 
 echo "testing…"
 for t in 0100_rls_tests 0110_sessions_tests 0120_timetable_tests 0130_test_student_tests 0140_hours_tests 0150_reports_tests 0160_books_tests 0170_homework_tests 0180_profiles_lockdown_tests 0190_cross_school_tests 0200_pin_reset_tests 0210_pupil_report_tests 0220_client_errors_tests 0230_notifications_tests 0240_coin_ledger_tests 0250_earning_rules_tests 0260_refund_pool_tests; do

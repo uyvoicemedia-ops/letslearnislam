@@ -40305,5 +40305,260 @@ render = function () {
 setTimeout(() => { try { gdInvite(); gdHelpButton(); } catch (e) {} }, 600);
 </script>
 <!-- GUIDE-BLOCK-END -->
+<!-- GIFT-BLOCK-START --><!-- ============================================================
+     GIFT — "Give coins": a teacher or a parent thanks a child
+     ------------------------------------------------------------
+     On the database side (migration 0027, on top of 0023) points_give()
+     lets an adult add coins to a child's ledger, with a reason, and records
+     who gave them. This is the screen for it.
+
+     TWO KINDS OF THANK-YOU, because the two adults see different things:
+       AN ADMIN gives like a teacher, to any child in the school.
+       A TEACHER sees the children in their own classes and thanks them for
+         what happens in class: effort, kindness to a classmate, a lovely
+         recitation, good manners, learning something by heart.
+       A PARENT sees their own children and thanks them for family and home:
+         helping in the house, tidying, being kind to a brother or sister,
+         listening the first time, looking after something.
+
+     THE AMOUNTS ARE SMALL ON PURPOSE. A day of honest practice pays a child
+     at most 40, a day in class 20, and the first house costs 60. A gift is
+     a "well done", not a second income. The choices are 5 to 25 coins; the
+     database refuses anything above 30 (a parent: 20) in one gift, 40 (30)
+     to one child in a day and 400 (120) in all in a day. The numbers here
+     only mirror those so the screen can say it kindly before the database
+     has to. The database is the judge.
+
+     A gift cannot be taken back (the ledger is append-only), so there is a
+     confirm step, and the button locks while the request is in flight so a
+     double tap cannot give twice.
+
+     Children never see this page; it is not on a child's menu and the
+     database refuses a child anyway. Nothing here reads, shows or stores a
+     secret number.
+     ============================================================ -->
+<style>
+  .gv-card { background:var(--card); border:1.5px solid #e6c98a; border-radius:16px; padding:6px 16px; margin:0 0 16px; }
+  .gv-row { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .gv-row:first-child { border-top:0; }
+  .gv-row .who { flex:1; min-width:150px; font-weight:700; }
+  .gv-row .today { font-size:12.5px; color:var(--muted); }
+  .gv-row .btn { min-height:40px; }
+  .gv-group { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:16px 0 4px; }
+  .gv-veil { position:fixed; inset:0; z-index:890; background:rgba(30,25,15,.45); display:flex; align-items:flex-start; justify-content:center; padding:18px; overflow:auto; }
+  .gv-box { background:var(--card); border-radius:20px; padding:20px 22px 22px; width:min(520px,100%); box-shadow:0 22px 56px rgba(30,20,5,.3); }
+  .gv-box h2 { margin:0 0 4px; font-size:21px; }
+  .gv-box .opt { display:flex; align-items:center; gap:12px; width:100%; text-align:left; padding:12px 14px; margin-top:8px; border-radius:14px; border:2px solid var(--line);
+                 background:var(--card); color:inherit; font:inherit; cursor:pointer; }
+  .gv-box .opt b { flex:1; font-size:15px; font-weight:700; }
+  .gv-box .opt .amt { font-weight:800; font-size:15px; color:#8a5a00; white-space:nowrap; }
+  .gv-box .opt:hover, .gv-box .opt:focus-visible { border-color:var(--qaida-green, #268f73); outline:none; }
+  .gv-box .opt.on { border-color:var(--qaida-green, #268f73); background:#eef8f3; }
+  .gv-box input[type=text], .gv-box input[type=number] { font:inherit; padding:9px 12px; border-radius:12px; border:2px solid var(--line); background:var(--bg); color:inherit; width:100%; box-sizing:border-box; }
+  .gv-box input[type=number] { width:7ch; text-align:center; }
+  .gv-err { font-size:13px; font-weight:700; color:#c9483a; margin:10px 0; }
+  .gv-ok { font-size:13.5px; font-weight:700; color:#2a7a55; margin:0 0 12px; }
+  .gv-limit { font-size:13px; background:#fdf7e7; border:1.5px solid #e0c98a; border-radius:10px; padding:8px 12px; margin:10px 0; }
+</style>
+<script>
+"use strict";
+
+/* What each kind of adult may thank for, and how much. Small on purpose (see the note at the top). */
+const GV_KINDS = {
+  teacher: {
+    title: "Give coins", sub: "Thank a child for something in class",
+    lead: "Thank a child for what you saw in class.",
+    max: 30, perChild: 40, perDay: 400,
+    presets: [
+      { why: "Tried really hard",        n: 5 },
+      { why: "Helped a classmate",       n: 10 },
+      { why: "A lovely recitation",      n: 10 },
+      { why: "Good manners (adab)",      n: 10 },
+      { why: "Learned it by heart",      n: 15 },
+      { why: "Went above and beyond",    n: 25 },
+    ],
+  },
+  parent: {
+    title: "Give coins", sub: "Thank your child for something at home",
+    lead: "Thank your child for what they did at home.",
+    max: 20, perChild: 30, perDay: 120,
+    presets: [
+      { why: "Helped around the house",             n: 5 },
+      { why: "Tidied their room",                   n: 5 },
+      { why: "Kind to a brother or sister",         n: 5 },
+      { why: "Listened the first time",             n: 5 },
+      { why: "Looked after something (a pet, a plant, a little one)", n: 10 },
+      { why: "Did something really kind",           n: 10 },
+      { why: "A big effort today",                  n: 15 },
+    ],
+  },
+};
+// an admin gives like a teacher (same presets, same limits in the database) to any child in the school
+GV_KINDS.admin = Object.assign({}, GV_KINDS.teacher, { sub: "Thank a child for something at school", lead: "Thank a child for something you saw at school." });
+
+const GV = { loaded: false, busy: false, err: "", pupils: [], classes: [], enrol: [], mine: [], panel: null, said: "", last: 0 };
+
+function gvLive() { try { return typeof llcLive === "function" && llcLive(); } catch (e) { return false; } }
+const gvRole = () => (gvLive() ? LLC.profile.role : null);
+const gvKind = () => GV_KINDS[gvRole()] || null;
+
+const gvLondonDay = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleDateString("en-CA", { timeZone: "Europe/London" }); };
+function gvGivenToday(pupil) {                    // coins this adult has given today (London), to one child or to everyone
+  const today = gvLondonDay(new Date().toISOString());
+  return GV.mine.filter(g => gvLondonDay(g.at) === today && (!pupil || g.pupil_id === pupil)).reduce((a, g) => a + (g.amount || 0), 0);
+}
+
+async function gvAll(make) {
+  let out = [], from = 0;
+  for (let i = 0; i < 25; i++) {
+    const { data, error } = await make().range(from, from + 999);
+    if (error) throw error;
+    out = out.concat(data || []);
+    if (!data || data.length < 1000) return out;
+    from += 1000;
+  }
+  return out;
+}
+
+async function gvPull() {
+  if (!gvLive() || !gvKind()) return false;
+  GV.err = "";
+  try {
+    const sb = LLC.sb;
+    // row-level security already limits these to the children this adult may see: a teacher's classes, a parent's own children
+    GV.pupils = (await gvAll(() => sb.from("profiles").select("id, full_name, is_test").eq("role", "student").order("full_name")))
+      .filter(p => !p.is_test);                    // a test student cannot be given real coins
+    const cls = await sb.from("classes").select("id, name").order("name"); GV.classes = cls.data || [];
+    GV.enrol = await gvAll(() => sb.from("enrolments").select("class_id, pupil_id"));
+    const since = new Date(Date.now() - 40 * 36e5).toISOString();
+    const g = await sb.from("points").select("pupil_id, amount, at").eq("given_by", LLC.profile.id).in("source", ["teacher_gift", "parent_gift"]).gte("at", since).limit(2000);
+    GV.mine = g.data || [];
+    GV.loaded = true; GV.last = Date.now();
+    return true;
+  } catch (e) {
+    // counted as an attempt, tried again later, so a failing request is not an endless retry loop (see PNR in pinreset)
+    GV.err = (e && e.message) || "could not read your children"; GV.loaded = true; GV.last = Date.now(); return false;
+  }
+}
+if (typeof llcPull === "function") {
+  const llcPullGv = llcPull;
+  llcPull = async function () {
+    const out = await llcPullGv.apply(this, arguments);
+    try { if (gvLive() && gvKind()) { await gvPull(); if (typeof render === "function") render(); } } catch (e) {}
+    return out;
+  };
+}
+
+const gvName = (id) => (GV.pupils.find(p => p.id === id) || {}).full_name || "this child";
+const gvFirst = (n) => String(n || "").split(" ")[0] || n;
+
+window.gvOpen = function (pupil) {
+  const K = gvKind(); if (!K) return;
+  GV.panel = { pupil, name: gvName(pupil), pick: -1, custom: false, amount: 5, why: "", done: null };
+  GV.err = ""; render();
+};
+window.gvClose = function () { GV.panel = null; GV.err = ""; render(); };
+window.gvPick = function (i) {
+  const P = GV.panel, K = gvKind(); if (!P || !K) return;
+  P.custom = false; P.pick = i; P.amount = K.presets[i].n; P.why = K.presets[i].why; GV.err = ""; render();
+};
+window.gvCustom = function () {
+  const P = GV.panel; if (!P) return;
+  P.custom = true; P.pick = -1; P.amount = Math.min(P.amount || 5, gvKind().max); P.why = ""; GV.err = ""; render();
+};
+window.gvAmt = function (v) { const P = GV.panel; if (P) P.amount = Math.round(Number(v) || 0); };
+window.gvWhy = function (v) { const P = GV.panel; if (P) P.why = String(v || "").slice(0, 120); };
+
+/* the database's own words, said kindly */
+function gvSay(data, K) {
+  const e = data && data.error;
+  if (e === "daily_limit_child") return data.left > 0 ? `That is more than ${K.perChild} coins to one child in a day. You can give up to ${data.left} more today.` : `You have already given as many coins as you can to this child today (${K.perChild}). Try again tomorrow.`;
+  if (e === "daily_limit_total") return `You have given a lot today (${K.perDay} coins in all). Try again tomorrow.`;
+  if (e === "bad_amount") return `One gift can be up to ${K.max} coins.`;
+  if (e === "not_allowed") return "You cannot give coins to this child.";
+  return "That did not work. Nothing was given. Try again.";
+}
+
+window.gvGive = async function () {
+  const P = GV.panel, K = gvKind(); if (!P || !K || GV.busy) return;
+  GV.err = "";
+  const n = Math.round(Number(P.amount)), why = String(P.why || "").trim();
+  if (!(n >= 1)) { GV.err = "Choose how many coins."; return render(); }
+  if (n > K.max) { GV.err = `One gift can be up to ${K.max} coins.`; return render(); }
+  if (!why) { GV.err = "Say what it is for. The child sees it."; return render(); }
+  GV.busy = true; render();                         // locked from here: a second tap cannot give twice
+  try {
+    const { data, error } = await LLC.sb.rpc("points_give", { p_pupil: P.pupil, p_amount: n, p_reason: why });
+    if (error) throw error;
+    if (!data || !data.ok) GV.err = gvSay(data, K);
+    else {
+      GV.mine.push({ pupil_id: P.pupil, amount: n, at: new Date().toISOString() });
+      P.done = { n, why, left: Math.max(0, K.perChild - gvGivenToday(P.pupil)) };
+    }
+  } catch (e) { GV.err = "That did not work. Nothing was given. Try again."; }
+  GV.busy = false; render();
+};
+
+function gvPanel() {
+  const P = GV.panel, K = gvKind(); if (!P || !K) return "";
+  const first = esc(gvFirst(P.name));
+  const given = gvGivenToday(P.pupil), room = Math.max(0, K.perChild - given);
+  let inner;
+  if (P.done) {
+    inner = `<h2>Sent</h2>
+      <p class="gv-ok" role="status">${first} now has ${P.done.n} more coin${P.done.n === 1 ? "" : "s"}.</p>
+      <p class="note" style="margin:0">“${esc(P.done.why)}”</p>
+      <p class="note">${P.done.left > 0 ? `You can give ${first} up to ${P.done.left} more today.` : `That is the most you can give ${first} today.`}</p>
+      <div class="row" style="margin-top:14px;gap:8px"><button class="btn primary" onclick="gvClose()">Done</button><button class="btn" onclick="GV.panel.done=null;GV.panel.pick=-1;GV.panel.why='';render()" ${P.done.left > 0 ? "" : "disabled"}>Give another</button></div>`;
+  } else {
+    const opts = K.presets.map((p, i) => `<button class="opt ${P.pick === i ? "on" : ""}" aria-pressed="${P.pick === i}" onclick="gvPick(${i})" ${GV.busy ? "disabled" : ""}><b>${esc(p.why)}</b><span class="amt">${p.n} coins</span></button>`).join("");
+    const custom = `<button class="opt ${P.custom ? "on" : ""}" aria-pressed="${P.custom}" onclick="gvCustom()" ${GV.busy ? "disabled" : ""}><b>Something else</b><span class="amt">you choose</span></button>`;
+    const free = P.custom ? `<div style="margin-top:10px"><label for="gvAmt" class="note">Coins (1 to ${K.max})</label><br>
+        <input id="gvAmt" type="number" inputmode="numeric" min="1" max="${K.max}" value="${esc(P.amount)}" oninput="gvAmt(this.value)"></div>
+      <div style="margin-top:10px"><label for="gvWhy" class="note">What is it for?</label>
+        <input id="gvWhy" type="text" maxlength="120" value="${esc(P.why)}" oninput="gvWhy(this.value)" placeholder="${gvRole() === "parent" ? "for helping with the shopping" : "for helping tidy the classroom"}"></div>` : "";
+    const ready = room > 0 && (P.pick >= 0 || (P.custom && P.why.trim() && P.amount >= 1));
+    inner = `<h2>${first}</h2>
+      <p class="note" style="margin:0 0 4px">${esc(K.lead)} ${room > 0 ? `You can give ${first} up to ${room} more coins today.` : ""}</p>
+      ${room <= 0 ? `<p class="gv-limit">You have already given ${first} the most you can today (${K.perChild} coins). Try again tomorrow.</p>` : ""}
+      ${room > 0 ? opts + custom + free : ""}
+      ${GV.err ? `<p class="gv-err" role="alert">${esc(GV.err)}</p>` : ""}
+      ${room > 0 ? `<p class="note" style="margin:12px 0 0">Coins cannot be taken back, so check before you give.</p>` : ""}
+      <div class="row" style="margin-top:14px;gap:8px"><button class="btn primary" onclick="gvGive()" ${ready && !GV.busy ? "" : "disabled"}>${GV.busy ? "Giving…" : `Give ${esc(P.amount >= 1 && ready ? P.amount : "")} coins to ${first}`}</button><button class="btn" onclick="gvClose()" ${GV.busy ? "disabled" : ""}>Cancel</button></div>`;
+  }
+  return `<div class="gv-veil" onclick="if(event.target===this && !GV.busy)gvClose()"><div class="gv-box" role="dialog" aria-modal="true">${inner}</div></div>`;
+}
+
+function pageGift() {
+  const K = gvKind();
+  if (!gvLive()) return `<h1>Give coins</h1><p class="sub">Thank a child</p><div class="callout">This needs a school connected, and you signed in.</div>`;
+  if (!K) return pageSimple("Give coins", "Teachers and parents only", "Coins are given by a teacher, a parent or the school office.");
+  if (!GV.loaded) return `<h1>${esc(K.title)}</h1><p class="sub">Loading…</p>` + (GV.err ? `<p class="gv-err">${esc(GV.err)}</p>` : "");
+  const parent = gvRole() === "parent", byClass = {};
+  GV.pupils.forEach(p => {
+    if (parent) { (byClass["Your children"] = byClass["Your children"] || []).push(p); return; }
+    const cs = GV.enrol.filter(e => e.pupil_id === p.id).map(e => (GV.classes.find(c => c.id === e.class_id) || {}).name || "Not in a class");
+    (cs.length ? cs : ["Not in a class"]).forEach(c => (byClass[c] = byClass[c] || []).push(p));
+  });
+  const groups = Object.keys(byClass).sort().map(c => `<div class="gv-group">${parent ? "" : esc(c)}</div><div class="gv-card">` +
+    byClass[c].map(p => { const g = gvGivenToday(p.id);
+      return `<div class="gv-row"><span class="who">${esc(p.full_name)}${g ? `<div class="today">${g} coin${g === 1 ? "" : "s"} from you today</div>` : ""}</span><button class="btn primary" onclick="gvOpen('${esc(p.id)}')">Give coins</button></div>`; }).join("") + "</div>").join("");
+  const all = gvGivenToday(null);
+  return `<h1>${esc(K.title)}</h1><p class="sub">${esc(K.sub)}</p>` +
+    (GV.err ? `<p class="gv-err" role="alert">${esc(GV.err)}</p>` : "") +
+    `<div class="callout">${esc(K.lead)} A few coins is a real thank-you: a day of practice earns a child up to 40.${all ? ` You have given ${all} today.` : ""}</div>` +
+    `<h2 class="section">${parent ? "Your children" : "Children in your classes"}</h2>` + (groups || '<div class="callout">Nobody to show yet.</div>') + gvPanel();
+}
+
+/* ---------- on the menu ---------- */
+if (typeof NAV === "object") {
+  const add = (r) => { const grp = NAV[r] && NAV[r][0] && NAV[r][0][1]; if (grp && !grp.some(x => x[0] === "gift")) grp.push(["gift", "Give coins", "🪙"]); };
+  add("teacher"); add("parent");
+  { const g = NAV.admin && NAV.admin[1] && NAV.admin[1][1]; if (g && !g.some(x => x[0] === "gift")) g.push(["gift", "Give coins", "🪙"]); }   // admin: under Teaching
+}
+if (typeof PAGES === "object") PAGES.gift = pageGift;
+if (gvLive() && gvKind() && !GV.loaded) gvPull().then(() => render(), () => {});
+</script>
+<!-- GIFT-BLOCK-END -->
 </body>
 </html>

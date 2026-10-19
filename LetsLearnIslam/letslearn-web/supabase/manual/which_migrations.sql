@@ -19,5 +19,6 @@ select * from (values
   ('0023 coin ledger',           to_regprocedure('public.coins_spend(integer,text,text)') is not null),
   ('0024 points enum 2',         exists (select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'point_source' and e.enumlabel = 'salah')),
   ('0025 earning rules',         to_regprocedure('public.register_finish(uuid,date)') is not null),
-  ('0026 refund pool',           to_regprocedure('public.coins_refund_pool(integer,text)') is not null)
+  ('0026 refund pool',           to_regprocedure('public.coins_refund_pool(integer,text)') is not null),
+  ('0027 gift limits',           coalesce(pg_get_functiondef(to_regprocedure('public.points_give(uuid,integer,text)')) like '%max_one%', false))
 ) as t(migration, applied);
