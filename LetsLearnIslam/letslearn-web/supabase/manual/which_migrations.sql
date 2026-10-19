@@ -20,5 +20,6 @@ select * from (values
   ('0024 points enum 2',         exists (select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'point_source' and e.enumlabel = 'salah')),
   ('0025 earning rules',         to_regprocedure('public.register_finish(uuid,date)') is not null),
   ('0026 refund pool',           to_regprocedure('public.coins_refund_pool(integer,text)') is not null),
-  ('0027 gift limits',           coalesce(pg_get_functiondef(to_regprocedure('public.points_give(uuid,integer,text)')) like '%max_one%', false))
+  ('0027 gift limits',           coalesce(pg_get_functiondef(to_regprocedure('public.points_give(uuid,integer,text)')) like '%max_one%', false)),
+  ('0028 parent take',            to_regprocedure('public.points_take(uuid,text)') is not null)
 ) as t(migration, applied);

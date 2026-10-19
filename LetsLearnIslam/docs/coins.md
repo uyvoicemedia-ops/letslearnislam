@@ -24,7 +24,8 @@ and are never real.
 | Dhikr, a set of 33 (three sets a day) | 10 | a claim, checked |
 | Prayer ticked (once each a day) | 6 (+20 for all five) | a claim, checked |
 | Reading (a book, once a day) | 15 | a claim, checked |
-| A teacher or parent giving some (**Give coins** page) | teacher up to 30 at a time, parent up to 20 | the adult. Teacher: 40 a day to one child, 400 in all. Parent: 30 and 120 (0027) |
+| A teacher or parent giving some (**Give coins** page) | teacher up to 30 at a time, parent up to 20 | the adult. Teacher: 40 a day to one child, 400 in all. Parent: 40 and 160 (0027, 0028) |
+| A parent **taking away** some | always 5 | the parent: with a reason the child sees, twice a day to one child and six in all, never below nothing (0028) |
 
 **The four "claims"** (practice, dhikr, prayer, reading) are things the server cannot see happen. They are made
 hard to farm instead of impossible: each must be recent and fresh, only once, in order, and spaced out, and
@@ -58,11 +59,13 @@ ceiling for practice, dhikr, prayer and reading; `homework_day_cap` (45) is the 
 ## Setting it up
 
 The **Give coins** page offers small thank-yous (5 to 25): a teacher's are about class (effort, helping a classmate,
-recitation, manners, learning by heart), a parent's about home (helping, tidying, kindness to siblings, listening).
-The limits are enforced by `points_give` in migration 0027, not by the page.
+recitation, manners, learning by heart), a parent's about the family day (teeth morning and evening, prayer, helping Mum or Dad, doing it without being asked,
+cleaning the bedroom, telling the truth). Only a parent can take coins away (5 at a time, a reason is required); a
+mistake is put right by giving them back.
+The limits are enforced by `points_give` and `points_take` (migrations 0027 and 0028), not by the page.
 
 Apply `0022_points_enum.sql` **on its own first** (it adds values to an enum, which must commit before they are
-used), then `0023`, then `0024` **on its own**, then `0025`, `0026`, `0027`. If pupils are already enrolled, run
+used), then `0023`, then `0024` **on its own**, then `0025`, `0026`, `0027`, `0028`. If pupils are already enrolled, run
 `supabase/manual/backfill_welcome.sql` once. Take a backup first (`docs/restore.md`).
 
 Coins already held on a child's device before this was switched on are **not** carried over: there are no real

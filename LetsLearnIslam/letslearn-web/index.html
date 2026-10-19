@@ -40324,10 +40324,17 @@ setTimeout(() => { try { gdInvite(); gdHelpButton(); } catch (e) {} }, 600);
      THE AMOUNTS ARE SMALL ON PURPOSE. A day of honest practice pays a child
      at most 40, a day in class 20, and the first house costs 60. A gift is
      a "well done", not a second income. The choices are 5 to 25 coins; the
-     database refuses anything above 30 (a parent: 20) in one gift, 40 (30)
-     to one child in a day and 400 (120) in all in a day. The numbers here
-     only mirror those so the screen can say it kindly before the database
-     has to. The database is the judge.
+     database refuses anything above 30 (a parent: 20) in one gift, 40 (a
+     parent: 40) to one child in a day and 400 (a parent: 160) in all in a
+     day. The numbers here only mirror those so the screen can say it kindly
+     before the database has to. The database is the judge.
+
+     A PARENT CAN ALSO TAKE COINS AWAY (migration 0028): always exactly 5,
+     with a reason the child sees, at most twice to one child a day and six
+     in all, never to a child who has fewer than 5, and only by a parent of
+     that child. A teacher or an admin cannot. It is a second tab in the
+     parent's panel, said gently, and a mistake is put right by giving the
+     coins back.
 
      A gift cannot be taken back (the ledger is append-only), so there is a
      confirm step, and the button locks while the request is in flight so a
@@ -40379,18 +40386,35 @@ const GV_KINDS = {
     ],
   },
   parent: {
-    title: "Give coins", sub: "Thank your child for something at home",
+    title: "Give or take coins", sub: "Thank your child for their day at home",
     lead: "Thank your child for what they did at home.",
-    max: 20, perChild: 30, perDay: 120,
+    max: 20, perChild: 40, perDay: 160,
     presets: [
-      { why: "Helped around the house",             n: 5 },
-      { why: "Tidied their room",                   n: 5 },
+      { why: "Brushed teeth this morning",          n: 5 },
+      { why: "Brushed teeth this evening",          n: 5 },
+      { why: "Prayed on time",                      n: 5 },
+      { why: "Helped Mum or Dad",                   n: 5 },
+      { why: "Did it without being asked",          n: 10 },
+      { why: "Cleaned the bedroom",                 n: 5 },
+      { why: "Tidied up after themselves",          n: 5 },
+      { why: "Got ready on time",                   n: 5 },
       { why: "Kind to a brother or sister",         n: 5 },
       { why: "Listened the first time",             n: 5 },
-      { why: "Looked after something (a pet, a plant, a little one)", n: 10 },
+      { why: "Told the truth",                      n: 10 },
       { why: "Did something really kind",           n: 10 },
-      { why: "A big effort today",                  n: 15 },
     ],
+    /* A parent may also take coins away: always five, with a reason the child sees, twice to one child a day
+       and six in all, and never when it would leave them with less than nothing (the database decides). */
+    take: {
+      n: 5, perChild: 2, perDay: 6,
+      presets: [
+        { why: "Would not listen" },
+        { why: "Fighting with a brother or sister" },
+        { why: "Left a mess" },
+        { why: "Unkind words" },
+        { why: "Did not do what was asked" },
+      ],
+    },
   },
 };
 // an admin gives like a teacher (same presets, same limits in the database) to any child in the school
@@ -40403,10 +40427,12 @@ const gvRole = () => (gvLive() ? LLC.profile.role : null);
 const gvKind = () => GV_KINDS[gvRole()] || null;
 
 const gvLondonDay = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleDateString("en-CA", { timeZone: "Europe/London" }); };
-function gvGivenToday(pupil) {                    // coins this adult has given today (London), to one child or to everyone
+function gvToday(pupil, sign) {                   // this adult's entries today (London), to one child or to everyone; sign > 0 gifts, < 0 takes
   const today = gvLondonDay(new Date().toISOString());
-  return GV.mine.filter(g => gvLondonDay(g.at) === today && (!pupil || g.pupil_id === pupil)).reduce((a, g) => a + (g.amount || 0), 0);
+  return GV.mine.filter(g => gvLondonDay(g.at) === today && (!pupil || g.pupil_id === pupil) && (sign > 0 ? g.amount > 0 : g.amount < 0));
 }
+const gvGivenToday = (pupil) => gvToday(pupil, 1).reduce((a, g) => a + g.amount, 0);     // coins given
+const gvTakenToday = (pupil) => gvToday(pupil, -1).length;                               // times coins were taken
 
 async function gvAll(make) {
   let out = [], from = 0;
@@ -40431,7 +40457,7 @@ async function gvPull() {
     const cls = await sb.from("classes").select("id, name").order("name"); GV.classes = cls.data || [];
     GV.enrol = await gvAll(() => sb.from("enrolments").select("class_id, pupil_id"));
     const since = new Date(Date.now() - 40 * 36e5).toISOString();
-    const g = await sb.from("points").select("pupil_id, amount, at").eq("given_by", LLC.profile.id).in("source", ["teacher_gift", "parent_gift"]).gte("at", since).limit(2000);
+    const g = await sb.from("points").select("pupil_id, amount, at").eq("given_by", LLC.profile.id).in("source", ["teacher_gift", "parent_gift", "adjustment"]).gte("at", since).limit(2000);
     GV.mine = g.data || [];
     GV.loaded = true; GV.last = Date.now();
     return true;
@@ -40451,27 +40477,43 @@ if (typeof llcPull === "function") {
 
 const gvName = (id) => (GV.pupils.find(p => p.id === id) || {}).full_name || "this child";
 const gvFirst = (n) => String(n || "").split(" ")[0] || n;
+const gvTaking = () => !!(GV.panel && GV.panel.mode === "take" && gvKind() && gvKind().take);
+const gvPresets = () => (gvTaking() ? gvKind().take.presets : gvKind().presets);
 
 window.gvOpen = function (pupil) {
   const K = gvKind(); if (!K) return;
-  GV.panel = { pupil, name: gvName(pupil), pick: -1, custom: false, amount: 5, why: "", done: null };
+  GV.panel = { pupil, name: gvName(pupil), mode: "give", pick: -1, custom: false, amount: 5, why: "", done: null };
   GV.err = ""; render();
 };
 window.gvClose = function () { GV.panel = null; GV.err = ""; render(); };
+window.gvMode = function (m) {                    // the parent's two tabs; changing tab starts the choice again
+  const P = GV.panel, K = gvKind(); if (!P || !K || GV.busy || (m === "take" && !K.take)) return;
+  Object.assign(P, { mode: m, pick: -1, custom: false, amount: m === "take" ? K.take.n : 5, why: "", done: null }); GV.err = ""; render();
+};
 window.gvPick = function (i) {
   const P = GV.panel, K = gvKind(); if (!P || !K) return;
-  P.custom = false; P.pick = i; P.amount = K.presets[i].n; P.why = K.presets[i].why; GV.err = ""; render();
+  const p = gvPresets()[i];
+  P.custom = false; P.pick = i; P.amount = gvTaking() ? K.take.n : p.n; P.why = p.why; GV.err = ""; render();
 };
 window.gvCustom = function () {
-  const P = GV.panel; if (!P) return;
-  P.custom = true; P.pick = -1; P.amount = Math.min(P.amount || 5, gvKind().max); P.why = ""; GV.err = ""; render();
+  const P = GV.panel, K = gvKind(); if (!P || !K) return;
+  P.custom = true; P.pick = -1; P.amount = gvTaking() ? K.take.n : Math.min(Number(P.amount) || 5, K.max); P.why = ""; GV.err = ""; render();
 };
 /* What is wrong right now, in plain words, or "" if nothing. Used live as the adult types, and again on the button. */
 function gvProblem() {
   const P = GV.panel, K = gvKind(); if (!P || !K) return "";
-  const room = Math.max(0, K.perChild - gvGivenToday(P.pupil)), first = gvFirst(P.name);
+  const first = gvFirst(P.name), why = String(P.why || "").trim();
+  if (gvTaking()) {
+    const T = K.take;
+    if (P.pick < 0 && !P.custom) return "Choose what happened first, or pick “Something else”.";
+    if (gvTakenToday(P.pupil) >= T.perChild) return "You have already taken coins from " + first + " " + T.perChild + " times today, which is the most. Try again tomorrow.";
+    if (gvTakenToday(null) >= T.perDay) return "You have taken coins " + T.perDay + " times today, which is the most. Try again tomorrow.";
+    if (!why) return "Say why. " + first + " will see it.";
+    return "";
+  }
+  const room = Math.max(0, K.perChild - gvGivenToday(P.pupil));
   if (P.pick < 0 && !P.custom) return "Choose what it is for first, or pick “Something else”.";
-  const n = Number(P.amount), why = String(P.why || "").trim();
+  const n = Number(P.amount);
   if (P.custom && (!(n >= 1) || n !== Math.round(n))) return "Type how many coins, as a whole number from 1 to " + K.max + ".";
   if (n > K.max) return "One gift can be at most " + K.max + " coins. Type " + K.max + " or fewer.";
   if (n > room) return room > 0 ? "You can give " + first + " only " + room + " more coin" + (room === 1 ? "" : "s") + " today (the most is " + K.perChild + " a day to one child)." : "You have already given " + first + " the most you can today (" + K.perChild + " coins). Try again tomorrow.";
@@ -40486,7 +40528,8 @@ function gvHintUpdate() {
   if (b && !GV.busy) b.textContent = gvLabel();
 }
 function gvLabel() {
-  const P = GV.panel; if (!P) return "Give coins";
+  const P = GV.panel, K = gvKind(); if (!P || !K) return "Give coins";
+  if (gvTaking()) return "Take " + K.take.n + " coins from " + gvFirst(P.name);
   const n = Number(P.amount);
   return (P.pick >= 0 || P.custom) && n >= 1 && n <= 1000 ? "Give " + n + " coin" + (n === 1 ? "" : "s") + " to " + gvFirst(P.name) : "Give coins to " + gvFirst(P.name);
 }
@@ -40498,8 +40541,16 @@ window.gvAmtDone = function (el) {            // leaving the box: a number over 
 window.gvWhy = function (v) { const P = GV.panel; if (!P) return; P.why = String(v || "").slice(0, 120); GV.err = ""; gvHintUpdate(); };
 
 /* the database's own words, said kindly */
-function gvSay(data, K) {
+function gvSay(data, K, first) {
   const e = data && data.error;
+  if (gvTaking()) {
+    if (e === "not_enough") return first + " has only " + data.balance + " coin" + (data.balance === 1 ? "" : "s") + ", and taking away needs at least " + K.take.n + ". Nothing was taken.";
+    if (e === "daily_limit_child") return "You have already taken coins from " + first + " " + K.take.perChild + " times today, which is the most. Try again tomorrow.";
+    if (e === "daily_limit_total") return "You have taken coins " + K.take.perDay + " times today, which is the most. Try again tomorrow.";
+    if (e === "no_reason") return "Say why. " + first + " will see it.";
+    if (e === "not_allowed") return "You cannot take coins from this child.";
+    return "That did not work. Nothing was taken." + (e ? " (" + e + ")" : "");
+  }
   if (e === "daily_limit_child") return data.left > 0 ? `That is more than ${K.perChild} coins to one child in a day. You can give up to ${data.left} more today.` : `You have already given as many coins as you can to this child today (${K.perChild}). Try again tomorrow.`;
   if (e === "daily_limit_total") return `You have given a lot today (${K.perDay} coins in all). Try again tomorrow.`;
   if (e === "bad_amount") return `One gift can be up to ${K.max} coins.`;
@@ -40509,49 +40560,69 @@ function gvSay(data, K) {
 
 window.gvGive = async function () {
   const P = GV.panel, K = gvKind(); if (!P || !K || GV.busy) return;
+  const taking = gvTaking(), first = gvFirst(P.name);
   const problem = gvProblem();
   if (problem) { GV.err = problem; return render(); }   // never silent: say what is wrong, and nothing is sent
-  const n = Math.round(Number(P.amount)), why = String(P.why || "").trim();
-  GV.err = ""; GV.busy = true; render();               // locked from here: a second tap cannot give twice
+  const n = taking ? K.take.n : Math.round(Number(P.amount)), why = String(P.why || "").trim();
+  GV.err = ""; GV.busy = true; render();               // locked from here: a second tap cannot act twice
   try {
-    const { data, error } = await LLC.sb.rpc("points_give", { p_pupil: P.pupil, p_amount: n, p_reason: why });
+    const { data, error } = taking ? await LLC.sb.rpc("points_take", { p_pupil: P.pupil, p_reason: why })
+                                   : await LLC.sb.rpc("points_give", { p_pupil: P.pupil, p_amount: n, p_reason: why });
     if (error) throw error;
-    if (!data || !data.ok) GV.err = gvSay(data, K);
-    else {
+    if (!data || !data.ok) GV.err = gvSay(data, K, first);
+    else if (taking) {
+      GV.mine.push({ pupil_id: P.pupil, amount: -n, at: new Date().toISOString() });
+      P.done = { n, why, taken: true, balance: data.balance };
+    } else {
       GV.mine.push({ pupil_id: P.pupil, amount: n, at: new Date().toISOString() });
       P.done = { n, why, left: Math.max(0, K.perChild - gvGivenToday(P.pupil)) };
     }
-  } catch (e) { GV.err = "That did not work. Nothing was given. (" + ((e && e.message) || "no reason given") + ")"; }
+  } catch (e) { GV.err = "That did not work. Nothing was " + (taking ? "taken" : "given") + ". (" + ((e && e.message) || "no reason given") + ")"; }
   GV.busy = false; render();
 };
 
 function gvPanel() {
   const P = GV.panel, K = gvKind(); if (!P || !K) return "";
-  const first = esc(gvFirst(P.name));
+  const first = esc(gvFirst(P.name)), taking = gvTaking();
   const given = gvGivenToday(P.pupil), room = Math.max(0, K.perChild - given);
+  const takesLeft = K.take ? Math.max(0, Math.min(K.take.perChild - gvTakenToday(P.pupil), K.take.perDay - gvTakenToday(null))) : 0;
+  const tabs = K.take ? `<div class="row" style="gap:8px;margin:8px 0 4px" role="group" aria-label="Give or take">
+      <button class="btn ${taking ? "" : "primary"}" aria-pressed="${!taking}" onclick="gvMode('give')" ${GV.busy ? "disabled" : ""}>Give coins</button>
+      <button class="btn ${taking ? "primary" : ""}" aria-pressed="${taking}" onclick="gvMode('take')" ${GV.busy ? "disabled" : ""}>Take away ${K.take.n}</button></div>` : "";
   let inner;
-  if (P.done) {
+  if (P.done && P.done.taken) {
+    inner = `<h2>Taken</h2>
+      <p class="gv-ok" role="status">${P.done.n} coins were taken from ${first}. ${first} has ${P.done.balance} left.</p>
+      <p class="note" style="margin:0">“${esc(P.done.why)}”. ${first} will see this reason.</p>
+      <p class="note">If this was a mistake, you can give the coins back with <b>Give coins</b>.</p>
+      <div class="row" style="margin-top:14px;gap:8px"><button class="btn primary" onclick="gvClose()">Done</button><button class="btn" onclick="gvMode('give')">Give coins instead</button></div>`;
+  } else if (P.done) {
     inner = `<h2>Sent</h2>
       <p class="gv-ok" role="status">${first} now has ${P.done.n} more coin${P.done.n === 1 ? "" : "s"}.</p>
       <p class="note" style="margin:0">“${esc(P.done.why)}”</p>
       <p class="note">${P.done.left > 0 ? `You can give ${first} up to ${P.done.left} more today.` : `That is the most you can give ${first} today.`}</p>
       <div class="row" style="margin-top:14px;gap:8px"><button class="btn primary" onclick="gvClose()">Done</button><button class="btn" onclick="GV.panel.done=null;GV.panel.pick=-1;GV.panel.why='';render()" ${P.done.left > 0 ? "" : "disabled"}>Give another</button></div>`;
   } else {
-    const opts = K.presets.map((p, i) => `<button class="opt ${P.pick === i ? "on" : ""}" aria-pressed="${P.pick === i}" onclick="gvPick(${i})" ${GV.busy ? "disabled" : ""}><b>${esc(p.why)}</b><span class="amt">${p.n} coins</span></button>`).join("");
-    const custom = `<button class="opt ${P.custom ? "on" : ""}" aria-pressed="${P.custom}" onclick="gvCustom()" ${GV.busy ? "disabled" : ""}><b>Something else</b><span class="amt">you choose</span></button>`;
-    const free = P.custom ? `<div style="margin-top:10px"><label for="gvAmt" class="note">Coins (1 to ${K.max})</label><br>
-        <input id="gvAmt" type="number" inputmode="numeric" min="1" max="${K.max}" value="${esc(P.amount)}" oninput="gvAmt(this.value)" onchange="gvAmtDone(this)" onblur="gvAmtDone(this)"></div>
-      <div style="margin-top:10px"><label for="gvWhy" class="note">What is it for?</label>
-        <input id="gvWhy" type="text" maxlength="120" value="${esc(P.why)}" oninput="gvWhy(this.value)" placeholder="${gvRole() === "parent" ? "for helping with the shopping" : "for helping tidy the classroom"}"></div>` : "";
-    inner = `<h2>${first}</h2>
-      <p class="note" style="margin:0 0 4px">${esc(K.lead)}</p>
-      <p class="note" style="margin:0 0 4px">One gift: up to ${K.max} coins. Today you have given ${first} ${given} of a possible ${K.perChild}${room > 0 ? `, so ${room} more is allowed` : ""}.</p>
-      ${room <= 0 ? `<p class="gv-limit">You have already given ${first} the most you can today (${K.perChild} coins). Try again tomorrow.</p>` : ""}
-      ${room > 0 ? opts + custom + free : ""}
+    const opts = gvPresets().map((p, i) => `<button class="opt ${P.pick === i ? "on" : ""}" aria-pressed="${P.pick === i}" onclick="gvPick(${i})" ${GV.busy ? "disabled" : ""}><b>${esc(p.why)}</b><span class="amt">${taking ? "−" + K.take.n : p.n + " coins"}</span></button>`).join("");
+    const custom = `<button class="opt ${P.custom ? "on" : ""}" aria-pressed="${P.custom}" onclick="gvCustom()" ${GV.busy ? "disabled" : ""}><b>Something else</b><span class="amt">${taking ? "−" + K.take.n : "you choose"}</span></button>`;
+    const free = P.custom ? ((taking ? "" : `<div style="margin-top:10px"><label for="gvAmt" class="note">Coins (1 to ${K.max})</label><br>
+        <input id="gvAmt" type="number" inputmode="numeric" min="1" max="${K.max}" value="${esc(P.amount)}" oninput="gvAmt(this.value)" onchange="gvAmtDone(this)" onblur="gvAmtDone(this)"></div>`) +
+      `<div style="margin-top:10px"><label for="gvWhy" class="note">${taking ? "Why? " + first + " will see it." : "What is it for?"}</label>
+        <input id="gvWhy" type="text" maxlength="120" value="${esc(P.why)}" oninput="gvWhy(this.value)" placeholder="${taking ? "for not listening at bedtime" : gvRole() === "parent" ? "for helping with the shopping" : "for helping tidy the classroom"}"></div>`) : "";
+    const usable = taking ? takesLeft > 0 : room > 0;
+    const info = taking
+      ? `Taking away is always ${K.take.n} coins, up to ${K.take.perChild} times a day for each child. ${first} will see the reason, so keep it kind. ${takesLeft > 0 ? `You can do it ${takesLeft} more time${takesLeft === 1 ? "" : "s"} today for ${first}.` : ""}`
+      : `One gift: up to ${K.max} coins. Today you have given ${first} ${given} of a possible ${K.perChild}${room > 0 ? `, so ${room} more is allowed` : ""}.`;
+    const stopped = taking ? `You have already taken coins from ${first} as often as you can today. Try again tomorrow.` : `You have already given ${first} the most you can today (${K.perChild} coins). Try again tomorrow.`;
+    inner = `<h2>${first}</h2>${tabs}
+      <p class="note" style="margin:0 0 4px">${esc(taking ? "Coins can be taken away for things like not listening. A child never loses more than " + K.take.n + " at a time." : K.lead)}</p>
+      <p class="note" style="margin:0 0 4px">${info}</p>
+      ${usable ? "" : `<p class="gv-limit">${esc(stopped)}</p>`}
+      ${usable ? opts + custom + free : ""}
       <p id="gvHint" class="gv-limit" role="status" style="display:none"></p>
       ${GV.err ? `<p class="gv-err" role="alert">${esc(GV.err)}</p>` : ""}
-      ${room > 0 ? `<p class="note" style="margin:12px 0 0">Coins cannot be taken back, so check before you give.</p>` : ""}
-      <div class="row" style="margin-top:14px;gap:8px"><button id="gvGo" class="btn primary" onclick="gvGive()" ${room <= 0 || GV.busy ? "disabled" : ""}>${GV.busy ? "Giving…" : esc(gvLabel())}</button><button class="btn" onclick="gvClose()" ${GV.busy ? "disabled" : ""}>Cancel</button></div>`;
+      ${usable ? `<p class="note" style="margin:12px 0 0">${taking ? "Check before you take. You can give the coins back if you change your mind." : "Coins cannot be taken back automatically, so check before you give."}</p>` : ""}
+      <div class="row" style="margin-top:14px;gap:8px"><button id="gvGo" class="btn primary" onclick="gvGive()" ${!usable || GV.busy ? "disabled" : ""}>${GV.busy ? (taking ? "Taking…" : "Giving…") : esc(gvLabel())}</button><button class="btn" onclick="gvClose()" ${GV.busy ? "disabled" : ""}>Cancel</button></div>`;
   }
   return `<div class="gv-veil" onclick="if(event.target===this && !GV.busy)gvClose()"><div class="gv-box" role="dialog" aria-modal="true">${inner}</div></div>`;
 }
@@ -40568,12 +40639,13 @@ function pageGift() {
     (cs.length ? cs : ["Not in a class"]).forEach(c => (byClass[c] = byClass[c] || []).push(p));
   });
   const groups = Object.keys(byClass).sort().map(c => `<div class="gv-group">${parent ? "" : esc(c)}</div><div class="gv-card">` +
-    byClass[c].map(p => { const g = gvGivenToday(p.id);
-      return `<div class="gv-row"><span class="who">${esc(p.full_name)}${g ? `<div class="today">${g} coin${g === 1 ? "" : "s"} from you today</div>` : ""}</span><button class="btn primary" onclick="gvOpen('${esc(p.id)}')">Give coins</button></div>`; }).join("") + "</div>").join("");
+    byClass[c].map(p => { const g = gvGivenToday(p.id), t = gvTakenToday(p.id);
+      const said = [g ? `${g} coin${g === 1 ? "" : "s"} given today` : "", t ? `${K.take ? K.take.n * t : 0} taken today` : ""].filter(Boolean).join(" · ");
+      return `<div class="gv-row"><span class="who">${esc(p.full_name)}${said ? `<div class="today">${said}</div>` : ""}</span><button class="btn primary" onclick="gvOpen('${esc(p.id)}')">${K.take ? "Give or take coins" : "Give coins"}</button></div>`; }).join("") + "</div>").join("");
   const all = gvGivenToday(null);
   return `<h1>${esc(K.title)}</h1><p class="sub">${esc(K.sub)}</p>` +
     (GV.err ? `<p class="gv-err" role="alert">${esc(GV.err)}</p>` : "") +
-    `<div class="callout">${esc(K.lead)} A few coins is a real thank-you: a day of practice earns a child up to 40.${all ? ` You have given ${all} today.` : ""}</div>` +
+    `<div class="callout">${esc(K.lead)} A few coins is a real thank-you: a day of practice earns a child up to 40.${K.take ? ` You can also take ${K.take.n} coins away, with a reason, when it is needed.` : ""}${all ? ` You have given ${all} today.` : ""}</div>` +
     `<h2 class="section">${parent ? "Your children" : "Children in your classes"}</h2>` + (groups || '<div class="callout">Nobody to show yet.</div>') + gvPanel();
 }
 

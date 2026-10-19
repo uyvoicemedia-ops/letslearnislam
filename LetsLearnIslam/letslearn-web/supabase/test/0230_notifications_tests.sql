@@ -116,7 +116,7 @@ begin
   delete from attendance where pupil_id = aisha and on_date = current_date;
   update auth.users set email = 'parent@example.com' where id = fatima_uid;
   update profiles set email = 'parent@example.com' where id = fatima;
-  insert into attendance (pupil_id, class_id, on_date, mark) values (hamza, c_q1, current_date, 'absent');
+  delete from attendance where pupil_id = hamza and on_date = current_date; insert into attendance (pupil_id, class_id, on_date, mark) values (hamza, c_q1, current_date, 'absent');
   perform t_assert((select count(*) from notify_outbox) = 0, 'a parent is not told about a child who is not theirs');
   delete from attendance where pupil_id = hamza and on_date = current_date;
 

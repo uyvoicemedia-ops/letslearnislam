@@ -10,7 +10,7 @@ Do one phase, check it, then the next. Nothing here sends an email or touches a 
 - [ ] `cd letslearn-web && ./tools/check-all.sh` says everything passed (the "live check skipped" line is normal for now).
 - [ ] You can sign in to the Supabase dashboard and open the SQL Editor for the **letslearn** project.
 - [ ] You know which migrations are already applied. **Easiest:** paste `letslearn-web/supabase/manual/which_migrations.sql` into the SQL Editor and
-      Run: one true/false row per migration, 0009 to 0027 (read-only). Or run this smaller one:
+      Run: one true/false row per migration, 0009 to 0028 (read-only). Or run this smaller one:
   ```sql
   select to_regclass('public.class_sessions') as m0009, to_regclass('public.timetable_slots') as m0010,
          to_regclass('public.hours_log') as m0012, to_regclass('public.report_log') as m0013,
@@ -64,6 +64,7 @@ appears for it.
 | 0025 earning rules | welcome, register, homework, claims | |
 | 0026 refund pool | selling for half, in total | |
 | 0027 gift limits | sensible limits on gifts, for the Give coins page | needs 0023 |
+| 0028 parent take | a parent can take 5 coins away; a fuller family day of thank-yous | needs 0023 and 0027 |
 
 - [ ] If pupils are already enrolled, run **`supabase/manual/backfill_welcome.sql`** once (their welcome coins).
 - [ ] Take **another backup**. This is your known-good point.
@@ -76,7 +77,7 @@ On the real project, with a real account for each. Write down anything odd; do n
 - [ ] **Teacher**: Attendance for a class, mark two children, press **Finish register**, tick **Camera on** for one and press it again (only new coins).
 - [ ] **Child** (class code + PIN): sign in; the garden shows the welcome coins; buy something; reload the page (the balance is the same); sell it (half back).
 - [ ] **Child**: do one practice activity: coins arrive, the message says "You earned…". Do it again straight away: nothing, and no error shown.
-- [ ] **Teacher and parent**: **Give coins**. A teacher sees their own classes, a parent only their own children. Give one thank-you; the child's balance goes up. Try 30 coins to one child twice in a day as a teacher: the second is refused kindly.
+- [ ] **Teacher and parent**: **Give coins**. A teacher sees their own classes, a parent only their own children. Give one thank-you; the child's balance goes up. Try 30 coins to one child twice in a day as a teacher: the second is refused kindly. As a parent, try **Take away 5** twice, then a third time: it is refused kindly.
 - [ ] **Parent**: the **Report card** for their child opens; **Email alerts** shows everything OFF.
 - [ ] **Forgot my number**: a child asks; the teacher issues a temporary number; the child chooses their own.
 - [ ] **A child cannot cheat the balance**: in the browser console type `gardenState().deeds = 999999`; the number the garden shows does not change after a moment.

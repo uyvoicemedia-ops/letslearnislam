@@ -113,7 +113,7 @@ FUNCS = [
   ("0021", "notify_prefs_get", {}), ("0021", "notify_prefs_set", {"p_event": "absence", "p_enabled": True}), ("0021", "notify_school_set", {"p_enabled": True}),
   ("0021", "notify_school_status", {}), ("0021", "notify_send_test", {}), ("0021", "notify_claim_batch", {"p_limit": 1}),
   ("0023", "coins_wallet", {}), ("0023", "coins_spend", {"p_amount": 1, "p_ref": "livecheck-0001", "p_what": "x"}), ("0023", "coins_refund", {"p_ref": "livecheck-0001"}),
-  ("0023", "points_give", {"p_pupil": "00000000-0000-0000-0000-000000000000", "p_amount": 1, "p_reason": "x"}), ("0026", "coins_refund_pool", {"p_amount": 1, "p_ref": "livecheck-0002"}),
+  ("0023", "points_give", {"p_pupil": "00000000-0000-0000-0000-000000000000", "p_amount": 1, "p_reason": "x"}), ("0026", "coins_refund_pool", {"p_amount": 1, "p_ref": "livecheck-0002"}), ("0028", "points_take", {"p_pupil": "00000000-0000-0000-0000-000000000000", "p_reason": "x"}),
   ("0025", "earn_practice", {"p_id": 1}), ("0025", "earn_dhikr", {"p_set": 1}), ("0025", "earn_salah", {"p_prayer": "fajr"}), ("0025", "earn_reading", {"p_book": "x"}),
   ("0025", "register_finish", {"p_class": "00000000-0000-0000-0000-000000000000", "p_date": "2020-01-01"}), ("0025", "attendance_set_camera", {"p_class": "00000000-0000-0000-0000-000000000000", "p_pupil": "00000000-0000-0000-0000-000000000000", "p_date": "2020-01-01", "p_on": True}),
   ("0019", "pupil_report", {"p_pupil": "00000000-0000-0000-0000-000000000000", "p_from": "2020-01-01", "p_to": "2020-01-31"}),
